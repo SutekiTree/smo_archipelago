@@ -241,7 +241,7 @@
         "requires": "{SandPeace()} and {MetroPeace()}"
     },
     {
-        "name": "Cascade: Rolling Rock By the Falls",
+        "name": "Cascade: Rolling Rock by the Falls",
         "category": [
             "Cascade Kingdom"
         ],
@@ -410,7 +410,7 @@
         "requires": "{OptOne(Bullet Bill)}"
     },
     {
-        "name": "Sand: Inside a Block is a Hard Place",
+        "name": "Sand: Inside a Block Is a Hard Place",
         "category": [
             "Sand Kingdom"
         ],
@@ -1019,7 +1019,7 @@
         "requires": "{MazeSkip()} and {OptOne(Sherm)}"
     },
     {
-        "name": "Wooded: Defend the Secret Flower Field",
+        "name": "Wooded: Defend the Secret Flower Field!",
         "category": [
             "Wooded Kingdom"
         ],
@@ -1395,7 +1395,7 @@
         "requires": "{MazeSkip()} and {SnowSeasidePeace()}"
     },
     {
-        "name": "Wooded: Found With Wooded Kingdom Art",
+        "name": "Wooded: Found with Wooded Kingdom Art",
         "category": [
             "Wooded Kingdom"
         ],
@@ -1708,7 +1708,7 @@
         "requires": []
     },
     {
-        "name": "Metro: Left at the Cafe?",
+        "name": "Metro: Left at the Café?",
         "category": [
             "Metro Kingdom"
         ],
@@ -1871,7 +1871,7 @@
         "requires": "{MetroPeace()}"
     },
     {
-        "name": "Metro: Celebrating in the Streets",
+        "name": "Metro: Celebrating in the Streets!",
         "category": [
             "Metro Kingdom"
         ],
@@ -1952,7 +1952,7 @@
         "requires": "{OptOne(Mini Rocket)}"
     },
     {
-        "name": "Metro: Vaulting up a High-Rise",
+        "name": "Metro: Vaulting Up a High-Rise",
         "category": [
             "Metro Kingdom"
         ],
@@ -2388,7 +2388,7 @@
         "requires": []
     },
     {
-        "name": "Seaside: The Glass is Half Full!",
+        "name": "Seaside: The Glass Is Half Full!",
         "category": [
             "Seaside Kingdom",
             "post-metro"
@@ -3097,7 +3097,7 @@
         "requires": "{Meat()} and {OptOne(Lava Bubble)}"
     },
     {
-        "name": "Luncheon: Bon Appetit, Captain Toad!",
+        "name": "Luncheon: Bon Appétit, Captain Toad!",
         "category": [
             "post-metro",
             "Luncheon Kingdom"
@@ -3225,7 +3225,7 @@
         "requires": "{OptAll(|Lava Bubble| and |Hammer Bro|)}"
     },
     {
-        "name": "Luncheon: Secret Path to Mount Volbono",
+        "name": "Luncheon: Secret Path to Mount Volbono!",
         "category": [
             "Luncheon Kingdom"
         ],

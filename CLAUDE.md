@@ -2,6 +2,28 @@
 
 This file is a fast-load brief for picking up the project cold. Read it first, then `docs/architecture.md` and the plan file at `C:\Users\maxwe\.claude\plans\after-much-work-i-tender-thompson.md`.
 
+## ⚠️ CRITICAL: Never commit Nintendo IP
+
+This repository is open-source and built on a careful line: **functional identifiers and reference apworld names are okay; bulk-extracted Nintendo content is not.** A misstep here exposes the user to DMCA risk. Before any commit, audit `git status` + `git diff` and refuse to stage anything from this list:
+
+**Must NEVER be committed (already gitignored — keep it that way):**
+- `bridge/smo_ap_bridge/data/shine_map.json` — full extracted (stage, obj_id) → display-name table. Generated per-machine by `scripts/extract_shine_map.py`. ~775 verbatim Nintendo USen strings.
+- `bridge/smo_ap_bridge/data/shine_map_review.json` — diagnostic that includes the same strings.
+- `.romfs-cache/` — extracted RomFS (~5 GB of Nintendo assets).
+- `scripts/.extract-venv/` — local Python 3.12 venv (not IP, but big and machine-specific).
+- `docs/main-*.nso`, `*.nsp`, `*.nca`, `*.byml`, `*.szs`, `*.msbt` — any raw Nintendo binary.
+- `prod.keys` / `dev.keys` / `title.keys` — Switch keys are themselves IP-sensitive.
+- Any moon-name list, capture list, or stage list of more than ~5 entries pasted into a doc, comment, or commit message as illustrative content — bulk transcription is the same exposure as the file.
+
+**Generally OK (already in the repo, established by upstream forks):**
+- `apworld/smo_archipelago/data/locations.json` and `items.json` — the 565 community-curated location names + 42 capture names. Forked from the public [empathy-mp3/SMO-manual-AP](https://github.com/empathy-mp3/SMO-manual-AP) Manual world. Edits are fine; bulk additions from a romfs dump are not — alignment with Nintendo's MSBT should happen one mismatch at a time, not as a wholesale copy.
+- Functional identifiers like `WaterfallWorldHomeStage`, `obj214`, `ScenarioName_<ObjId>`, `ShineList`, kingdom internal names (`CapWorld`/`SkyWorld`/etc.). These appear in every public SMO modding project (lunakit, MoonFlow, OdysseyDecomp) and are functional, not expressive.
+- The one M5.7 anchor entry (`"Our First Power Moon"`) appears in CLAUDE.md, the test suite, and docs as a known ground-truth datapoint. One name as a verifiable test fixture is fine; a list of names is not.
+
+**Safe pattern**: anything that requires a user to run `scripts/extract_shine_map.py` to produce stays in the gitignore. If you find yourself wanting to commit a piece of data so the next agent has a richer starting point, instead document where to regenerate it — see `docs/extract-moon-data.md` for the model.
+
+**If you've staged something questionable**: `git restore --staged <path>` to unstage, then either delete the file or add it to `.gitignore` before retrying. Never override `.gitignore` with `git add -f` for SMO content. When in doubt, ask the user.
+
 ## What we're building
 
 A real Archipelago client for **Super Mario Odyssey on a modded Switch (FW 21.2, native SMO 1.0.0 install, Atmosphere CFW)**. Replaces the existing Manual checklist client ([empathy-mp3/SMO-manual-AP](https://github.com/empathy-mp3/SMO-manual-AP)) — an honor-system tick-the-boxes app — with an in-game module that detects moons/captures/scenario events automatically, applies received items live, and enforces capture locks until the AP item arrives.
@@ -56,7 +78,7 @@ The PC bridge owns AP-protocol complexity (websocket + deflate + TLS + reconnect
 - **M5**: web tracker — **CODE COMPLETE** (Flask + SSE, served on :8000)
 - **M5.5**: AP server live integration — **DONE 2026-05-15.** Forked apworld zipped to `vendor/Archipelago/custom_worlds/smo_archipelago.apworld` via `scripts/install_apworld.py`. Seed generation via `scripts/ap_generate.py` (thin wrapper that pre-sets `ModuleUpdate.update_ran = True` to suppress AP's auto-pip on world-specific deps). MultiServer wrapper at `scripts/ap_server.py`. Bridge ↔ local AP loopback validated end-to-end: `>> check Cap: Frog-Jumping Above the Fog` → bridge translates → `LocationChecks` to AP → AP sends `ReceivedItems` → bridge forwards `ItemMsg` to fake-Switch (all under 1s per round-trip). Bridge fix in `ap_client.py::_populate_datapackage_from_ctx` hydrates `self._dp` from CommonContext's `location_names`/`item_names` on `Connected` (CommonContext satisfies its own lookup from Archipelago's shipped `network_data_package.json` and never relays a `DataPackage` packet that our `on_package` could catch). Regression test `bridge/tests/test_ap_loopback.py` skips unless `SMOAP_LIVE_AP=1`; 43 existing tests still green. Test seed at `bridge/test_seeds/smo_loopback.yaml` (gitignored output at `bridge/test_seeds/out/`).
 - **M5.7**: Ryujinx E2E — **DONE 2026-05-15.** First real moon traversed the whole stack: Mario collects "Our First Power Moon" in Ryujinx → `MoonGetHook` fires with `stage=WaterfallWorldHomeStage, obj=obj214` → `[pump] Send 102 bytes` → bridge resolves via `shine_map.json` → `LocationCheck id=14481151511` to AP → AP records check, places "Snow Kingdom Power Moon" item → `ReceivedItems` echoed → bridge forwards `ItemMsg` to mod (mod's inbound ring receives it; M6 application still stubbed). Three real bugs surfaced + fixed: (a) mod's `BRIDGE_HOST` was baked at the stale M3-era LAN IP (rebuilt with `-DBRIDGE_HOST=127.0.0.1` for Ryujinx-on-same-host); (b) `shine_map.json` seed entries used aspirational `MoonOurFirst`-style symbolic names but `ShineInfo::objectId` actually emits the placement-file ref `obj214` — confirmed via MoonFlow's public `ShineInfo` schema, replaced with 1 verified entry; (c) `ap_client.report_check` silently returned on `locations_checked` dedup, which combined with persistent `AP_*.apsave` from the M5.5 smoke test masked working pipeline as "moon arrived but nothing happened" — added explicit forwarding-vs-skip log lines. Diagnostic logging shipped permanently: `MoonGetHook` probe (`obj`/`scen`/`uid`), `ApClient::pumpOnce` `[pump]` traces, `ap_client.report_check` forwarding-distinction lines. These were load-bearing observability — every issue would have been silent without them.
-- **M5.8 (planned)**: full moon-data extraction. `shine_map.json` currently has 1 of ~565 entries. Need to ingest SMO's romfs to produce the full `(stage_name, obj_id) → (kingdom, display_name)` table. See "Moon data extraction" section below.
+- **M5.8**: full moon-data extraction — **DONE 2026-05-15.** Single command `python scripts/extract_shine_map.py --nsp <SMO_1.0.0.nsp>` produces a complete 775-entry `shine_map.json`. Self-bootstraps a Python 3.12 venv with `oead` (no 3.13 wheel available); auto-extracts romfs via `hactool` (PFS0 → program NCA → RomFS, ~5 GB cached at `.romfs-cache/`); walks `SystemData/ShineInfo.szs` (17 BYML kingdom shine lists) and joins against per-stage MSBT in `LocalizedData/USen/MessageData/StageMessage.szs` under `ScenarioName_<ObjId>` keys. Shipped MSBT parser is a ~150-line in-tree reader because `pymsyt` only knows BotW's control codes and chokes on SMO's. Cross-validates 100% (436/436) of apworld moons; emitted file covers all 775 SMO moons including 339 not currently in apworld (story moons, Dark/Darker Side, racing cups — emitted so future apworld expansion picks them up automatically). `shine_map.json` and `shine_map_review.json` are gitignored — Nintendo IP, regenerate per machine. Five new tests in `bridge/tests/test_shine_map_extraction.py` validate schema/count/dedup/anchor (auto-skip when file absent). Also fixed 10 apworld typos in `apworld/.../locations.json` (e.g. `"Cafe?"` → `"Café?"`, `"By the Falls"` → `"by the Falls"`). Full workflow in `docs/extract-moon-data.md`.
 - **M6**: item application (received items → GameDataHolder writes) — also lands snapshot enumerate bodies (`enumerateOwnedShines` / `enumerateOwnedCaptures`); same GameDataHolder traversal as `grantShine`
 - **M7**: capture lock + goal detection
 - **M8**: apworld extensions + in-game ImGui + polish
@@ -73,7 +95,7 @@ C:\Users\maxwe\SMOArchipelago\
   apworld/                       Forked manual_smo_mp3 → smo_archipelago
     smo_archipelago/             Full package; only `data/game.json` creator field changed
     README.md
-  bridge/                        Python bridge — 43 tests pass (+1 live-AP skipped)
+  bridge/                        Python bridge — 48 tests pass (+1 live-AP skipped)
     smo_ap_bridge/
       __main__.py
       config.py                  TOML loader, CLI overrides, env var SMOAP_PASSWORD / SMOAP_AP_PATH
@@ -84,7 +106,7 @@ C:\Users\maxwe\SMOArchipelago\
       state.py                   Thread-safe state mirror for tracker + replay
       tracker_web.py             Flask app on :8000, /api/snapshot
       logging_setup.py
-    tests/                       43 passing (test_ap_loopback.py skips unless SMOAP_LIVE_AP=1)
+    tests/                       48 passing (test_ap_loopback.py + extract tests auto-skip when prereq absent)
     pyproject.toml
     requirements.txt
     config.example.toml
@@ -105,10 +127,13 @@ C:\Users\maxwe\SMOArchipelago\
     bridge_smoke_test.py         Fake-Switch end-to-end test
     sync_capture_table.py        items.json → capture_table.h (use this; ps1 also exists)
     sync_capture_table.ps1
+    extract_shine_map.py         M5.8: NSP → romfs → shine_map.json (self-bootstrapping)
+    .extract-venv/               Auto-created Python 3.12 venv with oead (gitignored)
   docs/
     architecture.md              Three-tier diagram, threading, responsibilities
     wire-protocol.md             14 message types with examples
     build-windows.md             Toolchain install
+    extract-moon-data.md         M5.8: how to generate shine_map.json from your dump
     install-switch.md            SD card layout, troubleshooting
   vendor/                        For submodules (Archipelago goes here)
   third_party/                   Local clones — gitignored
@@ -237,18 +262,13 @@ python C:\Users\maxwe\Documents\smo_archipelago\scripts\bridge_smoke_test.py
 
 ## What's next
 
-**M5.7 — Ryujinx E2E** (next milestone): the AP loopback above, but with the real M3/M4 mod running in Ryujinx instead of `bridge_smoke_test.py`. Steps:
+**M6 implementation** (next milestone): in-game item application now that the moon-data table is complete and the round-trip is observable end-to-end. Three pieces:
 
-1. Boot SMO 1.0.0 in Ryujinx with our `subsdk9` deployed. Confirm `smoap.log` appears under `%APPDATA%/Ryujinx/sdcard/atmosphere/contents/0100000000010000/`. Ryujinx's game library must hold the 1.0.0 version (re-import if it still has 1.3.0).
-2. Once `smoap.log` is non-empty, the soft-install logs will name any symbols that didn't resolve. Fall back to delta-polling per-hook if needed (most likely candidate: `setGotShine` if inlined).
-3. Verify worker thread reaches `connect()` (LAN IP from `BRIDGE_HOST` cmake var). Bridge running on PC should log `switch HELLO`.
-4. With AP server already running (per the loopback recipe above), collect a moon in-game and confirm `LocationChecks` is logged at the AP server and the bridge logs `ItemMsg` going back down (it'll be a no-op on the Switch until M6, but the round-trip should be observable).
+1. `game/MoonApply::grantShine` — idempotent GameDataHolder write that grants a moon by `(stage_name, object_id, shine_uid)`. Must set `ApState::synthetic_grant_this_frame` so our own `MoonGetHook` doesn't re-report the synthetic grant.
+2. `game/CaptureGate::captureBlocked` — bitset gate on `PlayerHackKeeper::startHack` keyed by capture name → bit index from `capture_table.h`. Locks captures Mario hasn't received from AP.
+3. Snapshot enumerate bodies — `enumerateOwnedShines` / `enumerateOwnedCaptures` walk the same GameDataHolder traversal as `grantShine` and emit raw IDs into the `state_chunk` snapshot stream the bridge consumes for state reconciliation (M4.5 handler is already wired).
 
-**Then on real Switch** (only after Ryujinx green):
-5. `cmake --install build` → `xcopy /E /I /Y switch-mod\sd-overlay\atmosphere D:\atmosphere`.
-6. Boot SMO. Same `smoap.log` should appear under SD's `atmosphere/contents/0100000000010000/`.
-
-**After M5.7 — M6 implementation**: fill in-game item application — `game/MoonApply::grantShine` (idempotent GameDataHolder write), `game/CaptureGate::captureBlocked` (bitset gate on `PlayerHackKeeper::startHack`), and the snapshot enumerate bodies (`enumerateOwnedShines` / `enumerateOwnedCaptures`).
+All three are GameDataHolder reads/writes. Symbol set is in `switch-mod/src/hooks/HookSymbols.hpp`; expect to add 1-2 more for the GameDataHolder accessor (forward-declared from OdysseyDecomp + mangled via `aarch64-none-elf-g++ -c`).
 
 ## Adding new hook targets
 
@@ -295,59 +315,24 @@ python C:\Users\maxwe\SMOArchipelago\scripts\bridge_smoke_test.py
 
 The build also needs `set_source_files_properties(... PROPERTIES COMPILE_FLAGS "-fpermissive")` on lunakit's vendored sources because devkitA64 GCC 15 rejects const-T `std::construct_at` in lunakit's `typed_storage.hpp`. Already wired in our CMakeLists.
 
-## Moon data extraction (M5.8 plan context)
+## Moon data extraction (M5.8)
 
-`shine_map.json` currently has 1 of ~565 entries — populated by hand after M5.7's first end-to-end Ryujinx run. Next milestone bulk-fills it from SMO's romfs. Everything in this section is research notes for that planning session — no code has been written yet.
+Done — see `docs/extract-moon-data.md`. One command after `git clone`:
 
-### What we need
+```pwsh
+python scripts/extract_shine_map.py --nsp <SMO_1.0.0.nsp>
+```
 
-A full mapping of `(stage_name, obj_id) → (kingdom_prefix, english_display_name)` for every moon, so the bridge can resolve any `MoonGetHook` fire without manual labeling. ~565 entries to match `apworld/smo_archipelago/data/locations.json`'s moon-location count.
+Self-bootstraps a Python 3.12 venv with `oead` (no 3.13 wheel exists), runs `hactool` (PFS0 → program NCA → RomFS, ~5 GB cache at `.romfs-cache/`), walks the 17 `ShineList_<HomeStage>.byml` files in `SystemData/ShineInfo.szs`, joins each `ObjId` against the per-stage MSBT in `LocalizedData/USen/MessageData/StageMessage.szs` under key `ScenarioName_<ObjId>`. Output: 775 entries to `bridge/smo_ap_bridge/data/shine_map.json` (gitignored — Nintendo IP).
 
-### Why nothing public has this
+Ground-truth lookup convention discovered during build:
+- The MSBT lookup is in the **per-shine StageName MSBT**, NOT the HomeStage MSBT — sub-stages like `PushBlockExStage` carry their own `ScenarioName_<obj>` entries that don't appear in `CapWorldHomeStage.msbt`.
+- The kingdom assignment is determined by **which BYML the shine came from** (HomeStage), not by the per-shine StageName prefix — those don't match for `*ExStage`/`*Zone` sub-stages.
+- The standard `pymsyt` MSBT tool only knows BotW's control-code set and chokes on SMO's control code 6. We ship a ~150-line in-tree MSBT reader in `scripts/extract_shine_map.py` that generically skips all `0x0E…/0x0F…` sequences — enough for plain-text moon names.
 
-It lives in SMO's romfs, which is Nintendo IP. Every tool that uses the data (MoonFlow, OdysseyEditor) reads it at runtime from the user's dump. The English-name-by-kingdom lists in `empathy-mp3/SMO-manual-AP`, our forked apworld, and `rampantepsilon/smorando` were extracted by humans for those projects but the `(stage, obj_id) → name` join isn't published anywhere we searched (see the M5.7 chapter; we searched ~10 directions including GitHub, smo.wiki, GBATemp).
+Cross-validation against `apworld/smo_archipelago/data/locations.json` is 100% (436/436 apworld moons resolved). 339 extracted moons are out-of-scope of the apworld (story moons, Dark/Darker Side, racing cups, etc.) — emitted into `shine_map.json` so the bridge can resolve them if a future apworld adds them.
 
-### Where the data lives
-
-Inside SMO's romfs:
-
-- **`StageData/<Stage>ShineList.byml`** — per-stage list of every shine with metadata. Each entry has `StageName`, `ScenarioName`, `ObjId` (e.g. `"obj214"`), `UniqueId` (int), `MainScenarioNo`, `HintIdx`, `ProgressBitFlag`, `IsAchievement`, `IsGrand`, `IsMoonRock`, `Trans` (Vec3 world position). Field names confirmed via [MoonFlow ShineInfo.cs](https://github.com/Amethyst-szs/MoonFlow/blob/stable/MoonFlow.Project/DB/Info/ShineInfo.cs).
-- **`LocalizedData/USen/MessageData/StageMessage_<Stage>.szs` (or similar)** — message archive (SARC of MSBT files). Display names keyed by `"ScenarioName_" + ObjId` (e.g. `"ScenarioName_obj214"`). Lookup convention confirmed via MoonFlow source: see `ShineInfo.LookupDisplayName()`.
-
-### Tools available (all open source)
-
-- **[zeldamods/byml-v2](https://github.com/zeldamods/byml-v2)** — mature Python BYML parser/writer; full SMO support. Pip-installable.
-- **[Amethyst-szs/MoonFlow](https://github.com/Amethyst-szs/MoonFlow)** — C# Godot tool that already does this exact join. Could be run headless to dump or used as reference implementation. Already in our submodule tree via lunakit linkage (separate repo but same author).
-- **MSBT/SARC parsers** — several Python options exist; can crib from MoonFlow's `Nindot` library if Python options don't pan out.
-- **hactool / hactoolnet** — extract romfs from the user's `SMO_1.0.0.nsp` at `C:\Users\maxwe\Downloads\` (keys at `C:\Users\maxwe\.switch\prod.keys`).
-
-### Verified anchor entry
-
-Our one ground-truth datapoint from M5.7:
-- `(WaterfallWorldHomeStage, "obj214")` → kingdom `Cascade`, display name `"Our First Power Moon"`
-- The mod logged `scen=ScenarioName_obj214` from `ShineInfo` field at offset 0x130 — confirming the `"ScenarioName_" + ObjId` MSBT lookup key for this entry.
-
-Any extraction tool must produce this row identically.
-
-### Cross-validation against apworld
-
-Every extracted display name must match an entry in `apworld/smo_archipelago/data/locations.json` (565 strings of form `"<Kingdom>: <Moon name>"`). The extracted JSON is junk if it produces names that don't appear there — that signals a stage/scenario the upstream Manual world excluded, or a translation mismatch. Mismatches are the main risk surface in the design.
-
-### Likely shape of the output script
-
-`scripts/extract_shine_map.py` (TBD):
-1. Take a romfs path argument (user extracts NSP → romfs separately).
-2. Walk `StageData/*ShineList.byml` via `byml-v2`.
-3. Walk `LocalizedData/USen/MessageData/*` for MSBT message tables.
-4. Join `(StageName, ObjId) ↔ msbt[ScenarioName + "_" + ObjId]`.
-5. Cross-reference against `apworld/.../locations.json` to assign kingdom prefix (and drop / warn on names not present in the apworld).
-6. Emit `bridge/smo_ap_bridge/data/shine_map.json` covering all moons.
-
-Open design questions for the planning session:
-- Romfs extraction: ship a one-liner using hactoolnet (cli, MIT-licensed) in our `scripts/`, or document a manual step?
-- Whether to also extract capture metadata (the apworld omits tutorial captures, so the capture map likely stays partial — but the same mechanism could help if we later extend the apworld).
-- How to handle locale: USen is the canonical English. Could let users override for non-English play.
-- Whether the extraction script lives in `scripts/` (one-off) or `bridge/smo_ap_bridge/` (callable from a bridge subcommand for end-users with their own dump).
+Apworld typo fixes were checked in alongside the extractor (10 entries with `Cafe`/`Café`, `By/by`, missing `!`, etc., now matching Nintendo's USen MSBT).
 
 ## Known unknowns / risks
 
@@ -358,8 +343,5 @@ Open design questions for the planning session:
 
 ## What's definitely NOT done
 
-- Ryujinx + real-Switch boot validation — M3 module compiles + links cleanly but hasn't been loaded yet (next step)
-- AP-side connection in bridge never tested against a real server (needs Archipelago submodule + generated seed)
-- M4-M7 hook callback bodies — the 5 game-event hooks are empty trampolines that just call `Orig`. Real moon detection / capture lock / goal trigger lands in M4-M7
 - On-screen status overlay — deferred to M8 per user Q&A; M3 ships heartbeat-to-lm-log instead (web tracker is the canonical source of truth)
 - HELLO `cap_table_hash` field is empty — populated in M4 once we hash the generated `capture_table.h`
