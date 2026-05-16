@@ -85,7 +85,7 @@ class ShineMap:
 
 
 class CaptureMap:
-    """Resolve raw hack_name -> apworld-canonical cap name.
+    """Resolve raw hack_name -> apworld-canonical cap name (and vice versa).
 
     Default pass-through: if a hack_name isn't in the table we return it
     unchanged (most match 1:1 between SMO internals and apworld items.json).
@@ -94,10 +94,16 @@ class CaptureMap:
       [
         {"hack_name":"Kuribo", "cap":"Goomba"}
       ]
+
+    The reverse direction (cap -> hack_name) is used by M6 phase B item
+    application: when AP grants a capture item, the bridge needs to send
+    the raw SMO hack_name on the wire so the mod can feed it into
+    GameDataFunction::addHackDictionary.
     """
 
     def __init__(self, path: Path | None = None):
-        self._table: dict[str, str] = {}
+        self._table: dict[str, str] = {}        # hack_name -> cap
+        self._reverse: dict[str, str] = {}      # cap -> hack_name
         self._source = path
         if path is not None and path.exists():
             self.load(path)
@@ -111,9 +117,28 @@ class CaptureMap:
             cap = e.get("cap")
             if hack and cap:
                 self._table[hack] = cap
-        log.info("CaptureMap loaded %d entries from %s", len(self._table), path)
+                # First write wins if a single cap maps from multiple
+                # hack_names (rare; aliases in the M5.8 extractor handle
+                # the known cases).
+                self._reverse.setdefault(cap, hack)
+        log.info("CaptureMap loaded %d entries from %s "
+                 "(%d unique caps in reverse map)",
+                 len(self._table), path, len(self._reverse))
 
     def resolve(self, hack_name: str | None) -> str | None:
         if not hack_name:
             return None
         return self._table.get(hack_name, hack_name)
+
+    def cap_to_hack(self, cap: str | None) -> str | None:
+        """Reverse lookup: apworld cap name -> raw SMO hack_name.
+
+        Returns None when the cap isn't in the table — caller decides
+        whether to fall through (pass `cap` directly to addHackDictionary,
+        works for the ~36/42 captures whose names are 1:1) or to drop the
+        item with a log line. M6 phase B picks the former: empty maps
+        gracefully degrade to identity.
+        """
+        if not cap:
+            return None
+        return self._reverse.get(cap, cap)

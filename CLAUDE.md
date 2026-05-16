@@ -88,7 +88,8 @@ The PC bridge owns AP-protocol complexity (websocket + deflate + TLS + reconnect
   - **Cross-validation**: 100% (436/436 moons + 42/42 captures) of apworld entries resolve. Emitted files cover the full 775 + 52 SMO entries — extras (339 out-of-apworld-scope moons, 8 out-of-scope captures) emitted so future apworld expansion picks them up automatically.
   - **IP discipline**: all 4 generated files (`shine_map.json`, `shine_map_review.json`, `capture_map.json`, `capture_map_review.json`) are gitignored. Nine tests in `bridge/tests/test_shine_map_extraction.py` validate schema/count/dedup/anchors for both maps (auto-skip when files absent). Also fixed 10 apworld typos in `apworld/.../locations.json` (e.g. `"Cafe?"` → `"Café?"`, `"By the Falls"` → `"by the Falls"`). Full workflow in `docs/extract-moon-data.md`.
 - **M6 phase A**: AP-credit moon counter HUD substitution — **DONE 2026-05-15.** Two new trampoline hooks (`ShineNumGetHook` on `GameDataFunction::getCurrentShineNum`, `ShineNumByWorldGetHook` on `getGotShineNum`) drop `orig` and return AP-credit-only counts. `ApState` gains `ap_moons_unkingdomed` (truly-generic "Power Moon" credits) + `ap_moons_kingdom[17]` (kingdom-tagged credits, indexed by `kingdomBitFor`). `applyOnFrame` moon arm rewritten to bump credit counters with rich logging (`[m6-moon]` lines); Multi-Moon items grant +3, single-moon +1, kingdom-less generic credits go to `ap_moons_unkingdomed` and only show in the global counter. setGotShine runs untouched so the shine list correctly reflects local pickups — only the visible counter is AP-gated. Validated in Ryujinx (2026-05-15): local moon collection → HUD stays 0, Odyssey ship rejects the moon ("doesn't count"); REPL `grant Cascade Kingdom Power Moon` → HUD ticks to 1, Mario can hand it to the Odyssey; `grant Snow Kingdom Power Moon` rejected by the Cascade Odyssey (kingdom-specific routing works); pre-existing save moons disappear from the visible counter (orig is fully suppressed). `getGotShineNum` hook resolves and fires when explicitly invoked but **never fires during normal Cascade play** — SMO's natural per-kingdom counter reads shine flags directly; the global `getCurrentShineNum` does most of the work for HUD + Odyssey gating. Two new symbols mangled via `aarch64-none-elf-g++ -c` from OdysseyDecomp forward-decls and added to `scripts/check_nso_symbols.py`. Also fixed a latent classifier bug: items use ` Kingdom ` separator (space), not `:` (location form), so `"Cascade Kingdom Power Moon"` was silently routing to `kingdom=None` — fix in `datapackage.py` with new `_ITEM_MOON_KINGDOM_RE`. Bridge `--repl` mode added for dev-test injection without an AP server (commands route through `DataPackage.classify_item` so wire fidelity matches real AP items). M6 phase B (captures) + phase C (kingdom unlock via `unlockWorld` + snapshot enumerate bodies) are the obvious continuations.
-- **M6 phase B/C** (deferred): the original M6 single-shot plan. Captures via `addHackDictionary`, kingdom unlocks via `unlockWorld`, snapshot enumerate bodies (`enumerateOwnedShines` / `enumerateOwnedCaptures`). Symbols already in `scripts/check_nso_symbols.py`. Phase A's REPL-injection flow is the test loop for these.
+- **M6 phase B**: capture grant via `addHackDictionary` — **DONE 2026-05-16.** AP-issued capture items now write into SMO's hack dictionary so unlocked captures appear in the in-game Capture List. Two new symbols (`addHackDictionary` + `isExistInHackDictionary` for idempotency probe) resolved via `nn::ro::LookupSymbol` at module init, stored as function pointers (same pattern as `CaptureStartHook::getCurrentHackName`). New `CaptureGate::grantCapture(cap_name, hack_name)` is called from `ApState::applyOnFrame` capture arm; idempotent via `isExistInHackDictionary`; falls back to identity (`hack_name = cap_name`) when bridge didn't resolve, which works for the ~36 1:1 names like Frog→Frog. `ApState` gains `game_data_holder_cache` (atomic `void*`); `DrawMainHook` reads `HakoniwaSequence::mGameDataHolder` at offset 0xB8 (a `GameDataHolderAccessor` whose first field is the holder ptr) every frame and stores it. `GameDataHolderWriter` / `GameDataHolderAccessor` are 1-pointer Itanium-ABI-trivial wrappers; we declare local mirror structs and brace-init from the cached pointer when constructing arguments. Bridge: `ItemMsg` gains optional `hack_name`; `CaptureMap` gains a `cap_to_hack` reverse lookup; `ap_client.py::ReceivedItems` stamps the resolved hack_name onto `ItemRef` before `add_received_item` so reconnect-replay carries it through `switch_server.py`. REPL also threads the `CaptureMap` so `capture <name>` ships an identical wire payload to a real AP-issued capture. Latent classifier robustness: `_strip_none` ensures `hack_name: None` is omitted from the wire payload so old mods don't choke. 8 new bridge tests (2 protocol round-trip, 4 reverse-map, 2 REPL). Playtest validated (2026-05-16): REPL `capture <name>` → mod log `[m6-capture] addHackDictionary OK cap='X' hack='Y'` → capture appears unlocked in the Cappy Capture List menu.
+- **M6 phase C** (deferred): kingdom unlocks via `unlockWorld` (the user's "less ideal" fallback should it turn out the AP-credit moon counter doesn't fully gate kingdom progression in every case), plus M4.5 snapshot enumerate bodies (`enumerateOwnedShines` / `enumerateOwnedCaptures`). Symbols already in `scripts/check_nso_symbols.py`. Phase A's REPL-injection flow + the new phase B grant path are the test infrastructure.
 - **M7**: capture lock + goal detection
 - **M8**: apworld extensions + in-game ImGui + polish (incl. dedicated AP-credit HUD overlay — see "What's definitely NOT done")
 
@@ -104,7 +105,7 @@ C:\Users\maxwe\SMOArchipelago\
   apworld/                       Forked manual_smo_mp3 → smo_archipelago
     smo_archipelago/             Full package; only `data/game.json` creator field changed
     README.md
-  bridge/                        Python bridge — 72 tests pass (+1 live-AP skipped)
+  bridge/                        Python bridge — 80 tests pass (+1 live-AP skipped)
     smo_ap_bridge/
       __main__.py
       config.py                  TOML loader, CLI overrides, env var SMOAP_PASSWORD / SMOAP_AP_PATH
@@ -115,7 +116,7 @@ C:\Users\maxwe\SMOArchipelago\
       state.py                   Thread-safe state mirror for tracker + replay
       tracker_web.py             Flask app on :8000, /api/snapshot, /api/test/inject-deathlink (debug)
       logging_setup.py
-    tests/                       72 passing (test_ap_loopback.py + extract tests auto-skip when prereq absent)
+    tests/                       80 passing (test_ap_loopback.py + extract tests auto-skip when prereq absent)
     pyproject.toml
     requirements.txt
     config.example.toml
@@ -228,7 +229,7 @@ Critical bug we hit twice. `lunakit-vendor/src/lib/nx/kernel/svc.h` and `lib/nx/
 
 ```pwsh
 cd C:\Users\maxwe\Documents\smo_archipelago\bridge
-.\.venv\Scripts\python -m pytest                            # 72 tests pass (1 skipped: live-AP)
+.\.venv\Scripts\python -m pytest                            # 80 tests pass (1 skipped: live-AP)
 .\.venv\Scripts\python -m smo_ap_bridge --no-web-tracker    # without web tracker
 .\.venv\Scripts\python -m smo_ap_bridge --config config.local.toml --web-tracker  # full
 ```

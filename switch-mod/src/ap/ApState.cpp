@@ -96,10 +96,18 @@ void ApState::applyOnFrame() {
                 if (!item.cap.empty()) {
                     const std::uint8_t bit = smoap::game::captureBitFor(item.cap);
                     if (bit < captures_unlocked.size()) captures_unlocked.set(bit);
-                    SMOAP_LOG_INFO("[m6-capture] local-bit only (phase B "
-                                   "lands hack-dictionary write): cap='%s' "
-                                   "bit=%u from=%s",
-                                   item.cap.c_str(), bit, item.from.c_str());
+                    SMOAP_LOG_INFO("[m6-capture] cap='%s' bit=%u "
+                                   "hack='%s' from=%s",
+                                   item.cap.c_str(), bit,
+                                   item.hack_name.c_str(), item.from.c_str());
+                    // M6 phase B: actually write into SMO's hack dictionary
+                    // so the capture compendium / gameplay treats it as
+                    // owned. Falls back to identity (use cap as hack_name)
+                    // when bridge didn't resolve — works for the 1:1 names
+                    // like Goomba/Goomba.
+                    const std::string& hack = item.hack_name.empty()
+                        ? item.cap : item.hack_name;
+                    smoap::game::grantCapture(item.cap, hack);
                 }
                 break;
             case ItemKind::Kingdom:

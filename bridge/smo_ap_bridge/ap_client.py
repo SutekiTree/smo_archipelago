@@ -301,6 +301,14 @@ class SmoApBridgeContext:
                 name = self._dp.item_id_to_name.get(item_id, f"<unknown:{item_id}>")
                 ci = self._dp.classify_item(name)
                 ref = ci.to_ref()
+                # M6 phase B: resolve cap -> hack_name once here so the mod
+                # gets the raw SMO identifier ready for addHackDictionary.
+                # Stamp onto ItemRef BEFORE add_received_item so reconnect-
+                # replay carries the resolved hack_name without re-resolving.
+                # Reverse map falls back to identity when absent (works for
+                # 1:1 capture names like Goomba/Goomba).
+                if ref.kind == "capture" and ref.cap:
+                    ref.hack_name = self._capture_map.cap_to_hack(ref.cap)
                 sender_name = self._sender_name(ctx, sender_idx)
                 evt = ItemEvent(item=ref, sender=sender_name)
                 self._state.add_received_item(evt)
@@ -312,6 +320,7 @@ class SmoApBridgeContext:
                     slot=ref.slot,
                     name=ref.name,
                     from_=sender_name,
+                    hack_name=ref.hack_name,
                 ))
         elif cmd == "DataPackage":
             data = args.get("data", {}).get("games", {})

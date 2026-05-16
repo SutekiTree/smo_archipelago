@@ -114,6 +114,38 @@ def test_capture_command(dp, state):
     assert r.item.kind == "capture"
     assert r.item.cap == "Goomba"
     assert r.item.from_ == "repl"
+    # Without a CaptureMap argument hack_name stays None.
+    assert r.item.hack_name is None
+
+
+def test_capture_command_with_capture_map_populates_hack_name(dp, state, tmp_path):
+    """REPL `capture <cap>` populates hack_name via the reverse CaptureMap."""
+    from smo_ap_bridge.maps import CaptureMap
+    import json
+    cm_path = tmp_path / "capture_map.json"
+    cm_path.write_text(json.dumps([
+        {"hack_name": "Kuribo", "cap": "Goomba"},
+    ]), encoding="utf-8")
+    cm = CaptureMap(cm_path)
+
+    r = parse_command("capture Goomba", dp, state, capture_map=cm)
+    assert r.item is not None
+    assert r.item.kind == "capture"
+    assert r.item.cap == "Goomba"
+    assert r.item.hack_name == "Kuribo"
+
+
+def test_capture_command_with_capture_map_identity_passthrough(dp, state, tmp_path):
+    """1:1 cap names without a map entry pass through identically."""
+    from smo_ap_bridge.maps import CaptureMap
+    import json
+    cm_path = tmp_path / "capture_map.json"
+    cm_path.write_text(json.dumps([]), encoding="utf-8")  # empty
+    cm = CaptureMap(cm_path)
+
+    r = parse_command("capture Frog", dp, state, capture_map=cm)
+    assert r.item is not None
+    assert r.item.hack_name == "Frog"  # identity passthrough
 
 
 def test_capture_no_arg(dp, state):

@@ -42,6 +42,11 @@ void installShineNumGetHook();
 void installShineNumByWorldGetHook();
 }  // namespace smoap::hooks
 
+namespace smoap::game {
+// M6 phase B: resolve addHackDictionary + isExistInHackDictionary once.
+void installCaptureGrantSymbols();
+}  // namespace smoap::game
+
 namespace {
 
 // Hook 1 — game-system init. Run after Orig so SMO's heap and other
@@ -89,6 +94,19 @@ HOOK_DEFINE_TRAMPOLINE(DrawMainHook) {
             SMOAP_LOG_INFO(">>> drawMain hook FIRED (first frame)");
         }
         Orig(self);
+        // M6 phase B: cache GameDataHolder* for grantCapture / future M6
+        // GameDataFunction calls. HakoniwaSequence::mGameDataHolder lives at
+        // offset 0xB8 (see lunakit-vendor HakoniwaSequence.h) and is a
+        // GameDataHolderAccessor — first field is the GameDataHolder*. Refresh
+        // every frame in case the holder swaps (it doesn't in practice, but
+        // cheap insurance against scene transitions).
+        if (self) {
+            constexpr std::size_t kGameDataHolderOffset = 0xB8;
+            void* gdh = *reinterpret_cast<void* const*>(
+                reinterpret_cast<const std::uint8_t*>(self) + kGameDataHolderOffset);
+            smoap::ap::ApState::instance().game_data_holder_cache.store(
+                gdh, std::memory_order_relaxed);
+        }
         smoap::ap::ApState::instance().applyOnFrame();
         smoap::ui::drawHudFrame();
     }
@@ -128,6 +146,9 @@ extern "C" void exl_main(void* /*x0*/, void* /*x1*/) {
     SMOAP_LOG_INFO("installing 2 M6-phase-A shine-counter hooks");
     smoap::hooks::installShineNumGetHook();
     smoap::hooks::installShineNumByWorldGetHook();
+
+    SMOAP_LOG_INFO("resolving M6-phase-B capture-grant symbols");
+    smoap::game::installCaptureGrantSymbols();
 
     SMOAP_LOG_INFO("=== exl_main END (waiting for GameSystem::init to fire) ===");
 }

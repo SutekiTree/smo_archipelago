@@ -157,6 +157,20 @@ public:
     std::atomic<int> ap_moons_unkingdomed{0};
     std::atomic<int> ap_moons_kingdom[17] = {};
 
+    // M6 phase B — GameDataHolder pointer cache.
+    //
+    // DrawMainHook reads HakoniwaSequence::mGameDataHolder (offset 0xB8, a
+    // GameDataHolderAccessor wrapping a GameDataHolder*) on every frame and
+    // stores the GameDataHolder* here. CaptureGate::grantCapture (and the
+    // upcoming phase C kingdom / snapshot enumerate paths) consume it to
+    // construct GameDataHolderWriter / GameDataHolderAccessor wrappers for
+    // GameDataFunction:: calls.
+    //
+    // Same thread on both sides (game frame thread); atomic only for the
+    // visibility guarantee — matches the player_hp_cache pattern above.
+    // Stored as void* to avoid leaking the game header here.
+    std::atomic<void*> game_data_holder_cache{nullptr};
+
     // DeathLink debounce. Set by the frame thread when PlayerHitPointData::kill
     // fires; cleared by the socket worker after the death message ships. A
     // second kill() within the same death event short-circuits.

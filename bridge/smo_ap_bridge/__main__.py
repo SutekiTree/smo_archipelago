@@ -196,7 +196,8 @@ async def run(args: argparse.Namespace) -> int:
     if args.repl:
         from .repl import run_repl
         repl_task = asyncio.create_task(
-            run_repl(sw.send_item, dp, state, shutdown), name="repl"
+            run_repl(sw.send_item, dp, state, shutdown, capture_map=capture_map),
+            name="repl",
         )
 
     try:

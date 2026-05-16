@@ -248,6 +248,10 @@ bool parseItem(Reader& r, Item& out) {
         else if (key == "name")     { if (!readIntoString(r, out.name)) return false; }
         else if (key == "slot")     { if (!readIntoInt(r, out.slot)) return false; }
         else if (key == "from")     { if (!readIntoString(r, out.from)) return false; }
+        // M6 phase B: bridge populates hack_name for capture items (cap → hack
+        // reverse lookup via CaptureMap). Mod-side passes hack_name straight
+        // to GameDataFunction::addHackDictionary.
+        else if (key == "hack_name"){ if (!readIntoString(r, out.hack_name)) return false; }
         else                        { return false; }
     }
     return true;

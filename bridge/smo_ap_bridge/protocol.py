@@ -227,6 +227,11 @@ class ItemMsg:
     slot: int | None = None
     name: str | None = None
     from_: str = "self"
+    # M6 phase B: for capture items, the bridge resolves cap -> hack_name via
+    # the reverse CaptureMap and ships hack_name to the Switch. Mod feeds it
+    # straight into GameDataFunction::addHackDictionary. None when no map
+    # entry exists; the mod logs and drops.
+    hack_name: str | None = None
 
     def to_wire(self) -> dict[str, Any]:
         d = asdict(self)

@@ -161,6 +161,11 @@ struct Item {
     std::string name;
     int slot = -1;
     std::string from;
+    // M6 phase B: populated by the bridge for capture items via the reverse
+    // CaptureMap (cap_name -> hack_name). Mod feeds straight to
+    // GameDataFunction::addHackDictionary. Empty when the bridge had no map
+    // entry — mod logs and drops in that case.
+    std::string hack_name;
 };
 
 struct Print {

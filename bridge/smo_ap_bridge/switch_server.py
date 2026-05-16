@@ -239,6 +239,11 @@ class SwitchServer:
                 slot=evt.item.slot,
                 name=evt.item.name,
                 from_=evt.sender,
+                # M6 phase B: hack_name was resolved bridge-side when the item
+                # was first received; carry it through replay so the Switch
+                # mod can grant the capture after reconnect without needing
+                # bridge to re-resolve.
+                hack_name=evt.item.hack_name,
             ))
 
         await self._send(ApStateMsg(conn=self._state.ap_conn))

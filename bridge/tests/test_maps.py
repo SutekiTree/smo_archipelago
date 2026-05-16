@@ -65,3 +65,36 @@ def test_capture_map_none_input() -> None:
     m = CaptureMap()
     assert m.resolve(None) is None
     assert m.resolve("") is None
+
+
+# M6 phase B — reverse lookup (cap_name -> hack_name) used by item application.
+
+
+def test_capture_map_reverse_resolves(tmp_path: Path) -> None:
+    p = _write(tmp_path, "cap.json", [
+        {"hack_name": "Kuribo", "cap": "Goomba"},
+        {"hack_name": "Pukupuku", "cap": "Cheep Cheep"},
+    ])
+    m = CaptureMap(p)
+    assert m.cap_to_hack("Goomba") == "Kuribo"
+    assert m.cap_to_hack("Cheep Cheep") == "Pukupuku"
+
+
+def test_capture_map_reverse_passthrough_when_unmapped(tmp_path: Path) -> None:
+    """Caps not in the map identity-passthrough — covers the 1:1 names."""
+    p = _write(tmp_path, "cap.json", [
+        {"hack_name": "Kuribo", "cap": "Goomba"},
+    ])
+    m = CaptureMap(p)
+    assert m.cap_to_hack("Frog") == "Frog"
+
+
+def test_capture_map_reverse_handles_missing_file() -> None:
+    m = CaptureMap(Path("/nonexistent/path/capture_map.json"))
+    assert m.cap_to_hack("Goomba") == "Goomba"  # full identity-passthrough
+
+
+def test_capture_map_reverse_none_input() -> None:
+    m = CaptureMap()
+    assert m.cap_to_hack(None) is None
+    assert m.cap_to_hack("") is None

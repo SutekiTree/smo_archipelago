@@ -47,6 +47,25 @@ def test_item_msg_renames_from():
     assert "from_" not in parsed
 
 
+def test_item_msg_hack_name_round_trip():
+    """M6 phase B: ItemMsg carries hack_name for capture items so the mod
+    can pass it straight into addHackDictionary."""
+    msg = ItemMsg(kind="capture", cap="Goomba", hack_name="Kuribo", from_="Mario")
+    raw = protocol.encode(msg)
+    parsed = protocol.decode(raw)
+    assert parsed["kind"] == "capture"
+    assert parsed["cap"] == "Goomba"
+    assert parsed["hack_name"] == "Kuribo"
+
+
+def test_item_msg_hack_name_omitted_when_none():
+    """None values are stripped from the wire payload."""
+    msg = ItemMsg(kind="moon", kingdom="Cap", shine_id="Power Moon")
+    raw = protocol.encode(msg)
+    parsed = protocol.decode(raw)
+    assert "hack_name" not in parsed
+
+
 def test_hello_ack_optional_fields():
     msg = HelloAckMsg(ok=True, seed="X4F2", slot="Mario")
     raw = protocol.encode(msg)

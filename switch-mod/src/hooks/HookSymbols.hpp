@@ -118,6 +118,25 @@ inline constexpr const char* kGameDataFunctionGetGotShineNum =
     "_ZN16GameDataFunction14getGotShineNumE22GameDataHolderAccessori";
 
 // =============================================================================
+// M6 phase B — capture grant (addHackDictionary + idempotency probe).
+// =============================================================================
+//
+// Goal: when AP grants a capture item, the mod writes the cap's hack_name into
+// SMO's hack dictionary so the capture compendium / gameplay treats it as
+// owned. Idempotency uses isExistInHackDictionary to skip redundant calls.
+//
+// Provenance: same OdysseyDecomp forward-decls in lunakit-vendor/src/game/
+// GameData/GameDataFunction.h:361,362. Mangled via aarch64-none-elf-g++ -c.
+
+// GameDataFunction::addHackDictionary(GameDataHolderWriter, const char* hack_name)
+inline constexpr const char* kGameDataFunctionAddHackDictionary =
+    "_ZN16GameDataFunction17addHackDictionaryE20GameDataHolderWriterPKc";
+
+// GameDataFunction::isExistInHackDictionary(GameDataHolderAccessor, const char* hack_name)
+inline constexpr const char* kGameDataFunctionIsExistInHackDictionary =
+    "_ZN16GameDataFunction23isExistInHackDictionaryE22GameDataHolderAccessorPKc";
+
+// =============================================================================
 // Legacy / aliasing — kept so existing call sites don't break.
 // =============================================================================
 inline constexpr const char* kSeadGameSystemCtor       = kGameSystemInit;

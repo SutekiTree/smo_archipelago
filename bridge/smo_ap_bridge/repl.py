@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from typing import Awaitable, Callable
 
 from .datapackage import ClassifiedItem, DataPackage
+from .maps import CaptureMap
 from .protocol import ItemKind, ItemMsg
 from .state import BridgeState, ItemEvent
 
@@ -60,7 +61,12 @@ class ParseResult:
     quit: bool = False
 
 
-def parse_command(line: str, dp: DataPackage, state: BridgeState | None = None) -> ParseResult:
+def parse_command(
+    line: str,
+    dp: DataPackage,
+    state: BridgeState | None = None,
+    capture_map: CaptureMap | None = None,
+) -> ParseResult:
     """Pure parser — line -> action. Unit-testable without I/O."""
     s = line.strip()
     if not s:
@@ -110,7 +116,15 @@ def parse_command(line: str, dp: DataPackage, state: BridgeState | None = None) 
         if not arg:
             return ParseResult(error="usage: capture <name>")
         ci = ClassifiedItem(kind=ItemKind.CAPTURE, name=arg, cap=arg)
-        return ParseResult(item=_classified_to_itemmsg(ci, arg))
+        # M6 phase B: resolve cap -> hack_name via the same CaptureMap the
+        # ap_client path uses, so REPL injection has the same wire payload
+        # as a real AP-issued capture. Identity-passthrough if no map entry.
+        hack = None
+        if capture_map is not None:
+            hack = capture_map.cap_to_hack(arg)
+        msg = _classified_to_itemmsg(ci, arg)
+        msg.hack_name = hack
+        return ParseResult(item=msg)
 
     if cmd == "kingdom":
         if not arg:
@@ -146,6 +160,7 @@ async def run_repl(
     dp: DataPackage,
     state: BridgeState,
     shutdown_event: asyncio.Event,
+    capture_map: CaptureMap | None = None,
 ) -> None:
     """Read stdin via a daemon thread; dispatch commands on the asyncio loop.
 
@@ -181,7 +196,7 @@ async def run_repl(
             shutdown_event.set()
             return
 
-        result = parse_command(line, dp, state)
+        result = parse_command(line, dp, state, capture_map)
         if result.error:
             print(f"  err: {result.error}", flush=True)
         if result.info:
@@ -198,6 +213,7 @@ async def run_repl(
                 cap=result.item.cap,
                 slot=result.item.slot,
                 name=result.item.name,
+                hack_name=result.item.hack_name,
             )
             state.add_received_item(ItemEvent(item=ref, sender="repl"))
             try:

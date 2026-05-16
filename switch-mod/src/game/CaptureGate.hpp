@@ -15,6 +15,28 @@ namespace smoap::game {
 // or 0xff if the name is unknown.
 std::uint8_t captureBitFor(const std::string& cap_name);
 
+// M6 phase B: write `hack_name` into SMO's hack dictionary so the capture
+// shows as unlocked in the compendium (and is treated as known by gameplay).
+// Idempotent — probes isExistInHackDictionary first; the GameDataFunction
+// API itself is a no-op on duplicates anyway.
+//
+// Inputs:
+//   cap_name  — apworld-canonical cap name (e.g. "Goomba"). Used for logging.
+//   hack_name — raw SMO hack name (e.g. "Kuribo"). What goes into the game.
+//
+// Call from the game frame thread only. Requires the GameDataHolder* cache
+// in ApState to be populated (DrawMainHook does this every frame).
+//
+// resolveCaptureGrantSymbols() must be called once at module init (from
+// installCaptureGrantSymbols below) to bind the GameDataFunction:: function
+// pointers via nn::ro::LookupSymbol. If the lookup fails, grantCapture logs
+// and drops.
+void grantCapture(const std::string& cap_name, const std::string& hack_name);
+
+// Resolve the addHackDictionary + isExistInHackDictionary symbols once at
+// module init. Wired from main.cpp alongside the existing softInstall calls.
+void installCaptureGrantSymbols();
+
 // True if the player has *not* received the unlock item for this capture.
 bool captureBlocked(const std::string& cap_name);
 
