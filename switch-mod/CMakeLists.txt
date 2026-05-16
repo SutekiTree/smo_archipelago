@@ -90,6 +90,9 @@ include_directories(
     ${LUNAKIT}/src                          # lib.hpp, nn.hpp, common.hpp, helpers.h, types.h
     ${LUNAKIT}/src/lib                      # exlaunch core headers
     ${LUNAKIT}/src/nn                       # nn:: headers
+    ${LUNAKIT}/src/nvn                      # Nintendo NVN graphics SDK (declarations only — transitively
+                                            # pulled in by some lunakit headers we touch. We do not draw
+                                            # to NVN; in-game text is owned by SMO via CappyMessenger.)
     ${LUNAKIT}/src/sead                     # sead headers
     ${LUNAKIT}/src/program                  # setting.hpp (used by lunakit lib code)
 )

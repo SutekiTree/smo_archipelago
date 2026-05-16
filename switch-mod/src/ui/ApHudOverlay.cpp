@@ -1,9 +1,12 @@
-// M3 HUD: a heartbeat-only "overlay" that logs the AP connection state
-// every ~60 frames (~1s at 60 fps). On-screen drawing via agl::DrawContext
-// is deferred to M8.
+// Connection-status heartbeat log.
 //
-// The web tracker (running on the PC bridge at http://localhost:8000) is the
-// canonical source of truth for connection status during M3-M7 testing.
+// In-game text rendering was attempted via sead::TextWriter +
+// sead::DebugFontMgrJis1Nvn here, but bootstrapping that font singleton
+// reliably from a third-party subsdk requires LunaKit cohabit (font heap +
+// init ordering). The user's preference is a self-contained mod, so
+// notifications now route through SMO's existing Cappy-speech pipeline via
+// CappyMessenger — which uses Nintendo's fonts/layout for free and doesn't
+// fight for the sead singleton.
 
 #include "ApHudOverlay.hpp"
 
@@ -32,18 +35,19 @@ constexpr std::uint32_t kHeartbeatInterval = 60;  // frames
 }  // namespace
 
 void initHud() {
-    SMOAP_LOG_INFO("HUD initialized (heartbeat-only mode for M3)");
+    SMOAP_LOG_INFO("HUD initialized (heartbeat mode; Cappy speech via CappyMessenger)");
 }
 
 void drawHudFrame() {
-    static std::uint32_t s_frame = 0;
-    if ((++s_frame % kHeartbeatInterval) != 0) return;
+    auto& st = smoap::ap::ApState::instance();
 
-    const auto& st = smoap::ap::ApState::instance();
-    SMOAP_LOG_INFO("AP heartbeat: conn=%s checked=%u captures=%u",
-                   connStateName(st.conn.load()),
-                   static_cast<unsigned>(st.locations_checked.size()),
-                   static_cast<unsigned>(st.captures_unlocked.count()));
+    static std::uint32_t s_frame = 0;
+    if ((++s_frame % kHeartbeatInterval) == 0) {
+        SMOAP_LOG_INFO("AP heartbeat: conn=%s checked=%u captures=%u",
+                       connStateName(st.conn.load()),
+                       static_cast<unsigned>(st.locations_checked.size()),
+                       static_cast<unsigned>(st.captures_unlocked.count()));
+    }
 }
 
 }  // namespace smoap::ui

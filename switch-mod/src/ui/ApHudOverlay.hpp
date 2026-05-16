@@ -1,8 +1,6 @@
-// Always-on minimal status overlay.
-//
-// Renders 2 lines in the corner of the screen using agl::DrawContext (the
-// same primitive LunaKit uses for its toast messages). Independent of
-// LunaKit's ImGui context so it works with or without LunaKit installed.
+// Connection-status heartbeat log (and per-frame entry point reserved for
+// future on-screen UI). In-game item notifications are owned by
+// CappyMessenger — this file does NOT render text.
 
 #pragma once
 
@@ -12,6 +10,7 @@ namespace smoap::ui {
 void initHud();
 
 // Called from the drawMain trampoline once per frame (after applyOnFrame).
+// Logs an AP-connection heartbeat to lm.log every ~1s. No on-screen drawing.
 void drawHudFrame();
 
 }  // namespace smoap::ui

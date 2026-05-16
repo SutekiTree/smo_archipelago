@@ -477,8 +477,16 @@ void ApClient::handleLine(char* line, std::size_t line_len) {
     };
     if (eq(m.t, "hello_ack")) {
         auto& st = ApState::instance();
-        st.conn.store(ConnState::Ready);
+        // Publish local_slot + deathlink_enabled BEFORE the conn.store(Ready)
+        // release. The frame thread observes conn == Ready first (acquire),
+        // then reads local_slot — no separate fence needed. Toast filter
+        // compares item.from against local_slot to skip self-grants.
+        // M6.1: HelloAck::slot is now a fixed char[] (not std::string) —
+        // no .c_str() needed. snprintf still safest for length-bounded copy.
+        std::snprintf(st.local_slot, sizeof(st.local_slot),
+                      "%s", m.hello_ack.slot);
         st.deathlink_enabled.store(m.hello_ack.deathlink_enabled, std::memory_order_relaxed);
+        st.conn.store(ConnState::Ready, std::memory_order_release);
         SMOAP_LOG_INFO("hello_ack: ok=%d seed=%s slot=%s deathlink_enabled=%d",
                        m.hello_ack.ok ? 1 : 0,
                        m.hello_ack.seed,

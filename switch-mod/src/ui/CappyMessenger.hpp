@@ -1,0 +1,194 @@
+// "Cappy speaks for Archipelago" — per-frame driver that routes AP item
+// notifications through SMO's existing CapMessage speech-bubble pipeline.
+//
+// Why this design (the long story is in CLAUDE.md M-track docs):
+//   The prior approach rendered toasts directly via sead::TextWriter, which
+//   needs the sead::DebugFontMgrJis1Nvn font singleton primed. We can't
+//   reliably bootstrap that font from a third-party subsdk (heap lifetime +
+//   singleton-instance ordering problems documented in the now-deleted
+//   ApHudOverlay::initTextWriter comment). Lunakit cohabit was the only out,
+//   and the user wants to ship a self-contained mod.
+//
+//   So instead: piggy-back on Nintendo's CapMessage system. It already has
+//   font, layout, animation, voice gating, 2D suppression, and priority
+//   handling wired up. We just need to hijack the MSBT text lookup for one
+//   reserved label so it returns OUR string instead of a Nintendo one.
+//
+// Threading: enqueue + tryPump + setText hook all run on the game frame
+// thread. The single backing UTF-16 buffer is read-only from the perspective
+// of the rest of the game; rotation of its contents is gated on
+// rs::isActiveCapMessage returning false (no overlap window).
+//
+// Filter rules match the prior ToastQueue contract: skip self-grants, skip
+// REPL/bridge-injected items, skip Shop/Other kinds, suppress on bulk replays.
+// Host tests in switch-mod/tests/test_cappy_messenger.cpp exercise these
+// rules without linking the game-side machinery.
+
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+
+#include "../ap/ApProtocol.hpp"
+
+namespace smoap::ui {
+
+// Reserved MSBT label used as the trigger for our CapMessage substitution.
+// Nintendo's content never uses the "Archipelago" prefix, so collisions are
+// impossible. The MessageHolderTryGetTextHook trampoline keys off an exact
+// strcmp against this string.
+//
+// Cap is 64 bytes; the label itself is ASCII and unlikely to ever grow.
+inline constexpr const char* kArchipelagoLabel = "ArchipelagoCappyMsg";
+
+class CappyMessenger {
+public:
+    // Pending-message ring. Cap chosen empirically: a kingdom-unlock burst
+    // never exceeds 4-5 items and the user picked "suppress on bulk replay"
+    // so anything larger gets dropped at the source. 8 is generous.
+    static constexpr std::size_t kQueueCap = 8;
+
+    // Each on-screen balloon lives ~3s; if rs::tryShowCapMessagePriorityLow
+    // returns false for this many consecutive frames we drop the head item
+    // with a log line rather than queueing indefinitely. ~30s @ 60fps.
+    static constexpr std::uint32_t kMaxRetryFrames = 1800;
+
+    // Defensive: wait this many frames AFTER we first see a non-null scene
+    // before attempting any rs:: dispatch. Gives the StageScene time to
+    // finish endInit + register its SceneObjHolder children (CapMessage
+    // Director among them). Otherwise rs::isActiveCapMessage NULL-derefs
+    // on the un-registered director. ~2s @ 60fps.
+    static constexpr std::uint32_t kSceneSettleFrames = 120;
+
+    // On-screen duration. Passed as the THIRD positional arg to
+    // rs::tryShowCapMessagePriorityLow (which the decompiler signature
+    // makes look like "delay" — see disasm note in tryPump). 90 ticks
+    // @ 60Hz = 1.5s, the user-requested baseline.
+    static constexpr int kWaitTicks = 90;
+
+    // Soft target for total displayed-string length (UTF-8 bytes, ASCII
+    // chars 1:1). If the full "Got X from Y!" exceeds this, the formatter
+    // truncates the SENDER first (preserving the item name in full) and
+    // appends "..." before the trailing "!". 60 chars comfortably fits
+    // one line of the CapMessage speech bubble without the layout wrap-
+    // or-truncate behavior kicking in. Tunable per UX feedback.
+    static constexpr std::size_t kSoftMaxChars = 60;
+
+    // Backing buffer for the substituted text. Must be a static lifetime
+    // pointer (the game holds it for the balloon's full lifetime). Single
+    // slot — rotation only happens when isActiveCapMessage returns false.
+    //
+    // Sized for "Got <96-char-name> from <32-char-sender>!" plus margin.
+    static constexpr std::size_t kBufferUtf16Words = 160;
+
+    static CappyMessenger& instance();
+
+    // Enqueue an item for display. No-op if shouldShowCappyMsg returns false.
+    // suppress = true when applyOnFrame detects a bulk-replay burst.
+    // local_slot is ApState::local_slot (may be empty pre-handshake).
+    void enqueue(const smoap::ap::Item& item,
+                 const char* local_slot,
+                 bool suppress);
+
+    // Per-frame driver. Called from DrawMainHook AFTER applyOnFrame. Tries
+    // to dispatch the head item via rs::tryShowCapMessagePriorityLow.
+    // scene == nullptr -> no-op (boot scene, scene transition).
+    void tryPump(const void* scene);
+
+    // Returns a pointer to the static UTF-16 buffer iff `label` matches our
+    // reserved sentinel. Called from the MessageHolderTryGetTextHook
+    // trampoline. The hook intentionally has no other state — all logic
+    // lives here so the hot path stays a single virtual-method call + a
+    // strcmp + a pointer return.
+    const char16_t* lookupSubstitution(const char* label) const;
+
+    // Pump-success hook: called by the trampoline-callsite of tryPump when
+    // tryShowCapMessagePriorityLow returns true. Advances head_, resets
+    // retry counter; the buffer's content stays live until SMO finishes
+    // showing this balloon (we don't write to it again until pump finds
+    // isActiveCapMessage == false).
+    void markDispatched();
+
+    // Test-only knobs ------------------------------------------------------
+    std::size_t pendingCount() const { return live_count_; }
+    bool bufferActive() const { return buffer_in_use_; }
+    void resetForTest();
+
+private:
+    CappyMessenger() = default;
+
+    struct Entry {
+        char text[128] = {};  // pre-conversion UTF-8 form for logging
+        bool live = false;
+    };
+
+    Entry queue_[kQueueCap]{};
+    std::size_t head_ = 0;        // next-to-dispatch index
+    std::size_t tail_ = 0;        // next-to-enqueue index
+    std::size_t live_count_ = 0;
+    std::uint32_t retry_frames_ = 0;
+
+    // Scene-stability tracking for the settle-delay guard. last_scene_ is the
+    // pointer we saw on the last pump; settle_frames_ is the count of
+    // consecutive pumps where scene matched and was non-null. Dispatch is
+    // gated on settle_frames_ >= kSceneSettleFrames so a brand-new StageScene
+    // gets time to finish wiring up its SceneObjHolder before we poke it.
+    const void* last_scene_ = nullptr;
+    std::uint32_t settle_frames_ = 0;
+
+    // Substitution buffer. Filled by tryPump immediately before calling
+    // rs::tryShowCapMessagePriorityLow with kArchipelagoLabel; the hook
+    // serves this pointer until markDispatched clears buffer_in_use_.
+    char16_t buffer_[kBufferUtf16Words]{};
+    bool buffer_in_use_ = false;
+};
+
+// Filter rules (free function, exercised by host tests) -----------------------
+//
+// Mirror of the prior shouldShowToast contract:
+//   - skip when suppress = true (bulk-replay burst)
+//   - skip when from is null/empty (REPL / bridge-injected items)
+//   - skip when from equals local_slot (self-grants)
+//   - skip Shop/Other (no in-game effect worth surfacing)
+//
+// `from` is taken as a C-string (Item::from is a fixed char[] post-M6.1).
+bool shouldShowCappyMsg(smoap::ap::ItemKind kind,
+                        const char* from,
+                        const char* local_slot,
+                        bool suppress);
+
+// Format "Got <name> from <sender>!" into buf. Falls back to "?" for empty
+// name or sender. Returns number of bytes written (excluding NUL), or 0 on
+// degenerate inputs.
+int formatCappyMsg(char* buf, std::size_t cap, const smoap::ap::Item& item);
+
+// Cosmetic name shortening for the speech bubble ONLY. Wire/AP/tracker/REPL/
+// logs all keep the canonical name (174 items, see
+// apworld/smo_archipelago/data/items.json). 36 items match one of three
+// long suffixes and we rewrite each to save bubble space:
+//
+//   "X Kingdom Power Moon" -> "X Moon"        (saves up to 19 chars)
+//   "X Kingdom Multi-Moon" -> "X Multi-Moon"  (saves up to 13 chars)
+//   "X Kingdom Sticker"    -> "X Sticker"     (saves up to 11 chars)
+//
+// Everything else is copied verbatim. dst always NUL-terminates; if src
+// is longer than dst_cap-1 the unchanged-copy path truncates silently
+// (the formatter's outer fit-check still applies a sensible message-level
+// cap afterwards). Returns the number of bytes written, NOT including NUL.
+//
+// Exposed here so host tests can lock in the substitution rules without
+// going through the full enqueue/format path.
+std::size_t shortenItemNameForBubble(const char* src,
+                                     char* dst,
+                                     std::size_t dst_cap);
+
+// UTF-8 -> UTF-16LE. Drops malformed sequences silently (last-resort
+// resilience; the strings we feed it are all ASCII apworld names + ASCII
+// player slot names, so the lossy path is effectively dead code in
+// practice). Returns the number of char16_t words written, NOT including
+// a trailing zero. Always writes a zero terminator if cap > 0.
+std::size_t utf8ToUtf16(const char* src,
+                        char16_t* dst,
+                        std::size_t dst_cap_words);
+
+}  // namespace smoap::ui

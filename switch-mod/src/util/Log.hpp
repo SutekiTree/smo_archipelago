@@ -17,10 +17,20 @@ void log(LogLevel lvl, const char* fmt, ...);
 
 }  // namespace smoap::util
 
-#define SMOAP_LOG_DEBUG(...) ::smoap::util::log(::smoap::util::LogLevel::Debug, __VA_ARGS__)
-#define SMOAP_LOG_INFO(...)  ::smoap::util::log(::smoap::util::LogLevel::Info,  __VA_ARGS__)
-#define SMOAP_LOG_WARN(...)  ::smoap::util::log(::smoap::util::LogLevel::Warn,  __VA_ARGS__)
-#define SMOAP_LOG_ERROR(...) ::smoap::util::log(::smoap::util::LogLevel::Error, __VA_ARGS__)
+// Host-test builds (test_cappy_messenger.cpp, test_protocol.cpp, etc.) define
+// SMOAP_HOST_TEST and link only the pure-logic .cpp files. Stub the macros to
+// no-ops so we don't drag Log.cpp + every Switch dep in for tests.
+#ifdef SMOAP_HOST_TEST
+#  define SMOAP_LOG_DEBUG(...) ((void)0)
+#  define SMOAP_LOG_INFO(...)  ((void)0)
+#  define SMOAP_LOG_WARN(...)  ((void)0)
+#  define SMOAP_LOG_ERROR(...) ((void)0)
+#else
+#  define SMOAP_LOG_DEBUG(...) ::smoap::util::log(::smoap::util::LogLevel::Debug, __VA_ARGS__)
+#  define SMOAP_LOG_INFO(...)  ::smoap::util::log(::smoap::util::LogLevel::Info,  __VA_ARGS__)
+#  define SMOAP_LOG_WARN(...)  ::smoap::util::log(::smoap::util::LogLevel::Warn,  __VA_ARGS__)
+#  define SMOAP_LOG_ERROR(...) ::smoap::util::log(::smoap::util::LogLevel::Error, __VA_ARGS__)
+#endif
 
 namespace smoap::util {
 // Mark FS as available. Call AFTER nn::fs::MountSdCardForDebug("sd") (done

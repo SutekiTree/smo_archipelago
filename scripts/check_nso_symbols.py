@@ -41,6 +41,16 @@ SYMBOLS = [
     "_ZN27StageSceneStateGetShineMain15exeDemoGetStartEv",
     "_ZN28StageSceneStateGetShineGrand15exeDemoGetStartEv",
     "_ZN2al19setPaneStringFormatEPNS_10IUseLayoutEPKcS3_z",
+    # Cappy Messenger: hook the 4 layout-used MSBT lookup pairs so our
+    # reserved label resolves to our own UTF-16 buffer; call rs:: Cap-message
+    # entry points to actually trigger the speech-bubble dispatch. See
+    # switch-mod/src/ui/CappyMessenger.cpp and CappyMessageHook.cpp.
+    "_ZN2al27isExistLabelInSystemMessageEPKNS_17IUseMessageSystemEPKcS4_",
+    "_ZN2al22getSystemMessageStringEPKNS_17IUseMessageSystemEPKcS4_",
+    "_ZN2al26isExistLabelInStageMessageEPKNS_17IUseMessageSystemEPKcS4_",
+    "_ZN2al21getStageMessageStringEPKNS_17IUseMessageSystemEPKcS4_",
+    "_ZN2rs28tryShowCapMessagePriorityLowEPKN2al18IUseSceneObjHolderEPKcii",
+    "_ZN2rs18isActiveCapMessageEPKN2al18IUseSceneObjHolderE",
 ]
 
 

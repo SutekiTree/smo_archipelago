@@ -179,6 +179,77 @@ inline constexpr const char* kAlSetPaneStringFormat =
     "_ZN2al19setPaneStringFormatEPNS_10IUseLayoutEPKcS3_z";
 
 // =============================================================================
+// "Cappy Messenger" — in-game speech bubble for AP item notifications.
+// =============================================================================
+//
+// Goal: route AP item notifications through SMO's existing Cappy speech-bubble
+// pipeline (rs::tryShowCapMessage*) so we get Nintendo's font, layout, and
+// animation for free — sidestepping the sead::TextWriter font-init dead end.
+//
+// Mechanism: call rs::tryShowCapMessagePriorityLow with a magic label
+// (kArchipelagoLabel below). The MSBT lookup for that label is intercepted by
+// MessageHolderTryGetTextHook, which returns a pointer to our own UTF-16
+// buffer holding "Got <name> from <sender>!". The rest of the CapMessage
+// pipeline runs unmodified.
+//
+// Provenance: all 3 symbols mangled via aarch64-none-elf-g++ from forward
+// decls matching MonsterDruide1/OdysseyDecomp lib/al/Library/Message/
+// MessageHolder.h and src/MapObj/CapMessageShowInfo.h, and verified present in
+// real 1.0.0 main.nso via scripts/check_nso_symbols.py.
+
+// CapMessageLayout::exeDelay does:
+//   if (isStageMessage)
+//      if (isExistLabelInStageMessage(holder, mstxt, label))
+//          text = getStageMessageString(holder, mstxt, label);
+//   else
+//      if (isExistLabelInSystemMessage(holder, mstxt, label))
+//          text = getSystemMessageString(holder, mstxt, label);
+//
+// rs::tryShowCapMessagePriorityLow passes isStageMessage=false so only the
+// system path fires in our scenario, but we hook all 4 for robustness in
+// case future code paths use the stage variant. Each trampoline:
+//   - returns our buffer / true when the label matches kArchipelagoLabel
+//     and CappyMessenger has a buffer ready
+//   - otherwise tail-calls Orig
+//
+// These DON'T go through al::MessageHolder::tryGetText — that's a deeper
+// internal that some lookups bypass entirely. Hooking the top-level
+// per-mstxt-file accessors above is what actually intercepts CapMessage's
+// text resolution. The (string-existence-bool, get-string-text) pair maps
+// 1:1 to our (in_use_flag, buffer_pointer) state.
+
+inline constexpr const char* kAlIsExistLabelInSystemMessage =
+    "_ZN2al27isExistLabelInSystemMessageEPKNS_17IUseMessageSystemEPKcS4_";
+inline constexpr const char* kAlGetSystemMessageString =
+    "_ZN2al22getSystemMessageStringEPKNS_17IUseMessageSystemEPKcS4_";
+inline constexpr const char* kAlIsExistLabelInStageMessage =
+    "_ZN2al26isExistLabelInStageMessageEPKNS_17IUseMessageSystemEPKcS4_";
+inline constexpr const char* kAlGetStageMessageString =
+    "_ZN2al21getStageMessageStringEPKNS_17IUseMessageSystemEPKcS4_";
+
+// rs::tryShowCapMessagePriorityLow(const al::IUseSceneObjHolder*,
+//                                  const char* label, s32 delay, s32 wait)
+// The "polite" Cappy-speech entry point: queues behind any active high-
+// priority message and returns false silently if the scene/state can't accept
+// one (2D, cutscene, paused). We call this each frame from CappyMessenger::
+// tryPump until it returns true.
+//
+// We do NOT trampoline this — we resolve the address via nn::ro::LookupSymbol
+// and call through a function pointer (same pattern as M6 phase B's
+// addHackDictionary).
+inline constexpr const char* kRsTryShowCapMessagePriorityLow =
+    "_ZN2rs28tryShowCapMessagePriorityLowEPKN2al18IUseSceneObjHolderEPKcii";
+
+// rs::isActiveCapMessage(const al::IUseSceneObjHolder*)
+// Probe: returns true while a CapMessage is on screen. CappyMessenger::tryPump
+// checks this to keep our backing buffer stable for the duration of an active
+// balloon (the buffer must not be overwritten while SMO is reading from it).
+//
+// Also resolved via LookupSymbol + function pointer.
+inline constexpr const char* kRsIsActiveCapMessage =
+    "_ZN2rs18isActiveCapMessageEPKN2al18IUseSceneObjHolderE";
+
+// =============================================================================
 // Legacy / aliasing — kept so existing call sites don't break.
 // =============================================================================
 inline constexpr const char* kSeadGameSystemCtor       = kGameSystemInit;

@@ -96,10 +96,31 @@ public:
         out = buf_[t];
         return true;
     }
+    // Pointer to the front entry — zero copies. Use when T owns heap memory
+    // (e.g. std::string fields) and copying it onto the consumer thread would
+    // hit libstdc++'s allocator (which NULL-derefs in our subsdk9 link, see
+    // memory project_libstdcpp_allocator_broken_in_subsdk9.md). Producer
+    // still mutates buf_[head] freely; this returned pointer is invalidated
+    // by popDiscard() but stable across pushes since tail_ doesn't move.
+    const T* peekRef() {
+        const auto t = tail_.load(std::memory_order_relaxed);
+        if (t == head_.load(std::memory_order_acquire)) return nullptr;
+        return &buf_[t];
+    }
     // Discard the front entry. Caller must have observed it via peek().
     void popDiscard() {
         const auto t = tail_.load(std::memory_order_relaxed);
         tail_.store((t + 1) % N, std::memory_order_release);
+    }
+    // Approximate number of pending items. Two separate atomic loads, so the
+    // value can race against a concurrent push (under-count by 1). For the
+    // toast bulk-suppress heuristic this is fine — a borderline race resolves
+    // to "suppressed = false" which is the safer default (toast might fire
+    // for an item that arrived mid-frame; not a crash, just a visual quirk).
+    std::size_t pendingApprox() const {
+        const auto h = head_.load(std::memory_order_acquire);
+        const auto t = tail_.load(std::memory_order_relaxed);
+        return (h + N - t) % N;
     }
 
 private:
@@ -246,6 +267,27 @@ public:
     // outbound Check messages. Bridge echoes back in MoonLabelMsg.seq. Starts
     // at 1 so the wire encoder's "seq > 0 means present" check works.
     std::atomic<int> next_check_seq{1};
+
+    // Local AP slot name — captured by ApClient when the bridge sends
+    // hello_ack. Fixed buffer rather than std::string to avoid subsdk9's
+    // libstdc++ allocator NULL-deref (see project_libstdcpp_allocator_broken_in_subsdk9.md).
+    // Written once by the socket thread BEFORE conn.store(Ready) (release),
+    // read by the frame thread AFTER conn == Ready (acquire) — the publish
+    // ordering rides the existing conn-store fence.
+    char local_slot[64] = {};
+
+    // IUseSceneObjHolder* of HakoniwaSequence::curScene, refreshed every
+    // frame by DrawMainHook and consumed by CappyMessenger::tryPump.
+    //
+    // Critical: this is NOT the raw StageScene* read from HakoniwaSequence
+    // offset 0xB0. al::Scene has 4-way multiple inheritance
+    // (NerveExecutor, IUseAudioKeeper, IUseCamera, IUseSceneObjHolder) and
+    // the IUseSceneObjHolder sub-object lives at a non-zero offset. The
+    // DrawMainHook does the static_cast<IUseSceneObjHolder*>(Scene*)
+    // adjustment via the al::Scene header so the compile-time offset is
+    // applied; the result of that cast is what gets stored here. Stored as
+    // void* to keep this header free of game-side dependencies.
+    std::atomic<void*> scene_cache{nullptr};
 
     // Apply queued inbound items to the game (frame thread).
     void applyOnFrame();

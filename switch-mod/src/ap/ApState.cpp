@@ -10,6 +10,7 @@
 #include "../game/KingdomUnlock.hpp"
 #include "../game/MoonApply.hpp"
 #include "../hooks/DeathHook.hpp"
+#include "../ui/CappyMessenger.hpp"
 #include "../util/Log.hpp"
 
 class PlayerHitPointData;
@@ -42,8 +43,26 @@ static int moonGrantAmount(const Item& item) {
 }
 
 void ApState::applyOnFrame() {
-    Item item;
-    while (inbound.pop(item)) {
+    // Pre-sample pending count for the Cappy-message bulk-suppress heuristic.
+    // We can't snapshot a count by copying Items into a batch[] array
+    // because Item holds std::string fields — Item assignment triggers
+    // libstdc++ heap alloc for any field >15 chars, which NULL-derefs in
+    // subsdk9 (project_libstdcpp_allocator_broken_in_subsdk9.md). The
+    // crash from "Cascade Kingdom Power Moon" item names is exactly this.
+    //
+    // Solution: read items by const ref straight out of the ring buffer
+    // (peekRef returns &buf_[tail]; popDiscard advances tail). No copy,
+    // no allocator path on the frame thread. The string data was allocated
+    // ON THE WORKER THREAD when ApClient pushed it, and the worker uses a
+    // path that doesn't trip the broken allocator (per the M4/M5 memory).
+    const bool suppress_cappy = (inbound.pendingApprox() > 3);
+
+    constexpr std::size_t kDrainCap = 16;
+    std::size_t drained = 0;
+    while (drained < kDrainCap) {
+        const Item* item_ptr = inbound.peekRef();
+        if (!item_ptr) break;
+        const Item& item = *item_ptr;
         Check synth{};
         synth.kind = item.kind;
         copyCheckField(synth.kingdom, item.kingdom);
@@ -109,6 +128,19 @@ void ApState::applyOnFrame() {
                                 item.name, item.from);
                 break;
         }
+
+        // Cappy speech — fires after the in-game effect lands so the user
+        // sees the text alongside the visible change (e.g. capture unlock +
+        // "Got Frog from Alice!" same frame). Filter rules in CappyMessenger
+        // drop self-grants, REPL-injected items, bulk replays, and Other/
+        // Shop kinds. Actual dispatch is per-frame in DrawMainHook -> tryPump.
+        smoap::ui::CappyMessenger::instance().enqueue(item, local_slot,
+                                                      suppress_cappy);
+
+        // Advance tail AFTER consuming all references into item — popDiscard
+        // invalidates item_ptr (its slot can be overwritten by a producer push).
+        inbound.popDiscard();
+        ++drained;
     }
     synthetic_grant_this_frame = false;
     maybeApplyInboundKill();

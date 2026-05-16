@@ -23,7 +23,18 @@
 #include "hooks/HookSymbols.hpp"
 #include "hooks/SoftInstall.hpp"
 #include "ui/ApHudOverlay.hpp"
+#include "ui/CappyMessenger.hpp"
 #include "util/Log.hpp"
+
+// al::Scene's layout: it inherits from FOUR bases (NerveExecutor primary,
+// then IUseAudioKeeper, IUseCamera, IUseSceneObjHolder). The
+// IUseSceneObjHolder sub-object lives at a NON-ZERO offset inside Scene.
+// C++ generates the static_cast pointer adjustment at compile time. Passing
+// a raw void* to rs::isActiveCapMessage (which expects an
+// IUseSceneObjHolder*) without the adjustment yields garbage on the
+// vtable lookup -> silent halt. We pull in the Scene header here so the
+// cast in DrawMainHook actually applies the right offset.
+#include "al/scene/Scene.h"
 
 // Hook target classes. Forward-declared rather than including LunaKit's full
 // game headers, since our hooks treat the receivers as opaque.
@@ -42,6 +53,11 @@ void installShineNumGetHook();
 void installShineNumByWorldGetHook();
 // M6 phase A.5: moon-get cutscene label substitution (Channel A).
 void installMoonLabelHook();
+// Cappy Messenger: 4 trampolines on the al:: top-level MSBT lookup pair
+// (system + stage existence/get) + LookupSymbol for the rs:: CapMessage
+// entry points used by CappyMessenger.
+void installCappyMessageTextHooks();
+void installCappyMessengerSymbols();
 }  // namespace smoap::hooks
 
 namespace smoap::game {
@@ -83,6 +99,7 @@ HOOK_DEFINE_TRAMPOLINE(GameSystemInitHook) {
         });
 
         smoap::ui::initHud();
+
         SMOAP_LOG_INFO("<<< GameSystem::init hook complete");
     }
 };
@@ -102,15 +119,38 @@ HOOK_DEFINE_TRAMPOLINE(DrawMainHook) {
         // GameDataHolderAccessor — first field is the GameDataHolder*. Refresh
         // every frame in case the holder swaps (it doesn't in practice, but
         // cheap insurance against scene transitions).
+        //
+        // Cappy Messenger: HakoniwaSequence::curScene at offset 0xB0 is a
+        // StageScene*. StageScene IS-A al::Scene IS-A al::IUseSceneObjHolder
+        // — exactly what rs::tryShowCapMessagePriorityLow wants. Null during
+        // boot / scene transitions; CappyMessenger::tryPump null-guards.
         if (self) {
+            constexpr std::size_t kCurSceneOffset       = 0xB0;
             constexpr std::size_t kGameDataHolderOffset = 0xB8;
-            void* gdh = *reinterpret_cast<void* const*>(
-                reinterpret_cast<const std::uint8_t*>(self) + kGameDataHolderOffset);
-            smoap::ap::ApState::instance().game_data_holder_cache.store(
-                gdh, std::memory_order_relaxed);
+            const auto* base = reinterpret_cast<const std::uint8_t*>(self);
+            // curScene is a StageScene* (lunakit-vendor HakoniwaSequence.h:67).
+            // Read it as al::Scene* and let the compiler insert the
+            // IUseSceneObjHolder pointer adjustment via static_cast. The
+            // adjusted pointer is what we pass to rs:: functions.
+            auto* scene_obj = *reinterpret_cast<al::Scene* const*>(
+                base + kCurSceneOffset);
+            void* gdh = *reinterpret_cast<void* const*>(base + kGameDataHolderOffset);
+            void* scene_holder = nullptr;
+            if (scene_obj) {
+                auto* holder = static_cast<al::IUseSceneObjHolder*>(scene_obj);
+                scene_holder = static_cast<void*>(holder);
+            }
+            auto& st = smoap::ap::ApState::instance();
+            st.scene_cache.store(scene_holder, std::memory_order_relaxed);
+            st.game_data_holder_cache.store(gdh, std::memory_order_relaxed);
         }
         smoap::ap::ApState::instance().applyOnFrame();
         smoap::ui::drawHudFrame();
+        // Pump the Cappy-speech queue. Reads the freshly-cached scene; no-op
+        // when null (boot scene) or when SMO is already showing a CapMessage.
+        smoap::ui::CappyMessenger::instance().tryPump(
+            smoap::ap::ApState::instance().scene_cache.load(
+                std::memory_order_relaxed));
     }
 };
 
@@ -154,6 +194,11 @@ extern "C" void exl_main(void* /*x0*/, void* /*x1*/) {
 
     SMOAP_LOG_INFO("resolving M6-phase-B capture-grant symbols");
     smoap::game::installCaptureGrantSymbols();
+
+    SMOAP_LOG_INFO("installing CappyMessenger text-lookup trampolines (4)");
+    smoap::hooks::installCappyMessageTextHooks();
+    SMOAP_LOG_INFO("resolving CappyMessenger rs:: function pointers");
+    smoap::hooks::installCappyMessengerSymbols();
 
     SMOAP_LOG_INFO("=== exl_main END (waiting for GameSystem::init to fire) ===");
 }
