@@ -25,10 +25,11 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from .config import ColorsConfig
 from .datapackage import DataPackage
 from .display import format_moon_label
 from .maps import CaptureMap, ShineMap
-from .protocol import ItemMsg, KillMsg, MoonLabelMsg
+from .protocol import ItemKind, ItemMsg, KillMsg, MoonLabelMsg, classification_from_flags
 from .scout_cache import ScoutCache, request_scout
 from .state import BridgeState, ItemEvent
 
@@ -127,6 +128,8 @@ class SmoApBridgeContext:
         deathlink_enabled: bool = False,
         display_enabled: bool = True,
         switch_send_moon_label: callable | None = None,
+        switch_send_shine_scouts: callable | None = None,
+        colors_config: ColorsConfig | None = None,
     ):
         self.server_addr = server_addr
         self.slot = slot
@@ -142,6 +145,10 @@ class SmoApBridgeContext:
         # compose_moon_label callback wiring. Field is held for symmetry +
         # future use (e.g., reconnect re-label, M6.6 Channel B).
         self._send_moon_label = switch_send_moon_label
+        # M-color: optional callback the LocationInfo handler uses to push
+        # per-shine palette chunks. None (or colors.enabled=false) disables
+        # the color path; the shared scout request still runs for Channel A.
+        self._send_shine_scouts = switch_send_shine_scouts
         self._state = state
         self._dp = datapackage
         self._shine_map = shine_map or ShineMap()
@@ -149,9 +156,13 @@ class SmoApBridgeContext:
         self._ap_path_hint = archipelago_path
         self._deathlink_enabled = deathlink_enabled
         self._display_enabled = display_enabled
+        self._colors = colors_config or ColorsConfig()
         self._ctx = None  # CommonContext instance, built in start()
         self._server_loop_task: asyncio.Task | None = None
-        # M6 phase A.5 — populated on Connected, queried on each Check.
+        # Channel A scout cache: populated on Connected (LocationScouts ->
+        # LocationInfo) and queried on each Check to compose MoonLabelMsg.
+        # M-color piggy-backs on the SAME scouts to derive palette indices
+        # — the cache holds per-location NetworkItem.flags too.
         self._scout_cache = ScoutCache()
 
     async def start(self) -> None:
@@ -338,25 +349,24 @@ class SmoApBridgeContext:
             self._state.set_ap_conn("ready")
             self._state.slot = ctx.auth or self.slot
             await self._send_ap_state("ready")
-            # M6 phase A.5 — warm the scout cache so the next moon Mario
-            # collects has its label ready before the cutscene fires. Scope
-            # to *our* locations only (the bridge's datapackage covers our
-            # game). Reset first so reconnect picks up any seed changes.
-            if self._display_enabled:
+            # Warm the scout cache so (a) Channel A's moon-get cutscene
+            # label is ready before the cutscene fires, and (b) M-color
+            # has per-location flags to derive a palette index from. Same
+            # scout request serves both consumers. Scope to *our slot's*
+            # locations only — the AP server's LocationScouts handler hard-
+            # errors on ids it doesn't own (boot-loop trap; see the comment
+            # below). Reset first so reconnect picks up any seed changes.
+            if self._display_enabled or self._colors.enabled:
                 self._scout_cache.clear()
-                # Scope to *our slot's* locations (per AP server). Using the
-                # full datapackage instead would request location ids not
-                # owned by this slot, which the AP server's LocationScouts
-                # handler treats as a hard error (KeyError on the missing
-                # entry → drops the websocket connection → bridge reconnects
-                # → same scout → same kill → boot loop). missing | checked
-                # covers every location the AP server is willing to scout
-                # for us.
+                # missing | checked covers every location the AP server is
+                # willing to scout for us. Using the full datapackage would
+                # request ids not owned by this slot, which drops the
+                # websocket → reconnect → same scout → boot loop.
                 loc_ids = list((ctx.missing_locations or set()) |
                                (ctx.checked_locations or set()))
                 n = await request_scout(ctx, loc_ids, self._scout_cache)
                 if n:
-                    log.info("scout: requested %d locations for Channel A warmup", n)
+                    log.info("scout: requested %d locations for warmup", n)
         elif cmd == "RoomInfo":
             seed = args.get("seed_name") or args.get("seed")
             if seed:
@@ -366,6 +376,7 @@ class SmoApBridgeContext:
                 # NetworkItem fields: item, location, player, flags
                 item_id = ni.get("item") if isinstance(ni, dict) else getattr(ni, "item", None)
                 sender_idx = ni.get("player") if isinstance(ni, dict) else getattr(ni, "player", None)
+                flags = ni.get("flags", 0) if isinstance(ni, dict) else getattr(ni, "flags", 0)
                 if item_id is None:
                     continue
                 name = self._dp.item_id_to_name.get(item_id, f"<unknown:{item_id}>")
@@ -379,6 +390,12 @@ class SmoApBridgeContext:
                 # 1:1 capture names like Goomba/Goomba).
                 if ref.kind == "capture" and ref.cap:
                     ref.hack_name = self._capture_map.cap_to_hack(ref.cap)
+                # M-color: thread AP item classification flags through so
+                # log lines + future post-collection effects can branch on
+                # progression/useful/trap/filler. Stored on ItemRef so the
+                # reconnect-replay carries it without recomputation.
+                classification = classification_from_flags(int(flags or 0)).value
+                ref.classification = classification
                 sender_name = self._sender_name(ctx, sender_idx)
                 evt = ItemEvent(item=ref, sender=sender_name)
                 self._state.add_received_item(evt)
@@ -391,18 +408,24 @@ class SmoApBridgeContext:
                     name=ref.name,
                     from_=sender_name,
                     hack_name=ref.hack_name,
+                    classification=classification,
                 ))
         elif cmd == "DataPackage":
             data = args.get("data", {}).get("games", {})
             for game_name, package in data.items():
                 self._dp.update_from_ap(game_name, package)
         elif cmd == "LocationInfo":
-            # M6 phase A.5 — scout cache absorption. Replies come back
-            # piecemeal for very large requests, so we accumulate.
+            # Channel A scout cache + M-color palette derivation share a
+            # single scout request (see Connected handler). Replies come
+            # back piecemeal for very large requests, so we accumulate.
             n = self._scout_cache.absorb_location_info(args)
             if n:
                 log.debug("scout: absorbed %d location_info entries (cache size=%d)",
                           n, len(self._scout_cache))
+            # M-color: derive per-shine palette from THIS batch's NetworkItem
+            # flags and push to the Switch (idempotent merge on the mod side).
+            if self._colors.enabled and self._send_shine_scouts is not None:
+                await self._push_palette_for_scout_batch(args)
         elif cmd == "Bounce":
             # DeathLink (and possibly other bounce-tagged) traffic. Forward to
             # the Switch if it's a DeathLink we didn't originate ourselves.
@@ -418,6 +441,65 @@ class SmoApBridgeContext:
                     f"[deathlink in] source={source or '?'} cause={cause or '?'}"
                 )
                 await self._send_kill(KillMsg(source=source, cause=cause))
+
+    async def _push_palette_for_scout_batch(self, args: dict) -> None:
+        """Derive (shine_uid -> palette) from one LocationInfo packet's
+        NetworkItem.flags and push to the Switch. Cumulative: each batch
+        merges into BridgeState.shine_palette so HELLO replays carry the
+        full picture even when scout replies arrived as several packets.
+
+        AP returns one NetworkItem per scouted location; flags is the
+        ItemClassification.as_flag() bits (progression=1, useful=2, trap=4).
+        Resolution: location_id -> (kingdom, shine_id) via datapackage,
+        then -> shine_uid via the inverse ShineMap. Captures/shops/kingdoms
+        in the same batch are skipped (no in-world shine to color).
+        """
+        locations = args.get("locations") or []
+        if not locations:
+            return
+
+        batch_palette: dict[int, int] = {}
+        unknown_shine = 0
+        for ni in locations:
+            loc_id = ni.get("location") if isinstance(ni, dict) else getattr(ni, "location", None)
+            flags = ni.get("flags", 0) if isinstance(ni, dict) else getattr(ni, "flags", 0)
+            if loc_id is None:
+                continue
+            loc_name = self._dp.location_id_to_name.get(loc_id)
+            if not loc_name:
+                continue
+            cl = self._dp.classify_location(loc_name)
+            if cl.kind != ItemKind.MOON:
+                continue
+            uid = self._shine_map.resolve_uid_by_location(cl.kingdom, cl.shine_id)
+            if uid is None:
+                unknown_shine += 1
+                continue
+            classification = classification_from_flags(int(flags or 0))
+            batch_palette[uid] = self._colors.for_classification(classification.value)
+
+        if unknown_shine:
+            log.warning(
+                "[shine-color] %d moon locations had no shine_uid in shine_map "
+                "(regenerate via scripts/extract_shine_map.py?)",
+                unknown_shine,
+            )
+        if not batch_palette:
+            return
+
+        # Merge into the authoritative bridge-side cache so HELLO replay
+        # carries every chunk, then push only this batch to the Switch
+        # (the mod merges by shine_uid overwrite — chunk order doesn't matter).
+        merged = self._state.all_shine_palette()
+        merged.update(batch_palette)
+        self._state.set_shine_palette(merged)
+        log.info("[shine-color] colored %d moons in this batch (cache=%d)",
+                 len(batch_palette), len(merged))
+        try:
+            await self._send_shine_scouts(batch_palette)
+        except Exception:
+            log.exception("send_shine_scouts failed for batch of %d entries",
+                          len(batch_palette))
 
     def _populate_datapackage_from_ctx(self, ctx: Any) -> None:
         """Pull item/location name<->id from CommonContext into self._dp."""

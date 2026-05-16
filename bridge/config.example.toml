@@ -37,3 +37,19 @@ archipelago_path = ""
 # Communicated to the mod in the hello_ack handshake so toggling doesn't
 # require a Switch rebuild.
 enabled = false
+
+[colors]
+# AP-classification moon coloring. Right after AP `Connected`, the bridge
+# scouts every moon location and sends the Switch a (shine_uid -> palette)
+# table. The Switch trampolines rs::setStageShineAnimFrame and substitutes
+# the palette index whenever a scouted shine spawns.
+#
+# Palette indices are SMO's per-stage shine animation frames — index 3 in
+# Cascade might be a different visual color than index 3 in Sand. Tune per
+# kingdom in slot_data overrides later if defaults look off. Index 0 means
+# "leave the stage default untouched" (no override).
+enabled = true
+progression = 1
+useful = 2
+trap = 3
+filler = 0

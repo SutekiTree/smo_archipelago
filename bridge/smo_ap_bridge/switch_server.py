@@ -22,8 +22,15 @@ from .protocol import (
     KillMsg,
     MoonLabelMsg,
     PongMsg,
+    ShineScoutsMsg,
 )
 from .state import BridgeState, CheckEvent, ItemEvent
+
+# Max scout entries per ShineScoutsMsg. Each entry is ~25 bytes wire; 200
+# stays well under MAX_LINE_BYTES (8 KiB) even with TOML-driven larger
+# palette ints. Switch merges chunks by shine_uid overwrite, so order and
+# count are immaterial.
+_SCOUT_CHUNK_SIZE = 200
 
 log = logging.getLogger(__name__)
 
@@ -91,6 +98,22 @@ class SwitchServer:
 
     async def send_moon_label(self, label: MoonLabelMsg) -> None:
         await self._send(label)
+
+    async def send_shine_scouts(self, palette: dict[int, int]) -> None:
+        """Push (shine_uid -> palette) to the Switch, chunked.
+
+        Caller is responsible for filtering zero-palette entries if it
+        considers them noise; we send everything so the Switch can
+        explicitly clear a previously-set uid by writing 0.
+        """
+        if not palette:
+            return
+        items = list(palette.items())
+        for i in range(0, len(items), _SCOUT_CHUNK_SIZE):
+            chunk = items[i : i + _SCOUT_CHUNK_SIZE]
+            await self._send(ShineScoutsMsg(entries=[
+                {"shine_uid": uid, "palette": p} for uid, p in chunk
+            ]))
 
     async def _send(self, msg: Any) -> None:
         async with self._writer_lock:
@@ -265,6 +288,11 @@ class SwitchServer:
                 # mod can grant the capture after reconnect without needing
                 # bridge to re-resolve.
                 hack_name=evt.item.hack_name,
+                classification=evt.item.classification,
             ))
+
+        # Replay the shine-palette scout map so a Switch reconnect after the
+        # bridge has already received LocationInfo doesn't lose colors.
+        await self.send_shine_scouts(self._state.all_shine_palette())
 
         await self._send(ApStateMsg(conn=self._state.ap_conn))

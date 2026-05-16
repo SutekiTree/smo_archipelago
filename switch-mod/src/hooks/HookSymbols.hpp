@@ -250,6 +250,24 @@ inline constexpr const char* kRsIsActiveCapMessage =
     "_ZN2rs18isActiveCapMessageEPKN2al18IUseSceneObjHolderE";
 
 // =============================================================================
+// M-color — per-shine palette override (AP classification -> moon color).
+// =============================================================================
+//
+// rs::setStageShineAnimFrame(al::LiveActor*, const char*, s32, bool) drives
+// SMO's per-stage shine color animation. Kgamer77's SMO Archipelago fork
+// (MIT, https://github.com/Kgamer77/SuperMarioOdysseyArchipelago) trampolines
+// this exact function on the same 1.0.0 binary to recolor shines by kingdom
+// or item-category, which is direct existence proof the symbol resolves.
+//
+// We substitute a palette index sourced from ApState::shine_palette[uid] (in
+// turn populated from a bridge-side LocationScouts round-trip that maps each
+// shine_uid to an AP-classification-derived palette).
+//
+// Mangling verified locally via aarch64-none-elf-g++ -c.
+inline constexpr const char* kRsSetStageShineAnimFrame =
+    "_ZN2rs22setStageShineAnimFrameEPN2al9LiveActorEPKcib";
+
+// =============================================================================
 // Legacy / aliasing — kept so existing call sites don't break.
 // =============================================================================
 inline constexpr const char* kSeadGameSystemCtor       = kGameSystemInit;

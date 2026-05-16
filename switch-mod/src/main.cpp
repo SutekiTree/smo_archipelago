@@ -58,6 +58,8 @@ void installMoonLabelHook();
 // entry points used by CappyMessenger.
 void installCappyMessageTextHooks();
 void installCappyMessengerSymbols();
+// M-color: per-shine palette override (AP classification -> moon color).
+void installShineAppearanceHook();
 }  // namespace smoap::hooks
 
 namespace smoap::game {
@@ -199,6 +201,9 @@ extern "C" void exl_main(void* /*x0*/, void* /*x1*/) {
     smoap::hooks::installCappyMessageTextHooks();
     SMOAP_LOG_INFO("resolving CappyMessenger rs:: function pointers");
     smoap::hooks::installCappyMessengerSymbols();
+
+    SMOAP_LOG_INFO("installing ShineAppearanceHook (AP-classification moon color)");
+    smoap::hooks::installShineAppearanceHook();
 
     SMOAP_LOG_INFO("=== exl_main END (waiting for GameSystem::init to fire) ===");
 }

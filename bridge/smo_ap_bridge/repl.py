@@ -35,12 +35,16 @@ log = logging.getLogger(__name__)
 
 HELP_TEXT = """\
 Commands:
-  grant <item name>      send a kingdom-specific moon item.
+  grant <item name> [--class=<C>]   send a moon item (kingdom-specific or generic).
                          Examples:
                            grant Cascade Kingdom Power Moon
-                           grant Cascade Kingdom Multi-Moon
-  capture <name>         send a capture-unlock item.   e.g. capture Goomba
-  kingdom <name>         send a kingdom-unlock item.   e.g. kingdom Sand
+                           grant Cascade Kingdom Multi-Moon --class=progression
+                         --class controls the classification on the wire
+                         (progression|useful|trap|filler; default filler).
+  capture <name> [--class=<C>]      send a capture-unlock item. e.g. capture Goomba
+                         Auto-resolves cap -> hack_name via CaptureMap so the
+                         wire payload matches a real AP-issued capture.
+  kingdom <name> [--class=<C>]      send a kingdom-unlock item. e.g. kingdom Sand
   label <text>           send a MoonLabelMsg directly (Channel A visual
                          test). seq is auto-assigned high (999999) so it
                          beats any pending bridge-generated label.
@@ -48,6 +52,8 @@ Commands:
   help                   this message
   quit                   shut the bridge down
 """
+
+_VALID_CLASSIFICATIONS = ("progression", "useful", "trap", "filler")
 
 
 @dataclass
@@ -106,33 +112,42 @@ def parse_command(
 
     if cmd == "grant":
         if not arg:
-            return ParseResult(error="usage: grant <item name>")
-        ci = dp.classify_item(arg)
+            return ParseResult(error="usage: grant <item name> [--class=progression|useful|trap|filler]")
+        name, classification, err = _extract_class_flag(arg)
+        if err:
+            return ParseResult(error=err)
+        ci = dp.classify_item(name)
         if ci.kind != ItemKind.MOON:
             return ParseResult(error=(
-                f"'{arg}' did not classify as a moon (got {ci.kind.value!r}); "
+                f"'{name}' did not classify as a moon (got {ci.kind.value!r}); "
                 f"use `capture` or `kingdom` for those"))
-        return ParseResult(item=_classified_to_itemmsg(ci, arg))
+        return ParseResult(item=_classified_to_itemmsg(ci, name, classification))
 
     if cmd == "capture":
         if not arg:
             return ParseResult(error="usage: capture <name>")
-        ci = ClassifiedItem(kind=ItemKind.CAPTURE, name=arg, cap=arg)
+        name, classification, err = _extract_class_flag(arg)
+        if err:
+            return ParseResult(error=err)
+        ci = ClassifiedItem(kind=ItemKind.CAPTURE, name=name, cap=name)
         # M6 phase B: resolve cap -> hack_name via the same CaptureMap the
         # ap_client path uses, so REPL injection has the same wire payload
         # as a real AP-issued capture. Identity-passthrough if no map entry.
         hack = None
         if capture_map is not None:
-            hack = capture_map.cap_to_hack(arg)
-        msg = _classified_to_itemmsg(ci, arg)
+            hack = capture_map.cap_to_hack(name)
+        msg = _classified_to_itemmsg(ci, name, classification)
         msg.hack_name = hack
         return ParseResult(item=msg)
 
     if cmd == "kingdom":
         if not arg:
             return ParseResult(error="usage: kingdom <name>")
-        ci = ClassifiedItem(kind=ItemKind.KINGDOM, name=arg, kingdom=arg)
-        return ParseResult(item=_classified_to_itemmsg(ci, arg))
+        name, classification, err = _extract_class_flag(arg)
+        if err:
+            return ParseResult(error=err)
+        ci = ClassifiedItem(kind=ItemKind.KINGDOM, name=name, kingdom=name)
+        return ParseResult(item=_classified_to_itemmsg(ci, name, classification))
 
     if cmd == "label":
         if not arg:
@@ -145,7 +160,34 @@ def parse_command(
     return ParseResult(error=f"unknown command: {cmd!r}; type `help`")
 
 
-def _classified_to_itemmsg(ci: ClassifiedItem, raw_name: str) -> ItemMsg:
+def _extract_class_flag(arg: str) -> tuple[str, str, str | None]:
+    """Strip `--class=<value>` from `arg` and return (name, classification, error).
+
+    Default classification is "filler". Position-independent: the flag can
+    appear at any whitespace boundary inside the name and is stripped out.
+    """
+    classification = "filler"
+    tokens = arg.split()
+    kept: list[str] = []
+    for tok in tokens:
+        if tok.startswith("--class="):
+            value = tok[len("--class="):].strip().lower()
+            if value not in _VALID_CLASSIFICATIONS:
+                return arg, classification, (
+                    f"--class={value!r} not one of {_VALID_CLASSIFICATIONS}"
+                )
+            classification = value
+        else:
+            kept.append(tok)
+    name = " ".join(kept).strip()
+    if not name:
+        return arg, classification, "item name is empty after stripping flags"
+    return name, classification, None
+
+
+def _classified_to_itemmsg(
+    ci: ClassifiedItem, raw_name: str, classification: str = "filler",
+) -> ItemMsg:
     ref = ci.to_ref()
     # ItemRef.name is only populated for OTHER kind; for grant/capture/kingdom
     # preserve the raw user input so the mod logs it clearly.
@@ -157,6 +199,7 @@ def _classified_to_itemmsg(ci: ClassifiedItem, raw_name: str) -> ItemMsg:
         slot=ref.slot,
         name=ref.name or raw_name,
         from_="repl",
+        classification=classification,
     )
 
 
@@ -226,6 +269,7 @@ async def run_repl(
                 slot=result.item.slot,
                 name=result.item.name,
                 hack_name=result.item.hack_name,
+                classification=result.item.classification,
             )
             state.add_received_item(ItemEvent(item=ref, sender="repl"))
             try:

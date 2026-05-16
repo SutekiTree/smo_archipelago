@@ -51,6 +51,10 @@ SYMBOLS = [
     "_ZN2al21getStageMessageStringEPKNS_17IUseMessageSystemEPKcS4_",
     "_ZN2rs28tryShowCapMessagePriorityLowEPKN2al18IUseSceneObjHolderEPKcii",
     "_ZN2rs18isActiveCapMessageEPKN2al18IUseSceneObjHolderE",
+    # M-color: per-shine palette override (AP classification → moon color).
+    # rs::setStageShineAnimFrame(al::LiveActor*, const char*, s32, bool).
+    # Same function Kgamer77's mod trampolines for kingdom-based shine coloring.
+    "_ZN2rs22setStageShineAnimFrameEPN2al9LiveActorEPKcib",
 ]
 
 

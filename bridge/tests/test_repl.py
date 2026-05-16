@@ -163,6 +163,44 @@ def test_status_empty_state(dp, state):
     assert "checked_locations=0" in r.info
 
 
+def test_grant_default_classification_is_filler(dp, state):
+    """Without --class, REPL grants default to filler so the on-wire
+    classification field is always present and unambiguous."""
+    r = parse_command("grant Cascade Kingdom Power Moon", dp, state)
+    assert r.error is None
+    assert r.item is not None and r.item.classification == "filler"
+
+
+def test_grant_with_class_flag_progression(dp, state):
+    r = parse_command("grant Cascade Kingdom Power Moon --class=progression", dp, state)
+    assert r.error is None, r.error
+    assert r.item is not None
+    assert r.item.classification == "progression"
+    # Flag must be stripped from the item name.
+    assert r.item.kingdom == "Cascade"
+    assert r.item.shine_id == "Power Moon"
+
+
+def test_grant_with_class_flag_at_arbitrary_position(dp, state):
+    r = parse_command("grant Cascade --class=trap Kingdom Power Moon", dp, state)
+    assert r.error is None
+    assert r.item is not None
+    assert r.item.classification == "trap"
+    assert r.item.shine_id == "Power Moon"
+
+
+def test_grant_with_invalid_class_flag(dp, state):
+    r = parse_command("grant Cap Kingdom Power Moon --class=junk", dp, state)
+    assert r.error is not None and "junk" in r.error
+
+
+def test_capture_with_class_flag(dp, state):
+    r = parse_command("capture Goomba --class=useful", dp, state)
+    assert r.error is None
+    assert r.item.classification == "useful"
+    assert r.item.cap == "Goomba"
+
+
 def test_status_after_received_item(dp, state):
     # Inject a moon item directly into state to simulate prior REPL activity.
     from smo_ap_bridge.protocol import ItemRef

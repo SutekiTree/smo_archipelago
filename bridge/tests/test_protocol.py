@@ -9,6 +9,7 @@ import pytest
 from smo_ap_bridge import protocol
 from smo_ap_bridge.protocol import (
     CheckMsg,
+    Classification,
     HelloAckMsg,
     HelloMsg,
     ItemMsg,
@@ -17,6 +18,8 @@ from smo_ap_bridge.protocol import (
     MoonLabelMsg,
     PingMsg,
     PongMsg,
+    ShineScoutsMsg,
+    classification_from_flags,
     iter_lines,
 )
 
@@ -168,3 +171,58 @@ def test_moon_label_msg_unicode_text_preserved():
     raw = protocol.encode(msg)
     parsed = protocol.decode(raw)
     assert parsed["text"] == "Got Café Power Moon!"
+
+
+# ---------------------------------------------------------------------------
+# AP-classification moon color (M-color milestone)
+# ---------------------------------------------------------------------------
+
+
+def test_classification_from_flags_progression_wins():
+    # progression + useful combined: progression wins per AP convention.
+    assert classification_from_flags(0b011) is Classification.PROGRESSION
+
+
+def test_classification_from_flags_useful_over_trap():
+    assert classification_from_flags(0b110) is Classification.USEFUL
+
+
+def test_classification_from_flags_individual_bits():
+    assert classification_from_flags(0b001) is Classification.PROGRESSION
+    assert classification_from_flags(0b010) is Classification.USEFUL
+    assert classification_from_flags(0b100) is Classification.TRAP
+    assert classification_from_flags(0b000) is Classification.FILLER
+
+
+def test_classification_from_flags_unknown_high_bits_ignored():
+    # Bits above 0b111 are reserved (skip_balancing, deprioritized) and must
+    # NOT influence the classification routing.
+    assert classification_from_flags(0b1000) is Classification.FILLER
+    assert classification_from_flags(0b1001) is Classification.PROGRESSION
+
+
+def test_item_msg_classification_round_trip():
+    msg = ItemMsg(kind="moon", kingdom="Cap", shine_id="Power Moon",
+                  from_="Bob", classification="progression")
+    parsed = protocol.decode(protocol.encode(msg))
+    assert parsed["classification"] == "progression"
+    assert parsed["from"] == "Bob"
+
+
+def test_item_msg_classification_stripped_when_none():
+    msg = ItemMsg(kind="moon", kingdom="Cap", shine_id="Power Moon")
+    parsed = protocol.decode(protocol.encode(msg))
+    assert "classification" not in parsed
+
+
+def test_shine_scouts_msg_round_trip():
+    entries = [
+        {"shine_uid": 12, "palette": 1},
+        {"shine_uid": 47, "palette": 3},
+        {"shine_uid": 902, "palette": 0},
+    ]
+    msg = ShineScoutsMsg(entries=entries)
+    raw = protocol.encode(msg)
+    parsed = protocol.decode(raw)
+    assert parsed["t"] == "shine_scouts"
+    assert parsed["entries"] == entries
