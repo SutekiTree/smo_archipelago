@@ -35,6 +35,12 @@ SYMBOLS = [
     # M6: snapshot enumerate support.
     "_ZN16GameDataFunction10isGotShineE22GameDataHolderAccessorPK9ShineInfo",
     "_ZN16GameDataFunction15getGameDataFileE20GameDataHolderWriter",
+    # M6 phase A.5 — moon-get cutscene label substitution (Channel A).
+    # All four verified against SMO 1.0.0 main.nso 2026-05-16.
+    "_ZN23StageSceneStateGetShine10exeDemoGetEv",
+    "_ZN27StageSceneStateGetShineMain15exeDemoGetStartEv",
+    "_ZN28StageSceneStateGetShineGrand15exeDemoGetStartEv",
+    "_ZN2al19setPaneStringFormatEPNS_10IUseLayoutEPKcS3_z",
 ]
 
 

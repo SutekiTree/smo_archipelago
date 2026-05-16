@@ -526,6 +526,20 @@ void ApClient::handleLine(char* line, std::size_t line_len) {
         SMOAP_LOG_INFO("[deathlink in] queued source=%s cause=%s",
                        m.kill.source, m.kill.cause);
         ApState::instance().inbound_kill_pending.store(true, std::memory_order_release);
+    } else if (eq(m.t, "moon_label")) {
+        // M6 phase A.5 — Channel A. Publish the label for the upcoming
+        // cutscene to consume. Deadline = now + valid_for_ms; the frame
+        // thread drops anything past deadline.
+        const auto now = ApState::nowMs();
+        const auto deadline = (m.moon_label.valid_for_ms > 0)
+            ? now + m.moon_label.valid_for_ms
+            : 0;  // 0 = never expire (use sparingly; bridge default is 4000)
+        SMOAP_LOG_INFO("[moon_label] seq=%d text='%s' valid_for=%dms",
+                       m.moon_label.seq,
+                       m.moon_label.text,  // char[] decays to const char*
+                       m.moon_label.valid_for_ms);
+        ApState::instance().setPendingMoonLabel(
+            m.moon_label.text, m.moon_label.seq, deadline);
     } else {
         SMOAP_LOG_WARN("unknown message t=%s", m.t);
     }

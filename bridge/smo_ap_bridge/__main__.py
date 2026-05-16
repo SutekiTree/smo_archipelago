@@ -104,20 +104,27 @@ async def run(args: argparse.Namespace) -> int:
     # Wire Switch server first so it's ready when AP starts pumping items.
     ap_ctx_holder: dict = {}
 
-    async def on_check(msg: dict) -> None:
+    async def on_check(msg: dict):
         ap = ap_ctx_holder.get("ctx")
-        if ap is not None:
-            await ap.report_check(
-                kind=msg.get("kind", "moon"),
-                kingdom=msg.get("kingdom"),
-                shine_id=msg.get("shine_id"),
-                cap=msg.get("cap"),
-                slot=msg.get("slot"),
-                stage_name=msg.get("stage_name"),
-                object_id=msg.get("object_id"),
-                shine_uid=msg.get("shine_uid"),
-                hack_name=msg.get("hack_name"),
-            )
+        if ap is None:
+            return None
+        return await ap.report_check(
+            kind=msg.get("kind", "moon"),
+            kingdom=msg.get("kingdom"),
+            shine_id=msg.get("shine_id"),
+            cap=msg.get("cap"),
+            slot=msg.get("slot"),
+            stage_name=msg.get("stage_name"),
+            object_id=msg.get("object_id"),
+            shine_uid=msg.get("shine_uid"),
+            hack_name=msg.get("hack_name"),
+        )
+
+    def compose_label(loc_id: int) -> str | None:
+        ap = ap_ctx_holder.get("ctx")
+        if ap is None:
+            return None
+        return ap.compose_moon_label_for_location(loc_id)
 
     async def on_goal() -> None:
         ap = ap_ctx_holder.get("ctx")
@@ -137,6 +144,7 @@ async def run(args: argparse.Namespace) -> int:
         on_goal=on_goal,
         on_death=on_death,
         deathlink_enabled=cfg.deathlink.enabled,
+        compose_moon_label=compose_label,
     )
     await sw.start()
 
@@ -175,6 +183,7 @@ async def run(args: argparse.Namespace) -> int:
         switch_send_print=sw.send_print,
         switch_send_ap_state=sw.send_ap_state,
         switch_send_kill=sw.send_kill,
+        switch_send_moon_label=sw.send_moon_label,
         state=state,
         datapackage=dp,
         shine_map=shine_map,
@@ -196,7 +205,9 @@ async def run(args: argparse.Namespace) -> int:
     if args.repl:
         from .repl import run_repl
         repl_task = asyncio.create_task(
-            run_repl(sw.send_item, dp, state, shutdown, capture_map=capture_map),
+            run_repl(sw.send_item, dp, state, shutdown,
+                     capture_map=capture_map,
+                     send_moon_label=sw.send_moon_label),
             name="repl",
         )
 

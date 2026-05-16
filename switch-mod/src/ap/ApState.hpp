@@ -120,6 +120,31 @@ struct StatusEvent {
 // last death was within this window, swallow.
 inline constexpr std::int64_t kInboundKillDebounceMs = 15 * 1000;
 
+// M6 phase A.5 — pending cutscene label slot.
+//
+// Single-slot publish-and-consume: socket thread (ApClient) writes the text +
+// deadline, then release-stores `published_seq` to publish. Frame thread
+// (MoonLabelHook callbacks) acquire-loads `published_seq`; if it differs from
+// `last_consumed_seq`, reads the buffer and applies the label, then bumps
+// `last_consumed_seq`. The release/acquire pair guarantees text-bytes ordering.
+//
+// `last_consumed_seq` is read/written only by the frame thread, so it doesn't
+// need to be atomic. Same single-thread invariant holds for the buffer reads
+// (consume side reads them once per cutscene; the socket thread won't
+// overwrite while the cutscene is in flight unless a second moon is collected
+// within the same ~3-5s window, in which case the newer label wins — which is
+// what we want).
+//
+// Text buffer 32 bytes; bridge truncates to ≤30 bytes UTF-8 to leave room for
+// the null terminator and a safety byte.
+inline constexpr std::size_t kPendingMoonLabelCap = 32;
+
+struct PendingMoonLabel {
+    char text[kPendingMoonLabelCap] = {};
+    std::int64_t deadline_ms = 0;     // monotonic; expired labels are dropped
+    std::atomic<int> published_seq{0}; // 0 = empty / never set
+};
+
 class ApState {
 public:
     static ApState& instance();
@@ -204,6 +229,27 @@ public:
     // PlayerHitPointData::kill could re-enter — this flag lets the death path
     // recognize "we caused this" and short-circuit outbound reporting.
     bool synthetic_death_this_frame = false;
+
+    // M6 phase A.5 — Channel A. Socket thread publishes via
+    // setPendingMoonLabel(); frame thread (MoonLabelHook) consumes via
+    // tryTakePendingMoonLabel().
+    PendingMoonLabel pending_moon_label;
+    int label_last_consumed_seq = 0;  // frame-thread only
+
+    // Publish a new label. Producer side (socket thread).
+    void setPendingMoonLabel(const char* text, int seq, std::int64_t deadline_ms);
+
+    // Consume the pending label if there's a fresh, unexpired one. Returns
+    // false if no fresh label, label expired, or already consumed this seq.
+    // On success, fills `text_out` (null-terminated, ≤ kPendingMoonLabelCap)
+    // and marks the seq consumed so subsequent calls are no-ops until a new
+    // label arrives. Consumer side (frame thread).
+    bool tryTakePendingMoonLabel(char (&text_out)[kPendingMoonLabelCap]);
+
+    // Monotonic per-Switch-session counter that MoonGetHook stamps onto
+    // outbound Check messages. Bridge echoes back in MoonLabelMsg.seq. Starts
+    // at 1 so the wire encoder's "seq > 0 means present" check works.
+    std::atomic<int> next_check_seq{1};
 
     // Apply queued inbound items to the game (frame thread).
     void applyOnFrame();

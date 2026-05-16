@@ -18,10 +18,14 @@ Single persistent TCP connection. Each message is one line of UTF-8 JSON termina
 
 // A location was just checked in-game. Exactly one of the optional fields
 // should be present per kind:
-//   moon    → kingdom, shine_id
-//   capture → cap
+//   moon    → kingdom, shine_id  (or M4 raw: stage_name, object_id, shine_uid)
+//   capture → cap                (or M4 raw: hack_name)
 //   shop    → kingdom, slot OR name
-{"t":"check","kind":"moon","kingdom":"Cascade","shine_id":"Our First Power Moon"}
+// Optional `seq` (int > 0, M6 phase A.5): per-Switch-session monotonic id
+// stamped on moon checks. The bridge echoes it back in `moon_label` so the
+// cutscene-label hook can correlate. Older Switch builds omit `seq`; the
+// bridge skips Channel A entirely when seq is absent.
+{"t":"check","kind":"moon","kingdom":"Cascade","shine_id":"Our First Power Moon","seq":17}
 {"t":"check","kind":"capture","cap":"Goomba"}
 {"t":"check","kind":"shop","kingdom":"Cap","slot":3}
 
@@ -98,6 +102,21 @@ is a no-op.
 
 // Soft error.
 {"t":"err","code":"unknown_kind","ctx":"check"}
+
+// M4.6: Inbound DeathLink. Forwarded from another DeathLink-tagged slot;
+// the Switch kills Mario via DeathHook::Orig. Single-bit pending queue +
+// 15s debounce. Bridge-side `cfg.deathlink.enabled` controls whether the
+// Switch ACTS on it (toggle communicated via hello_ack.deathlink_enabled).
+{"t":"kill","source":"Bob","cause":"Bob died."}
+
+// M6 phase A.5: Channel A — pane-text override for the next moon-get
+// cutscene. Bridge sends this in the same TCP push as its reply to the
+// triggering `check`, so the text reaches the Switch before the cutscene
+// starts. `seq` echoes Check.seq (so the consumer knows which moon it's
+// for). `valid_for_ms` is a Switch-relative TTL — expired labels are
+// silently dropped (cutscene shows vanilla). Text is pre-truncated by
+// the bridge to ≤30 bytes UTF-8.
+{"t":"moon_label","text":"Sent Cap Power Moon -> P3","seq":17,"valid_for_ms":4000}
 ```
 
 ## State machines

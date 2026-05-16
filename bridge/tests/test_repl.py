@@ -75,17 +75,6 @@ def test_grant_kingdom_specific_power_moon(dp, state):
     assert r.item.from_ == "repl"
 
 
-def test_grant_generic_power_moon(dp, state):
-    """The truly-generic 'Power Moon' item has no kingdom prefix."""
-    r = parse_command("grant Power Moon", dp, state)
-    assert r.error is None, r.error
-    assert r.item is not None
-    assert r.item.kind == "moon"
-    # Bridge classifier returns kingdom=None for genericmoon items.
-    assert r.item.kingdom is None
-    assert r.item.shine_id == "Power Moon"
-
-
 def test_grant_kingdom_multi_moon(dp, state):
     r = parse_command("grant Cascade Kingdom Multi-Moon", dp, state)
     assert r.error is None

@@ -66,14 +66,6 @@ def test_classify_kingdom_specific_moon_item(dp: DataPackage):
     assert ci.shine_id == "Multi-Moon"
 
 
-def test_classify_generic_power_moon_item(dp: DataPackage):
-    """Bare `Power Moon` (genericmoon, no kingdom prefix) → kingdom=None."""
-    ci = dp.classify_item("Power Moon")
-    assert ci.kind == ItemKind.MOON
-    assert ci.kingdom is None
-    assert ci.shine_id == "Power Moon"
-
-
 def test_classify_unknown_item_is_other(dp: DataPackage):
     ci = dp.classify_item("Definitely Not A Real Item Name 12345")
     assert ci.kind == ItemKind.OTHER

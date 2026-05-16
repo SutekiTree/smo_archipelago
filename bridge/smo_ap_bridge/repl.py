@@ -28,7 +28,7 @@ from typing import Awaitable, Callable
 
 from .datapackage import ClassifiedItem, DataPackage
 from .maps import CaptureMap
-from .protocol import ItemKind, ItemMsg
+from .protocol import ItemKind, ItemMsg, MoonLabelMsg
 from .state import BridgeState, ItemEvent
 
 log = logging.getLogger(__name__)
@@ -43,6 +43,9 @@ Commands:
                            grant Cascade Kingdom Multi-Moon
   capture <name>         send a capture-unlock item.   e.g. capture Goomba
   kingdom <name>         send a kingdom-unlock item.   e.g. kingdom Sand
+  label <text>           send a MoonLabelMsg directly (Channel A visual
+                         test). seq is auto-assigned high (999999) so it
+                         beats any pending bridge-generated label.
   status                 echo bridge-side tracker state
   help                   this message
   quit                   shut the bridge down
@@ -53,9 +56,10 @@ Commands:
 class ParseResult:
     """Outcome of parsing a single REPL line.
 
-    Exactly one (or none) of `item`, `info`, `error`, `quit` is set.
+    Exactly one (or none) of `item`, `label`, `info`, `error`, `quit` is set.
     """
     item: ItemMsg | None = None
+    label: MoonLabelMsg | None = None
     info: str | None = None
     error: str | None = None
     quit: bool = False
@@ -132,6 +136,14 @@ def parse_command(
         ci = ClassifiedItem(kind=ItemKind.KINGDOM, name=arg, kingdom=arg)
         return ParseResult(item=_classified_to_itemmsg(ci, arg))
 
+    if cmd == "label":
+        if not arg:
+            return ParseResult(error="usage: label <text>")
+        # 999999 sits well above any sane bridge-issued seq; useful for
+        # standalone visual tests where you want to override a stale
+        # pending label.
+        return ParseResult(label=MoonLabelMsg(text=arg, seq=999999))
+
     return ParseResult(error=f"unknown command: {cmd!r}; type `help`")
 
 
@@ -153,6 +165,7 @@ def _classified_to_itemmsg(ci: ClassifiedItem, raw_name: str) -> ItemMsg:
 # ---- async I/O loop ----
 
 SendItem = Callable[[ItemMsg], Awaitable[None]]
+SendMoonLabel = Callable[[MoonLabelMsg], Awaitable[None]]
 
 
 async def run_repl(
@@ -161,6 +174,7 @@ async def run_repl(
     state: BridgeState,
     shutdown_event: asyncio.Event,
     capture_map: CaptureMap | None = None,
+    send_moon_label: SendMoonLabel | None = None,
 ) -> None:
     """Read stdin via a daemon thread; dispatch commands on the asyncio loop.
 
@@ -223,6 +237,17 @@ async def run_repl(
                       flush=True)
             except Exception as e:
                 print(f"  send failed: {e!r}", flush=True)
+        if result.label is not None:
+            if send_moon_label is None:
+                print("  err: bridge wasn't started with a moon-label sender "
+                      "(missing wiring in __main__)", flush=True)
+            else:
+                try:
+                    await send_moon_label(result.label)
+                    print(f"  -> sent moon_label text={result.label.text!r} "
+                          f"seq={result.label.seq}", flush=True)
+                except Exception as e:
+                    print(f"  send_moon_label failed: {e!r}", flush=True)
         if result.quit:
             shutdown_event.set()
             return

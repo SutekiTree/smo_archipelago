@@ -765,7 +765,7 @@
             "Sand Kingdom"
         ],
         "region": "Sand Kingdom",
-        "requires": "{IntoTheLake()} and {MazeSkip()} and (|Power Moon:21| or (|Sand Kingdom Power Moon:16| OR ( |Sand Kingdom Multi-Moon| AND |Sand Kingdom Power Moon:13| ) OR ( |Sand Kingdom Multi-Moon:2| AND |Sand Kingdom Power Moon:10| )))"
+        "requires": "{IntoTheLake()} and {MazeSkip()} and ((|Sand Kingdom Power Moon:16| OR ( |Sand Kingdom Multi-Moon| AND |Sand Kingdom Power Moon:13| ) OR ( |Sand Kingdom Multi-Moon:2| AND |Sand Kingdom Power Moon:10| )))"
     },
     {
         "name": "Lake: Broodals Over the Lake",
@@ -3868,7 +3868,7 @@
             "Capture"
         ],
         "region": "Sand Kingdom",
-        "requires": "( ({OptAll(|Bullet Bill| AND |Knucklotec's Fist|)}) OR (|Power Moon:29| or ((( ( |Sand Kingdom Power Moon:16| OR ( |Sand Kingdom Multi-Moon| AND |Sand Kingdom Power Moon:13| ) OR ( |Sand Kingdom Multi-Moon:2| AND |Sand Kingdom Power Moon:10| ) ) AND ( |Lake Kingdom Power Moon:8| OR ( |Lake Kingdom Multi-Moon| AND |Lake Kingdom Power Moon:5| ) ) ))) and {LakePeace()}))"
+        "requires": "( ({OptAll(|Bullet Bill| AND |Knucklotec's Fist|)}) OR (((( ( |Sand Kingdom Power Moon:16| OR ( |Sand Kingdom Multi-Moon| AND |Sand Kingdom Power Moon:13| ) OR ( |Sand Kingdom Multi-Moon:2| AND |Sand Kingdom Power Moon:10| ) ) AND ( |Lake Kingdom Power Moon:8| OR ( |Lake Kingdom Multi-Moon| AND |Lake Kingdom Power Moon:5| ) ) ))) and {LakePeace()}))"
     },
     {
         "name": "Capture: Glydon",
@@ -3876,7 +3876,7 @@
             "Capture"
         ],
         "region": "Sand Kingdom",
-        "requires": "( ({OptAll(|Bullet Bill| AND |Knucklotec's Fist|)}) OR (|Power Moon:37| or ((( ( |Sand Kingdom Power Moon:16| OR ( |Sand Kingdom Multi-Moon| AND |Sand Kingdom Power Moon:13| ) OR ( |Sand Kingdom Multi-Moon:2| AND |Sand Kingdom Power Moon:10| ) ) AND ( |Lake Kingdom Power Moon:8| OR ( |Lake Kingdom Multi-Moon| AND |Lake Kingdom Power Moon:5| ) ) AND |Sherm| AND |Uproot| ))) and {IntoTheLake()} and {MazeSkip()}) OR (|Power Moon:53| or ((( ( |Sand Kingdom Power Moon:16| OR ( |Sand Kingdom Multi-Moon| AND |Sand Kingdom Power Moon:13| ) OR ( |Sand Kingdom Multi-Moon:2| AND |Sand Kingdom Power Moon:10| ) ) AND ( |Lake Kingdom Power Moon:8| OR ( |Lake Kingdom Multi-Moon| AND |Lake Kingdom Power Moon:5| ) ) AND ( |Wooded Kingdom Power Moon:16| OR ( |Wooded Kingdom Multi-Moon| AND |Wooded Kingdom Power Moon:13| ) OR ( |Wooded Kingdom Multi-Moon:2| AND |Wooded Kingdom Power Moon:10| ) ) ))) and {IntoTheLake()} and {MazeSkip()} and {OptOne(Wall Jump)}) )"
+        "requires": "( ({OptAll(|Bullet Bill| AND |Knucklotec's Fist|)}) OR (((( ( |Sand Kingdom Power Moon:16| OR ( |Sand Kingdom Multi-Moon| AND |Sand Kingdom Power Moon:13| ) OR ( |Sand Kingdom Multi-Moon:2| AND |Sand Kingdom Power Moon:10| ) ) AND ( |Lake Kingdom Power Moon:8| OR ( |Lake Kingdom Multi-Moon| AND |Lake Kingdom Power Moon:5| ) ) AND |Sherm| AND |Uproot| ))) and {IntoTheLake()} and {MazeSkip()}) OR (((( ( |Sand Kingdom Power Moon:16| OR ( |Sand Kingdom Multi-Moon| AND |Sand Kingdom Power Moon:13| ) OR ( |Sand Kingdom Multi-Moon:2| AND |Sand Kingdom Power Moon:10| ) ) AND ( |Lake Kingdom Power Moon:8| OR ( |Lake Kingdom Multi-Moon| AND |Lake Kingdom Power Moon:5| ) ) AND ( |Wooded Kingdom Power Moon:16| OR ( |Wooded Kingdom Multi-Moon| AND |Wooded Kingdom Power Moon:13| ) OR ( |Wooded Kingdom Multi-Moon:2| AND |Wooded Kingdom Power Moon:10| ) ) ))) and {IntoTheLake()} and {MazeSkip()} and {OptOne(Wall Jump)}) )"
     },
     {
         "name": "Capture: Lakitu",
@@ -3884,7 +3884,7 @@
             "Capture"
         ],
         "region": "Sand Kingdom",
-        "requires": "( ({OptAll(|Bullet Bill| AND |Knucklotec's Fist|)}) OR (|Power Moon:29| or (( ( |Sand Kingdom Power Moon:16| OR ( |Sand Kingdom Multi-Moon| AND |Sand Kingdom Power Moon:13| ) OR ( |Sand Kingdom Multi-Moon:2| AND |Sand Kingdom Power Moon:10| ) ) AND ( |Wooded Kingdom Power Moon:16| OR ( |Wooded Kingdom Multi-Moon| AND |Wooded Kingdom Power Moon:13| ) OR ( |Wooded Kingdom Multi-Moon:2| AND |Wooded Kingdom Power Moon:10| ) ) ) ))) or ( ( |Bullet Bill| AND |Knucklotec's Fist| ) OR (|Power Moon:37| or ((( ( |Sand Kingdom Power Moon:16| OR ( |Sand Kingdom Multi-Moon| AND |Sand Kingdom Power Moon:13| ) OR ( |Sand Kingdom Multi-Moon:2| AND |Sand Kingdom Power Moon:10| ) ) AND ( |Wooded Kingdom Power Moon:16| OR ( |Wooded Kingdom Multi-Moon| AND |Wooded Kingdom Power Moon:13| ) OR ( |Wooded Kingdom Multi-Moon:2| AND |Wooded Kingdom Power Moon:10| ) ) ))) and (|Uproot| or ( ( ( |Ground Pound Jump| and |Ground Pound| ) or |Backward Somersault| or |Side Somersault| or ( |Wall Jump| and |Dive| ) or |Triple Jump| ) and ( |Long Jump| or |Triple Jump| or |Backward Somersault| or |Side Somersault| ) and |Cap Jump| and |Dive| ))) )"
+        "requires": "( ({OptAll(|Bullet Bill| AND |Knucklotec's Fist|)}) OR ((( ( |Sand Kingdom Power Moon:16| OR ( |Sand Kingdom Multi-Moon| AND |Sand Kingdom Power Moon:13| ) OR ( |Sand Kingdom Multi-Moon:2| AND |Sand Kingdom Power Moon:10| ) ) AND ( |Wooded Kingdom Power Moon:16| OR ( |Wooded Kingdom Multi-Moon| AND |Wooded Kingdom Power Moon:13| ) OR ( |Wooded Kingdom Multi-Moon:2| AND |Wooded Kingdom Power Moon:10| ) ) ) ))) or ( ( |Bullet Bill| AND |Knucklotec's Fist| ) OR (((( ( |Sand Kingdom Power Moon:16| OR ( |Sand Kingdom Multi-Moon| AND |Sand Kingdom Power Moon:13| ) OR ( |Sand Kingdom Multi-Moon:2| AND |Sand Kingdom Power Moon:10| ) ) AND ( |Wooded Kingdom Power Moon:16| OR ( |Wooded Kingdom Multi-Moon| AND |Wooded Kingdom Power Moon:13| ) OR ( |Wooded Kingdom Multi-Moon:2| AND |Wooded Kingdom Power Moon:10| ) ) ))) and (|Uproot| or ( ( ( |Ground Pound Jump| and |Ground Pound| ) or |Backward Somersault| or |Side Somersault| or ( |Wall Jump| and |Dive| ) or |Triple Jump| ) and ( |Long Jump| or |Triple Jump| or |Backward Somersault| or |Side Somersault| ) and |Cap Jump| and |Dive| ))) )"
     },
     {
         "name": "Capture: Zipper",

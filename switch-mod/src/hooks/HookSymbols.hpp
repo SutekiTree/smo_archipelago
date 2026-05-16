@@ -137,6 +137,48 @@ inline constexpr const char* kGameDataFunctionIsExistInHackDictionary =
     "_ZN16GameDataFunction23isExistInHackDictionaryE22GameDataHolderAccessorPKc";
 
 // =============================================================================
+// M6 phase A.5 — moon-get cutscene label substitution (Channel A).
+// =============================================================================
+//
+// Goal: when Mario collects a moon, replace the cutscene's "TxtScenario" pane
+// text with AP-aware text (e.g. "Sent Cap Power Moon -> P3" / "Got X!").
+//
+// All four target symbols verified in SMO 1.0.0 main.nso .dynsym via
+// scripts/check_nso_symbols.py (HIT). Layout offsets + pane name derived
+// from disassembling each call site (see plan
+// i-wrote-a-plan-fluffy-otter.md "Phase 0 findings").
+//
+// Three cutscene-state functions cover all moon collects:
+//   - StageSceneStateGetShine::exeDemoGet — regular moons
+//       layout @ self+0x20, pane "TxtScenario"
+//   - StageSceneStateGetShineMain::exeDemoGetStart — main story moons
+//       layout @ self+0x40, pane "TxtScenario"
+//   - StageSceneStateGetShineGrand::exeDemoGetStart — grand shines
+//       layout @ self+0x40, pane "TxtScenario"
+//
+// (StageSceneStateGetShineGrand::exeDemoGetFirst exists but doesn't touch
+// the title pane — multi-grand-shine intro state, no label work needed.)
+
+// StageSceneStateGetShine::exeDemoGet()  — regular moon cutscene (every frame)
+inline constexpr const char* kStageSceneStateGetShineExeDemoGet =
+    "_ZN23StageSceneStateGetShine10exeDemoGetEv";
+
+// StageSceneStateGetShineMain::exeDemoGetStart()  — story moon cutscene
+inline constexpr const char* kStageSceneStateGetShineMainExeDemoGetStart =
+    "_ZN27StageSceneStateGetShineMain15exeDemoGetStartEv";
+
+// StageSceneStateGetShineGrand::exeDemoGetStart()  — grand shine cutscene
+inline constexpr const char* kStageSceneStateGetShineGrandExeDemoGetStart =
+    "_ZN28StageSceneStateGetShineGrand15exeDemoGetStartEv";
+
+// al::setPaneStringFormat(al::IUseLayout*, char* paneName, char* fmt, ...)
+// SDK helper that writes formatted text into a named pane. VARARG (the
+// trailing `z` in the mangled name = `...`). We pass "%s" as the format
+// and the AP text as the single arg so any non-`%` characters are safe.
+inline constexpr const char* kAlSetPaneStringFormat =
+    "_ZN2al19setPaneStringFormatEPNS_10IUseLayoutEPKcS3_z";
+
+// =============================================================================
 // Legacy / aliasing — kept so existing call sites don't break.
 // =============================================================================
 inline constexpr const char* kSeadGameSystemCtor       = kGameSystemInit;

@@ -91,6 +91,7 @@ void encodeCheck(LineBuffer& line, const Check& c) {
     if (c.object_id[0])  e.key("object_id").value(c.object_id);
     if (c.shine_uid >= 0) e.key("shine_uid").value(c.shine_uid);
     if (c.hack_name[0])  e.key("hack_name").value(c.hack_name);
+    if (c.seq > 0)       e.key("seq").value(c.seq);
     e.endObject();
     line.append('\n');
 }
@@ -340,6 +341,20 @@ inline bool eqStr(const char* a, const char* b) {
     return *a == '\0' && *b == '\0';
 }
 
+bool parseMoonLabel(Reader& r, MoonLabel& out) {
+    std::int64_t tmp = 0;
+    std::string_view key;
+    while (r.nextField(key)) {
+        if      (key == "text")         { if (!readIntoField(r, out.text)) return false; }
+        else if (key == "seq")          { if (!r.nextInt(tmp)) return false;
+                                          out.seq = static_cast<int>(tmp); }
+        else if (key == "valid_for_ms") { if (!r.nextInt(tmp)) return false;
+                                          out.valid_for_ms = static_cast<int>(tmp); }
+        else                            { return false; }
+    }
+    return true;
+}
+
 }  // namespace
 
 bool decode(const char* data, std::size_t len, DecodedMsg& out) {
@@ -363,6 +378,7 @@ bool decode(const char* data, std::size_t len, DecodedMsg& out) {
     else if (eqStr(out.t, "pong"))           ok = parsePong(r, out.pong);
     else if (eqStr(out.t, "err"))            ok = parseErr(r, out.err);
     else if (eqStr(out.t, "kill"))           ok = parseKill(r, out.kill);
+    else if (eqStr(out.t, "moon_label"))     ok = parseMoonLabel(r, out.moon_label);
     else {
         // Unknown type: leave out.t set so handleLine can warn. Don't bother
         // draining the rest of the object — caller treats unknown as ignored.

@@ -15,15 +15,6 @@
         "trap": true
     },
     {
-        "name": "Power Moon",
-        "count": 463,
-        "category": [
-            "Moon",
-            "genericmoon"
-        ],
-        "progression": true
-    },
-    {
         "name": "Cap Kingdom Power Moon",
         "count": 11,
         "category": [

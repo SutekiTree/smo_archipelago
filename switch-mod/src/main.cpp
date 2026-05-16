@@ -40,6 +40,8 @@ void installDeathHook();
 // M6 phase A: shine-counter HUD substitution for AP credit display.
 void installShineNumGetHook();
 void installShineNumByWorldGetHook();
+// M6 phase A.5: moon-get cutscene label substitution (Channel A).
+void installMoonLabelHook();
 }  // namespace smoap::hooks
 
 namespace smoap::game {
@@ -146,6 +148,9 @@ extern "C" void exl_main(void* /*x0*/, void* /*x1*/) {
     SMOAP_LOG_INFO("installing 2 M6-phase-A shine-counter hooks");
     smoap::hooks::installShineNumGetHook();
     smoap::hooks::installShineNumByWorldGetHook();
+
+    SMOAP_LOG_INFO("installing M6-phase-A.5 cutscene label hooks");
+    smoap::hooks::installMoonLabelHook();
 
     SMOAP_LOG_INFO("resolving M6-phase-B capture-grant symbols");
     smoap::game::installCaptureGrantSymbols();

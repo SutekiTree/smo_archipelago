@@ -88,6 +88,8 @@ The PC bridge owns AP-protocol complexity (websocket + deflate + TLS + reconnect
   - **Cross-validation**: 100% (436/436 moons + 43/43 captures) of apworld entries resolve. Emitted files cover the full 775 + 52 SMO entries — extras (339 out-of-apworld-scope moons, 7 out-of-scope captures) emitted so future apworld expansion picks them up automatically. (T-Rex was promoted into the apworld in the logic-audit pass; pre-promotion it was 42/42 + 8 out-of-scope.)
   - **IP discipline**: all 4 generated files (`shine_map.json`, `shine_map_review.json`, `capture_map.json`, `capture_map_review.json`) are gitignored. Nine tests in `bridge/tests/test_shine_map_extraction.py` validate schema/count/dedup/anchors for both maps (auto-skip when files absent). Also fixed 10 apworld typos in `apworld/.../locations.json` (e.g. `"Cafe?"` → `"Café?"`, `"By the Falls"` → `"by the Falls"`). Full workflow in `docs/extract-moon-data.md`.
 - **M6 phase A**: AP-credit moon counter HUD substitution — **DONE 2026-05-15.** Two new trampoline hooks (`ShineNumGetHook` on `GameDataFunction::getCurrentShineNum`, `ShineNumByWorldGetHook` on `getGotShineNum`) drop `orig` and return AP-credit-only counts. `ApState` gains `ap_moons_unkingdomed` (truly-generic "Power Moon" credits) + `ap_moons_kingdom[17]` (kingdom-tagged credits, indexed by `kingdomBitFor`). `applyOnFrame` moon arm rewritten to bump credit counters with rich logging (`[m6-moon]` lines); Multi-Moon items grant +3, single-moon +1, kingdom-less generic credits go to `ap_moons_unkingdomed` and only show in the global counter. setGotShine runs untouched so the shine list correctly reflects local pickups — only the visible counter is AP-gated. Validated in Ryujinx (2026-05-15): local moon collection → HUD stays 0, Odyssey ship rejects the moon ("doesn't count"); REPL `grant Cascade Kingdom Power Moon` → HUD ticks to 1, Mario can hand it to the Odyssey; `grant Snow Kingdom Power Moon` rejected by the Cascade Odyssey (kingdom-specific routing works); pre-existing save moons disappear from the visible counter (orig is fully suppressed). `getGotShineNum` hook resolves and fires when explicitly invoked but **never fires during normal Cascade play** — SMO's natural per-kingdom counter reads shine flags directly; the global `getCurrentShineNum` does most of the work for HUD + Odyssey gating. Two new symbols mangled via `aarch64-none-elf-g++ -c` from OdysseyDecomp forward-decls and added to `scripts/check_nso_symbols.py`. Also fixed a latent classifier bug: items use ` Kingdom ` separator (space), not `:` (location form), so `"Cascade Kingdom Power Moon"` was silently routing to `kingdom=None` — fix in `datapackage.py` with new `_ITEM_MOON_KINGDOM_RE`. Bridge `--repl` mode added for dev-test injection without an AP server (commands route through `DataPackage.classify_item` so wire fidelity matches real AP items). M6 phase B (captures) + phase C (kingdom unlock via `unlockWorld` + snapshot enumerate bodies) are the obvious continuations.
+- **apworld item-pool simplification** (rides along with M6 phase A.5, 2026-05-16): removed the kingdom-AGNOSTIC `Power Moon` item (count=463) from [apworld/.../items.json](apworld/smo_archipelago/data/items.json). Item pool drops from 1043 → 580. Reason: all moon items should be per-kingdom so the per-kingdom HUD counter (`getGotShineNum` hook → `ap_moons_kingdom[bit]`) ticks correctly; the kingdom-agnostic `Power Moon` only fed the global `ap_moons_unkingdomed` counter and was effectively dead weight in a per-kingdom-aware mod. After the change the item pool is just `X Kingdom Power Moon` (+1) and `X Kingdom Multi-Moon` (+3) per kingdom, plus captures/kingdoms/shop/stickers. Per-kingdom moon-credit totals now match the in-game moon count for that area (e.g. Cascade: 19 PM + 1 MM = 22 credits = 22 collectable in-game moons). Multi-Moon LOCATION (`Cascade: Multi Moon Atop the Falls`) and the in-game Multi-Moon shine handling are untouched — collecting it just sends a LocationCheck for that location like any other moon, AP routes whatever item is there, the per-kingdom counter ticks +1 or +3 depending on what came back.
+- **M6 phase A.5**: moon-get cutscene label substitution (Channel A) — **DONE 2026-05-16 (Ryujinx-verified, see [user playtest log notes](#m6-phase-a5-playtest-2026-05-16) below).** When Mario collects a moon, the cutscene's "TxtScenario" pane text is replaced with AP-aware text (`Got Cap Power Moon!` / `Sent Cap Power Moon -> P3`). Bridge pre-warms via `LocationScouts` on `Connected` so it already knows what item each location yields — synthesizes label text the moment a check arrives and ships `MoonLabelMsg` in the same TCP push as the handshake reply, so no AP round-trip in the hot path. Switch's `MoonLabelHook` trampolines 3 cutscene state-machine entry points (`StageSceneStateGetShine::exeDemoGet`, `Main::exeDemoGetStart`, `Grand::exeDemoGetStart`) and calls `al::setPaneStringFormat` post-Orig, so our write wins over SMO's vanilla placeholder. Layout offsets (0x20 / 0x40 / 0x40) + pane name (`TxtScenario`) extracted by disassembling each call site against the real 1.0.0 main.nso (Phase 0 of the plan; `aarch64-none-elf-objdump` + a small Python register-simulator). All 4 new symbols verified in `scripts/check_nso_symbols.py` (20/20 total). Bridge uses a release-store-publish pattern on `ApState::pending_moon_label` (no mutex — the libstdc++ allocator NULL-deref applies to std::mutex too); frame thread tracks `label_last_consumed_seq` so the per-frame cutscene `exe` callback only applies once per moon. Sequence ids stamped by `next_check_seq.fetch_add(1)` in `reportMoonChecked` so the bridge can correlate label↔check via `CheckMsg.seq` ↔ `MoonLabelMsg.seq`. Channel B (Cappy bubble for items arriving outside the cutscene window) is the deferred M6.6 follow-up — see the plan for the scope split rationale. Bridge `--repl` got a `label <text>` command for visual testing without an AP server.
 - **M6 phase B**: capture grant via `addHackDictionary` — **DONE 2026-05-16.** AP-issued capture items now write into SMO's hack dictionary so unlocked captures appear in the in-game Capture List. Two new symbols (`addHackDictionary` + `isExistInHackDictionary` for idempotency probe) resolved via `nn::ro::LookupSymbol` at module init, stored as function pointers (same pattern as `CaptureStartHook::getCurrentHackName`). New `CaptureGate::grantCapture(cap_name, hack_name)` is called from `ApState::applyOnFrame` capture arm; idempotent via `isExistInHackDictionary`; falls back to identity (`hack_name = cap_name`) when bridge didn't resolve, which works for the ~36 1:1 names like Frog→Frog. `ApState` gains `game_data_holder_cache` (atomic `void*`); `DrawMainHook` reads `HakoniwaSequence::mGameDataHolder` at offset 0xB8 (a `GameDataHolderAccessor` whose first field is the holder ptr) every frame and stores it. `GameDataHolderWriter` / `GameDataHolderAccessor` are 1-pointer Itanium-ABI-trivial wrappers; we declare local mirror structs and brace-init from the cached pointer when constructing arguments. Bridge: `ItemMsg` gains optional `hack_name`; `CaptureMap` gains a `cap_to_hack` reverse lookup; `ap_client.py::ReceivedItems` stamps the resolved hack_name onto `ItemRef` before `add_received_item` so reconnect-replay carries it through `switch_server.py`. REPL also threads the `CaptureMap` so `capture <name>` ships an identical wire payload to a real AP-issued capture. Latent classifier robustness: `_strip_none` ensures `hack_name: None` is omitted from the wire payload so old mods don't choke. 8 new bridge tests (2 protocol round-trip, 4 reverse-map, 2 REPL). Playtest validated (2026-05-16): REPL `capture <name>` → mod log `[m6-capture] addHackDictionary OK cap='X' hack='Y'` → capture appears unlocked in the Cappy Capture List menu.
 - **M6.1 worker-thread allocator hardening** — **DONE 2026-05-16.** After the M6-B playtest, every save load reliably crashed the worker thread in `__memcpy_device` / `nn::os::GetTlsValue` (NULL TLS slot). Each successive iteration peeled off one more libstdc++ allocator caller on the recv-loop; all four are now eliminated:
   1. **Encoder** (`Encoder::beginObject` → `std::vector<bool>::push_back`): replaced with fixed `bool[kMaxDepth=16]` + depth counter.
@@ -112,7 +114,7 @@ C:\Users\maxwe\SMOArchipelago\
   apworld/                       Forked manual_smo_mp3 → smo_archipelago
     smo_archipelago/             Full package; only `data/game.json` creator field changed
     README.md
-  bridge/                        Python bridge — 80 tests pass (+1 live-AP skipped)
+  bridge/                        Python bridge — 102 tests pass (+1 live-AP skipped, 2 extraction tests flake in fresh worktrees pending capture_map.json)
     smo_ap_bridge/
       __main__.py
       config.py                  TOML loader, CLI overrides, env var SMOAP_PASSWORD / SMOAP_AP_PATH
@@ -122,8 +124,10 @@ C:\Users\maxwe\SMOArchipelago\
       datapackage.py             AP id↔name + classifier (Moon/Capture/Kingdom/Shop/Other)
       state.py                   Thread-safe state mirror for tracker + replay
       tracker_web.py             Flask app on :8000, /api/snapshot, /api/test/inject-deathlink (debug)
+      scout_cache.py             M6 phase A.5: LocationScouts pre-fetch so Channel A labels beat AP round-trip
+      display.py                 M6 phase A.5: Channel A label formatting (UTF-8-safe truncation + kingdom shortening)
       logging_setup.py
-    tests/                       80 passing (test_ap_loopback.py + extract tests auto-skip when prereq absent)
+    tests/                       102 passing (live-AP + 2 extraction tests auto-skip when prereqs absent)
     pyproject.toml
     requirements.txt
     config.example.toml
@@ -134,7 +138,7 @@ C:\Users\maxwe\SMOArchipelago\
       ap/{ApClient,ApState,ApConfig,ApFrameBridge,ApProtocol}.{cpp,hpp}
       ap/capture_table.h         AUTO-GENERATED (42 cap names)
       hooks/HookSymbols.hpp      8 mangled symbols
-      hooks/{MoonGet,CaptureStart,ScenarioFlag,SaveLoad,Ending}Hook.cpp
+      hooks/{MoonGet,CaptureStart,ScenarioFlag,SaveLoad,Ending,MoonLabel}Hook.cpp
       game/{MoonApply,CaptureGate,KingdomUnlock}.{cpp,hpp}
       ui/ApHudOverlay.{cpp,hpp}
       util/{Json,Log}.{cpp,hpp}  Json reader implemented; rest stubs
@@ -371,6 +375,95 @@ A small `CAPTURE_NAME_ALIASES` table in the extractor handles 6 cases where the 
 3. **`Game.py` game-name guard**: bridge should compare `game_name` against `RoomInfo` at startup to catch seed mis-pairing. Not yet implemented; M4 todo.
 4. **DemoPeachWedding hook fires for the wedding cutscene** which is the canonical SMO ending. If 1.0.0 names that demo differently (unlikely given OdysseyDecomp targets 1.0.0), the symbol won't resolve and we'd fall back to hooking a `setMainScenarioNo` call with the post-Bowser scenario value.
 
+## M6 phase A.5 playtest (2026-05-16)
+
+Confirmed end-to-end on real seed (Mario slot 1) in Ryujinx 1.3.3 with the
+M6-phase-A.5 mod (`subsdk9`) auto-deployed from the worktree build:
+
+1. **Channel A label substitution works**: collecting an in-game moon →
+   `MoonGetHook` → bridge resolves via shine_map → AP `LocationCheck` →
+   AP routes scouted item → bridge sends `MoonLabelMsg` in the same TCP
+   push → cutscene's "TxtScenario" pane shows AP-aware text. Verified on
+   regular Cascade moons (Our First Power Moon, Behind the Waterfall)
+   *and* on the Multi-Moon (Multi Moon Atop the Falls).
+2. **Multi-Moon uses `Grand::exeDemoGetStart`** — the hook I deliberately
+   chose. `Grand::exeDemoGetFirst` (deliberately not hooked) does not
+   need to be hooked. Original plan's open question #1 (in
+   [i-wrote-a-plan-fluffy-otter.md](../../.claude/plans/i-wrote-a-plan-fluffy-otter.md))
+   is resolved.
+3. **Bridge bootstrap gotcha discovered**: a fresh worktree does NOT have
+   `bridge/smo_ap_bridge/data/{shine_map,capture_map}.json` (gitignored;
+   per-machine). The bridge starts up cleanly without them but every
+   moon collect logs `no shine_map entry for stage='X' object='Y'` and
+   silently drops the check — no LocationCheck, no MoonLabelMsg,
+   cutscene stays vanilla. The fix is to either copy the files from the
+   main repo or run `scripts/extract_shine_map.py`. **Future agents:
+   copy these two files into a fresh worktree as part of bridge setup**
+   (the `bridge/smo_ap_bridge/data/` directory itself doesn't exist
+   either, so `mkdir -p` first).
+
+## M6.6 (deferred, next milestone)
+
+Channel B — Cappy speech bubble for items arriving *outside* the
+moon-get cutscene window (other players' checks routing items to us;
+late echoes; kingdom-unlock items; capture-unlock items). The wire
+format and bridge generation logic were sketched in
+[i-wrote-a-plan-fluffy-otter.md](../../.claude/plans/i-wrote-a-plan-fluffy-otter.md);
+the unknown is the Switch UI mechanism. Three candidates to spike:
+
+1. **Hook SMO's `CapMessenger`** if it exists — lowest effort. Grep
+   `OdysseyDecomp/src/Player/` for a class that surfaces tutorial-style
+   speech bubbles. Confirmed missing from `.romfs-cache/syms310.ld`
+   (that file's a sparse subset) but should appear in the real
+   `main.nso` dynsym — re-run `scripts/check_nso_symbols.py` with
+   candidate symbols added inline.
+2. **Hijack the tutorial-bubble pane** — overwrite its text via
+   `al::setPaneStringFormat` (already used by M6-A.5) and trigger its
+   appear-animation. Medium effort.
+3. **Custom toast overlay** via `agl::DrawContext` + a hand-rolled
+   layout — pushed to M8 unless 1 + 2 both bust.
+
+Bridge-side `CappyMsg` could ship ahead of UI as Channel-B-prime "log
+only" — the mod just `SMOAP_LOG_INFO`s incoming `cappy` messages until
+the UI mechanism lands. Useful for proving the AP→Bridge→Switch path
+works end-to-end before committing to a UI choice.
+
+## Other follow-ups for next agents
+
+- **`docs/extract-moon-data.md` could mention the M6 A.5 dependency**.
+  Today it documents how to generate `shine_map.json` for the M5/M5.7
+  use case; Channel A *also* hard-depends on it. A new agent might
+  think "I don't need moons resolved, I just want the cutscene labels"
+  and skip the extract step — that's the same fail mode as the M6 A.5
+  playtest above.
+- **`MAX_MOON_LABEL_BYTES = 30` is empirical**. Playtest only confirmed
+  that short labels (`Got Cap Power Moon!`, ~20 bytes) render. Longer
+  labels at the 30-byte cap may overflow the SMO font's pane width.
+  Worth a separate playtest with a deliberately long label (REPL:
+  `label Sent Wooded Kingdom Power Moon -> VeryLongPlayerName`).
+- **Scout-cache cold-warmup race** — first 100-500 ms after AP
+  `Connected` the scout cache hasn't absorbed all 560 `LocationInfo`
+  entries yet. If Mario collects a moon in that window, bridge sends
+  the LocationCheck but compose_moon_label returns None (cache miss),
+  so cutscene shows vanilla. Mild UX issue; the M4.5 state-replay path
+  on disconnect/reconnect always hits this case (no labels for
+  retroactively-applied checks). Could mitigate by waiting on the
+  scout cache to fully warm before flipping `display_enabled = True`.
+- **`AP-server KeyError on scout for missing locations`** — fix at
+  [ap_client.py](bridge/smo_ap_bridge/ap_client.py): the warmup now
+  scopes to `ctx.missing_locations | ctx.checked_locations` instead of
+  the full datapackage. Otherwise a single not-in-this-slot location_id
+  in the scout request kills the websocket connection → bridge reconnect
+  loop. Burned ~30 minutes finding this one during playtest setup.
+- **`apworld/.../data/{items,locations,regions}.json` invariant**: the
+  Multi-Moon rework removed the kingdom-agnostic `Power Moon` item but
+  it was referenced in 19 `|Power Moon:N| or ...` branches across
+  `regions.json` + `locations.json`. The DataValidation pass at seed
+  gen catches this loudly. **Future agents removing or renaming any
+  item must grep both files for the bare name and update all
+  `requires` strings.** Today this is a manual discipline; a CI lint
+  would catch it.
+
 ## What's definitely NOT done
 
 - On-screen status overlay — deferred to M8 per user Q&A; M3 ships heartbeat-to-lm-log instead (web tracker is the canonical source of truth)
@@ -390,8 +483,11 @@ bridge/.venv/Scripts/python -m smo_ap_bridge --config bridge/config.local.toml -
 #   smo-ap-bridge> grant Cascade Kingdom Multi-Moon
 #   smo-ap-bridge> capture Goomba
 #   smo-ap-bridge> kingdom Sand
+#   smo-ap-bridge> label Sent Cap Power Moon -> P3       (M6 phase A.5 — visual test of Channel A)
 #   smo-ap-bridge> status
 #   smo-ap-bridge> help
 ```
 
 Items route through `DataPackage.classify_item` so wire fidelity matches real AP-issued items. `from=repl` on the mod side distinguishes them from AP grants in log lines.
+
+`label <text>` directly writes a `MoonLabelMsg` to the Switch's `pending_moon_label` slot — useful for visual testing the cutscene-label hook standalone (collect any moon in Ryujinx within ~4s of running the command and the text appears in the moon-get cutscene). Real bridge↔AP Channel A use needs a live AP server so the `LocationScouts` warmup populates the `scout_cache` from which `_dispatch_check` synthesizes labels on-the-fly.

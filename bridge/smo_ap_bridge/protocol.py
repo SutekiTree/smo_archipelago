@@ -58,6 +58,13 @@ class CheckMsg:
     object_id: str | None = None    # moons: ShineInfo::objectId
     shine_uid: int | None = None    # moons: ShineInfo::shineId
     hack_name: str | None = None    # captures: PlayerHackKeeper::getCurrentHackName
+    # M6 phase A.5: monotonic-per-session sequence id. The bridge echoes it
+    # back in MoonLabelMsg so the Switch's cutscene-label hook can tell
+    # whether the pending label was meant for the moon it's about to display
+    # (i.e. it's still fresh). None / omitted = legacy switch build that
+    # doesn't support cutscene labels; bridge suppresses MoonLabelMsg in
+    # that case.
+    seq: int | None = None
 
 
 @dataclass
@@ -272,6 +279,30 @@ class KillMsg:
     t: str = "kill"
     source: str = ""
     cause: str = ""
+
+
+@dataclass
+class MoonLabelMsg:
+    """M6 phase A.5 — Channel A: replace the moon-get cutscene's pane text
+    with AP-aware text. Bridge sends this in the same TCP push as the
+    handshake reply to a CheckMsg so it arrives before the cutscene starts.
+
+    `text` is pre-truncated by the bridge to ≤30 bytes UTF-8 (the Switch
+    PendingMoonLabel buffer is 32 bytes including null terminator). Switch
+    re-validates length defensively.
+
+    `seq` echoes the CheckMsg.seq it responds to so the Switch knows the
+    label is for *this* moon (not a leftover from a previous collect that
+    arrived late, e.g. because of a multi-moon race).
+
+    `valid_for_ms` is a Switch-relative TTL counted from receipt; if the
+    cutscene doesn't fire within this window, the label is discarded and
+    the cutscene shows vanilla "Power Moon". Using a relative TTL avoids
+    PC↔Switch clock skew (Switch RTC is often well behind PC NTP)."""
+    t: str = "moon_label"
+    text: str = ""
+    seq: int = 0
+    valid_for_ms: int = 4000
 
 
 # ---------------------------------------------------------------------------

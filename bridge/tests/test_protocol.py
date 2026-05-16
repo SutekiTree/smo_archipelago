@@ -14,6 +14,7 @@ from smo_ap_bridge.protocol import (
     ItemMsg,
     ItemRef,
     ItemKind,
+    MoonLabelMsg,
     PingMsg,
     PongMsg,
     iter_lines,
@@ -117,3 +118,53 @@ def test_ping_default_ts_zero():
     msg = PingMsg()
     parsed = protocol.decode(protocol.encode(msg))
     assert parsed["ts_ms"] == 0
+
+
+# --- M6 phase A.5: CheckMsg.seq + MoonLabelMsg -------------------------
+
+
+def test_check_msg_seq_omitted_when_unset():
+    # Backwards-compat: legacy switch builds omit seq entirely; bridge
+    # uses presence-of-non-zero-seq as the "label me" signal. Default
+    # None gets stripped from the wire so old bridges parse cleanly.
+    msg = CheckMsg(kind="moon", stage_name="WaterfallWorldHomeStage",
+                   object_id="obj214", shine_uid=12345)
+    parsed = protocol.decode(protocol.encode(msg))
+    assert "seq" not in parsed
+
+
+def test_check_msg_seq_non_zero_round_trip():
+    msg = CheckMsg(kind="moon", stage_name="X", object_id="obj1", seq=42)
+    parsed = protocol.decode(protocol.encode(msg))
+    assert parsed["seq"] == 42
+
+
+def test_moon_label_msg_round_trip():
+    msg = MoonLabelMsg(text="Sent Cap Power Moon -> P3", seq=7,
+                      valid_for_ms=4000)
+    raw = protocol.encode(msg)
+    parsed = protocol.decode(raw)
+    assert parsed == {
+        "t": "moon_label",
+        "text": "Sent Cap Power Moon -> P3",
+        "seq": 7,
+        "valid_for_ms": 4000,
+    }
+
+
+def test_moon_label_msg_defaults_round_trip():
+    # Empty MoonLabelMsg should still round-trip (the Switch tolerates
+    # text="" as a no-op clear).
+    msg = MoonLabelMsg()
+    parsed = protocol.decode(protocol.encode(msg))
+    assert parsed["t"] == "moon_label"
+    assert parsed["text"] == ""
+    assert parsed["seq"] == 0
+    assert parsed["valid_for_ms"] == 4000
+
+
+def test_moon_label_msg_unicode_text_preserved():
+    msg = MoonLabelMsg(text="Got Café Power Moon!", seq=1)
+    raw = protocol.encode(msg)
+    parsed = protocol.decode(raw)
+    assert parsed["text"] == "Got Café Power Moon!"

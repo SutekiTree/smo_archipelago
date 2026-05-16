@@ -26,6 +26,11 @@ void reportMoonChecked(const char* stage_name, const char* object_id, int shine_
     copyCheckField(c.stage_name, stage_name);
     copyCheckField(c.object_id, object_id);
     c.shine_uid = shine_uid;
+    // M6 phase A.5 — stamp a sequence id so the bridge can correlate its
+    // MoonLabelMsg reply with *this* check. Only Moon checks get one (it's
+    // the only kind that triggers a cutscene with a label to substitute).
+    // fetch_add(1) gives us monotonic per-session ids starting at 1.
+    c.seq = ApState::instance().next_check_seq.fetch_add(1, std::memory_order_relaxed);
     enqueueCheck(c);
 }
 

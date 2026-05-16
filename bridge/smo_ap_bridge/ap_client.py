@@ -26,8 +26,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .datapackage import DataPackage
+from .display import format_moon_label
 from .maps import CaptureMap, ShineMap
-from .protocol import ItemMsg, KillMsg
+from .protocol import ItemMsg, KillMsg, MoonLabelMsg
+from .scout_cache import ScoutCache, request_scout
 from .state import BridgeState, ItemEvent
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -123,6 +125,8 @@ class SmoApBridgeContext:
         capture_map: CaptureMap | None = None,
         archipelago_path: str | None = None,
         deathlink_enabled: bool = False,
+        display_enabled: bool = True,
+        switch_send_moon_label: callable | None = None,
     ):
         self.server_addr = server_addr
         self.slot = slot
@@ -132,14 +136,23 @@ class SmoApBridgeContext:
         self._send_print = switch_send_print
         self._send_ap_state = switch_send_ap_state
         self._send_kill = switch_send_kill
+        # Optional: callers that don't ship MoonLabelMsg pass None and we
+        # silently drop label sends. ap_client itself never calls this — the
+        # actual send site is in SwitchServer._dispatch_check via the
+        # compose_moon_label callback wiring. Field is held for symmetry +
+        # future use (e.g., reconnect re-label, M6.6 Channel B).
+        self._send_moon_label = switch_send_moon_label
         self._state = state
         self._dp = datapackage
         self._shine_map = shine_map or ShineMap()
         self._capture_map = capture_map or CaptureMap()
         self._ap_path_hint = archipelago_path
         self._deathlink_enabled = deathlink_enabled
+        self._display_enabled = display_enabled
         self._ctx = None  # CommonContext instance, built in start()
         self._server_loop_task: asyncio.Task | None = None
+        # M6 phase A.5 — populated on Connected, queried on each Check.
+        self._scout_cache = ScoutCache()
 
     async def start(self) -> None:
         CommonContext, server_loop, ClientStatus = _import_common_context(self._ap_path_hint)
@@ -206,10 +219,14 @@ class SmoApBridgeContext:
         object_id: str | None = None,
         shine_uid: int | None = None,
         hack_name: str | None = None,
-    ) -> None:
+    ) -> int | None:
+        """Forward a Switch-side check to AP. Returns the resolved AP
+        location_id on success (so SwitchServer can synthesize a
+        MoonLabelMsg from it), or None when the check couldn't be
+        resolved / forwarded."""
         if self._ctx is None:
             log.warning("report_check before AP context started; dropping")
-            return
+            return None
 
         # Resolve raw IDs from the Switch into (kingdom, shine_id) / cap. Raw
         # fields take precedence over legacy.
@@ -224,7 +241,7 @@ class SmoApBridgeContext:
                 self._state.add_log(
                     f"[unknown moon] stage={stage_name} object={object_id} uid={shine_uid}"
                 )
-                return
+                return None
             kingdom = res.kingdom
             shine_id = res.shine_id
         elif kind == "capture" and hack_name:
@@ -234,14 +251,48 @@ class SmoApBridgeContext:
         loc_id = self._dp.location_name_to_id.get(loc_name)
         if loc_id is None:
             log.warning("no AP id for location %r (kind=%s)", loc_name, kind)
-            return
+            return None
         if loc_id in self._ctx.locations_checked:
             log.info("check %r (id=%d) already in locations_checked; skipping LocationChecks send",
                      loc_name, loc_id)
-            return
+            # Still return the loc_id — Channel A's MoonLabelMsg compose path
+            # only reads from the scout cache, so it's safe (and friendly) to
+            # surface a label for a re-collected moon. The actual LocationCheck
+            # send is correctly suppressed by the dedup above.
+            return loc_id
         log.info("forwarding LocationCheck %r (id=%d) to AP", loc_name, loc_id)
         await self._ctx.send_msgs([{"cmd": "LocationChecks", "locations": [loc_id]}])
         self._ctx.locations_checked.add(loc_id)
+        return loc_id
+
+    def compose_moon_label_for_location(self, loc_id: int) -> str | None:
+        """Channel A: look up what the scouted location maps to and format the
+        in-game cutscene text. Returns None when:
+          * Channel A is disabled in config
+          * AP not connected yet
+          * The scout cache hasn't seen this location (warmup race, or the
+            location isn't ours)
+          * The classified item is something we don't know how to label
+        Caller (SwitchServer._dispatch_check) sends MoonLabelMsg when non-None.
+
+        Synchronous, no I/O — safe to call from the dispatch hot path.
+        """
+        if not self._display_enabled or self._ctx is None:
+            return None
+        scout = self._scout_cache.lookup(loc_id)
+        if scout is None:
+            return None
+        item_name = self._dp.item_id_to_name.get(scout.item_id)
+        if not item_name:
+            return None
+        ci = self._dp.classify_item(item_name)
+        recipient = self._sender_name(self._ctx, scout.recipient)
+        me_slot = self._ctx.auth or self.slot
+        try:
+            return format_moon_label(ci, recipient, me_slot)
+        except Exception:
+            log.exception("format_moon_label failed for loc_id=%d", loc_id)
+            return None
 
     async def report_goal(self) -> None:
         if self._ctx is None:
@@ -287,6 +338,25 @@ class SmoApBridgeContext:
             self._state.set_ap_conn("ready")
             self._state.slot = ctx.auth or self.slot
             await self._send_ap_state("ready")
+            # M6 phase A.5 — warm the scout cache so the next moon Mario
+            # collects has its label ready before the cutscene fires. Scope
+            # to *our* locations only (the bridge's datapackage covers our
+            # game). Reset first so reconnect picks up any seed changes.
+            if self._display_enabled:
+                self._scout_cache.clear()
+                # Scope to *our slot's* locations (per AP server). Using the
+                # full datapackage instead would request location ids not
+                # owned by this slot, which the AP server's LocationScouts
+                # handler treats as a hard error (KeyError on the missing
+                # entry → drops the websocket connection → bridge reconnects
+                # → same scout → same kill → boot loop). missing | checked
+                # covers every location the AP server is willing to scout
+                # for us.
+                loc_ids = list((ctx.missing_locations or set()) |
+                               (ctx.checked_locations or set()))
+                n = await request_scout(ctx, loc_ids, self._scout_cache)
+                if n:
+                    log.info("scout: requested %d locations for Channel A warmup", n)
         elif cmd == "RoomInfo":
             seed = args.get("seed_name") or args.get("seed")
             if seed:
@@ -326,6 +396,13 @@ class SmoApBridgeContext:
             data = args.get("data", {}).get("games", {})
             for game_name, package in data.items():
                 self._dp.update_from_ap(game_name, package)
+        elif cmd == "LocationInfo":
+            # M6 phase A.5 — scout cache absorption. Replies come back
+            # piecemeal for very large requests, so we accumulate.
+            n = self._scout_cache.absorb_location_info(args)
+            if n:
+                log.debug("scout: absorbed %d location_info entries (cache size=%d)",
+                          n, len(self._scout_cache))
         elif cmd == "Bounce":
             # DeathLink (and possibly other bounce-tagged) traffic. Forward to
             # the Switch if it's a DeathLink we didn't originate ourselves.

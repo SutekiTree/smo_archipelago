@@ -137,6 +137,41 @@ std::int64_t ApState::nowMs() {
     return static_cast<std::int64_t>(ts.GetMilliSeconds());
 }
 
+void ApState::setPendingMoonLabel(const char* text, int seq, std::int64_t deadline_ms) {
+    if (seq <= 0) return;  // 0 is the "empty" sentinel; bridge bug if it sends one
+    // Order matters: write text + deadline BEFORE bumping published_seq with
+    // release semantics. The frame thread's acquire-load synchronizes-with this
+    // store, guaranteeing it sees a fully-written buffer.
+    std::size_t i = 0;
+    if (text != nullptr) {
+        while (i + 1 < kPendingMoonLabelCap && text[i] != '\0') {
+            pending_moon_label.text[i] = text[i];
+            ++i;
+        }
+    }
+    pending_moon_label.text[i] = '\0';
+    pending_moon_label.deadline_ms = deadline_ms;
+    pending_moon_label.published_seq.store(seq, std::memory_order_release);
+}
+
+bool ApState::tryTakePendingMoonLabel(char (&text_out)[kPendingMoonLabelCap]) {
+    const int seq = pending_moon_label.published_seq.load(std::memory_order_acquire);
+    if (seq == 0) return false;                       // never set
+    if (seq == label_last_consumed_seq) return false; // already shown for this cutscene
+    if (pending_moon_label.deadline_ms != 0 &&
+        nowMs() > pending_moon_label.deadline_ms) {
+        // Expired (e.g. label arrived but the cutscene never fired within
+        // valid_for_ms — round-trip too slow, or moon get aborted). Mark
+        // consumed so we don't keep checking it.
+        label_last_consumed_seq = seq;
+        return false;
+    }
+    std::memcpy(text_out, pending_moon_label.text, kPendingMoonLabelCap);
+    text_out[kPendingMoonLabelCap - 1] = '\0';
+    label_last_consumed_seq = seq;
+    return true;
+}
+
 void ApState::maybeApplyInboundKill() {
     if (!inbound_kill_pending.exchange(false, std::memory_order_acq_rel)) return;
     if (!deathlink_enabled.load(std::memory_order_relaxed)) {

@@ -99,6 +99,12 @@ struct Check {
     char object_id[kCheckFieldCap] = {};   // moons: ShineInfo::objectId
     int shine_uid = -1;                    // moons: ShineInfo::shineId
     char hack_name[kCheckFieldCap] = {};   // captures: PlayerHackKeeper::getCurrentHackName
+    // M6 phase A.5: per-session monotonic sequence id. Bridge echoes it
+    // back in MoonLabelMsg.seq so the cutscene-label hook can tell which
+    // pending label belongs to which moon. 0 = absent (legacy path); the
+    // bridge skips Channel A when seq == 0. The Switch fills this from a
+    // simple counter in MoonGetHook before sending the Check.
+    int seq = 0;
 };
 
 struct Status {
@@ -250,6 +256,31 @@ struct Kill {
     char cause[kLongFieldCap] = {};
 };
 
+struct MoonLabel {
+    // M6 phase A.5 — Channel A. Bridge ships this in the same TCP push as
+    // the handshake reply to a Check, so the text is in our hands before
+    // the moon-get cutscene starts. ApState stows it into pending_moon_label;
+    // the MoonLabelHook trampolines read it during the cutscene and call
+    // al::setPaneStringFormat on the "TxtScenario" pane.
+    //
+    // `text` is pre-truncated by the bridge (≤30 bytes UTF-8). Switch
+    // re-validates length on copy into ApState::pending_moon_label.
+    // Fixed char[] (not std::string) per the M6.1 inbound-allocator-safety
+    // contract — every DecodedMsg field uses fixed buffers because the
+    // libstdc++ allocator NULL-derefs on the worker thread once heap state
+    // drifts. kCheckFieldCap (64) is comfortable headroom over the bridge's
+    // 30-byte truncation.
+    //
+    // `seq` echoes Check.seq so the hook knows whether the pending label
+    // is for the moon it's about to display vs. a stale leftover.
+    //
+    // `valid_for_ms` is a Switch-relative TTL starting at receipt — avoids
+    // PC/Switch clock skew. Expired labels are silently discarded.
+    char text[kCheckFieldCap] = {};
+    int seq = 0;
+    int valid_for_ms = 4000;
+};
+
 // (de)serialization --------------------------------------------------------
 // Implementations in ApProtocol.cpp use util/Json.hpp (no STL exceptions).
 //
@@ -281,6 +312,7 @@ struct DecodedMsg {
     Pong pong{};
     Err err{};
     Kill kill{};
+    MoonLabel moon_label{};
 };
 bool decode(const char* data, std::size_t len, DecodedMsg& out);
 

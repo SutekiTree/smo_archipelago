@@ -20,6 +20,7 @@ from .protocol import (
     HelloAckMsg,
     ItemMsg,
     KillMsg,
+    MoonLabelMsg,
     PongMsg,
 )
 from .state import BridgeState, CheckEvent, ItemEvent
@@ -27,9 +28,10 @@ from .state import BridgeState, CheckEvent, ItemEvent
 log = logging.getLogger(__name__)
 
 
-CheckHandler = Callable[[dict], Awaitable[None]]
+CheckHandler = Callable[[dict], Awaitable["int | None"]]  # returns AP loc_id or None
 GoalHandler = Callable[[], Awaitable[None]]
 DeathHandler = Callable[[int], Awaitable[None]]
+LabelComposer = Callable[[int], "str | None"]              # loc_id -> label text
 
 
 class SwitchServer:
@@ -42,6 +44,7 @@ class SwitchServer:
         on_goal: GoalHandler,
         on_death: DeathHandler | None = None,
         deathlink_enabled: bool = False,
+        compose_moon_label: LabelComposer | None = None,
     ):
         self._host = host
         self._port = port
@@ -50,6 +53,7 @@ class SwitchServer:
         self._on_goal = on_goal
         self._on_death = on_death
         self._deathlink_enabled = deathlink_enabled
+        self._compose_label = compose_moon_label
         self._writer: asyncio.StreamWriter | None = None
         self._writer_lock = asyncio.Lock()
         self._server: asyncio.AbstractServer | None = None
@@ -84,6 +88,9 @@ class SwitchServer:
 
     async def send_kill(self, kill: KillMsg) -> None:
         await self._send(kill)
+
+    async def send_moon_label(self, label: MoonLabelMsg) -> None:
+        await self._send(label)
 
     async def _send(self, msg: Any) -> None:
         async with self._writer_lock:
@@ -190,8 +197,22 @@ class SwitchServer:
         BridgeState.add_checked_location dedupes via the full ItemRef identity,
         so snapshot replays don't grow the list (or trigger spurious tracker
         increments) on every reconnect.
+
+        M6 phase A.5: if the Switch sent a non-zero `seq` and AP returned a
+        resolved location_id and Channel A is wired, synthesize a
+        MoonLabelMsg in the same TCP push (Nagle-batched) so it arrives
+        before the cutscene fires.
         """
-        await self._on_check(msg)
+        loc_id = await self._on_check(msg)
+        seq = msg.get("seq") or 0
+        if loc_id is not None and seq and self._compose_label is not None:
+            try:
+                text = self._compose_label(loc_id)
+            except Exception:
+                log.exception("compose_moon_label failed for loc_id=%s seq=%s", loc_id, seq)
+                text = None
+            if text:
+                await self.send_moon_label(MoonLabelMsg(text=text, seq=seq))
         self._state.add_checked_location(
             CheckEvent(item=protocol.ItemRef(
                 kind=msg.get("kind", "moon"),
