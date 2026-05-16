@@ -43,6 +43,27 @@ static int moonGrantAmount(const Item& item) {
 }
 
 void ApState::applyOnFrame() {
+    // Drain pending shine-color scouts first. ShineScout is two ints —
+    // no allocator path. Sentinel 0xFF would let the game keep its stage
+    // default; a real palette index overrides at the next
+    // setStageShineAnimFrame call (substituted in ShineAppearanceHook).
+    ShineScout sc;
+    while (inbound_scouts.pop(sc)) {
+        if (sc.shine_uid < 0 ||
+            static_cast<std::size_t>(sc.shine_uid) >= kMaxShineUid) {
+            SMOAP_LOG_WARN("[shine-color] dropping uid=%d (out of range; bump kMaxShineUid?)",
+                           sc.shine_uid);
+            continue;
+        }
+        std::uint8_t pal = static_cast<std::uint8_t>(sc.palette & 0xFF);
+        if (pal == kNoPaletteOverride) {
+            // 0xFF on the wire would collide with our sentinel. Coerce to 0
+            // ("no visible change") rather than silently dropping the entry.
+            pal = 0;
+        }
+        setShinePalette(sc.shine_uid, pal);
+    }
+
     // Pre-sample pending count for the Cappy-message bulk-suppress heuristic.
     // We can't snapshot a count by copying Items into a batch[] array
     // because Item holds std::string fields — Item assignment triggers

@@ -51,6 +51,8 @@ SYMBOLS = [
     "_ZN2al21getStageMessageStringEPKNS_17IUseMessageSystemEPKcS4_",
     "_ZN2rs28tryShowCapMessagePriorityLowEPKN2al18IUseSceneObjHolderEPKcii",
     "_ZN2rs18isActiveCapMessageEPKN2al18IUseSceneObjHolderE",
+    # (M-color uses inline patches at fixed offsets inside Shine::init,
+    # not a symbol hook — see hooks/ShineAppearanceHook.cpp.)
 ]
 
 

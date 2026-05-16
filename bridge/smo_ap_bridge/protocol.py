@@ -27,6 +27,31 @@ class ItemKind(str, Enum):
     OTHER = "other"
 
 
+class Classification(str, Enum):
+    """Wire form of Archipelago's ItemClassification flag bits.
+
+    `as_flag()` in Archipelago's BaseClasses keeps only the low 3 bits:
+        progression = 0b001, useful = 0b010, trap = 0b100, filler = 0b000.
+    Bits can combine; we collapse to the dominant class:
+    progression > useful > trap > filler.
+    """
+    PROGRESSION = "progression"
+    USEFUL = "useful"
+    TRAP = "trap"
+    FILLER = "filler"
+
+
+def classification_from_flags(flags: int) -> Classification:
+    """Collapse an AP flags bitmask to a single dominant classification."""
+    if flags & 0b001:
+        return Classification.PROGRESSION
+    if flags & 0b010:
+        return Classification.USEFUL
+    if flags & 0b100:
+        return Classification.TRAP
+    return Classification.FILLER
+
+
 # ---------------------------------------------------------------------------
 # Switch -> Bridge
 # ---------------------------------------------------------------------------
@@ -194,6 +219,9 @@ class ItemRef:
     object_id: str | None = None
     shine_uid: int | None = None
     hack_name: str | None = None
+    # AP classification carried forward into ItemMsg; not in CheckedReplay
+    # since the C++ ItemRef parser rejects unknown fields.
+    classification: str | None = None
 
     def to_replay_dict(self) -> dict[str, Any]:
         """Wire payload for inclusion in a CheckedReplayMsg.
@@ -239,11 +267,32 @@ class ItemMsg:
     # straight into GameDataFunction::addHackDictionary. None when no map
     # entry exists; the mod logs and drops.
     hack_name: str | None = None
+    # AP item classification (progression / useful / trap / filler). None when
+    # unknown (e.g. older bridge talking to never-scouted REPL grant). Switch
+    # mod uses this for log lines + post-collection effects; pre-collection
+    # color uses ShineScoutsMsg instead.
+    classification: str | None = None
 
     def to_wire(self) -> dict[str, Any]:
         d = asdict(self)
         d["from"] = d.pop("from_")
         return _strip_none(d)
+
+
+@dataclass
+class ShineScoutsMsg:
+    """Pre-collection palette assignment for each moon location.
+
+    Sent Bridge -> Switch after AP `Connected` + `LocationInfo` reply lands.
+    May arrive in multiple chunks; the Switch merges entries by `shine_uid`
+    overwrite (each (shine_uid, palette) is a complete fact).
+
+    Entry shape: `{"shine_uid": int, "palette": int}`. Palette is a SMO per-
+    stage shine animation frame index (range varies per stage, typically
+    0..15); 0 means "leave stage default".
+    """
+    t: str = "shine_scouts"
+    entries: list[dict] = field(default_factory=list)
 
 
 @dataclass

@@ -184,12 +184,14 @@ async def run(args: argparse.Namespace) -> int:
         switch_send_ap_state=sw.send_ap_state,
         switch_send_kill=sw.send_kill,
         switch_send_moon_label=sw.send_moon_label,
+        switch_send_shine_scouts=sw.send_shine_scouts,
         state=state,
         datapackage=dp,
         shine_map=shine_map,
         capture_map=capture_map,
         archipelago_path=cfg.bridge.archipelago_path or None,
         deathlink_enabled=cfg.deathlink.enabled,
+        colors_config=cfg.colors,
     )
     ap_ctx_holder["ctx"] = ap
 

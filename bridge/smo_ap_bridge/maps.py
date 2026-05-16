@@ -45,6 +45,10 @@ class ShineMap:
     def __init__(self, path: Path | None = None):
         self._by_pair: dict[tuple[str, str], MoonResolution] = {}
         self._by_uid: dict[int, MoonResolution] = {}
+        # Inverse for LocationScouts -> shine_uid resolution: (kingdom, shine_id)
+        # is the canonical AP location form, shine_uid is what the Switch keys
+        # the palette table by. Built at load() time alongside the forward maps.
+        self._uid_by_location: dict[tuple[str, str], int] = {}
         self._source = path
         if path is not None and path.exists():
             self.load(path)
@@ -65,6 +69,7 @@ class ShineMap:
             uid = e.get("shine_uid")
             if isinstance(uid, int):
                 self._by_uid[uid] = res
+                self._uid_by_location[(kingdom, shine)] = uid
         log.info("ShineMap loaded %d entries from %s", len(self._by_pair), path)
 
     def resolve(
@@ -82,6 +87,20 @@ class ShineMap:
             if res is not None:
                 return res
         return None
+
+    def resolve_uid_by_location(
+        self,
+        kingdom: str | None,
+        shine_id: str | None,
+    ) -> int | None:
+        """Inverse of resolve(): (kingdom, shine_id) -> shine_uid.
+
+        Used by the LocationScouts handler to key per-classification palette
+        entries by the same uid the Switch's MoonGetHook reports.
+        """
+        if not (kingdom and shine_id):
+            return None
+        return self._uid_by_location.get((kingdom, shine_id))
 
 
 class CaptureMap:

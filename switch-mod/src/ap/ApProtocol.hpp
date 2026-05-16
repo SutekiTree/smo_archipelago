@@ -200,6 +200,10 @@ struct ItemRef {
     char cap[kCheckFieldCap] = {};
     char name[kMediumFieldCap] = {};
     int slot = -1;
+    // AP classification (progression/useful/trap/filler), empty if absent.
+    // Carried on full ItemMsgs but NOT on checked_replay (bridge strips).
+    // Fixed buffer per the M6.1 allocator-safety contract.
+    char classification[kCheckFieldCap] = {};
 };
 
 struct CheckedReplay {
@@ -227,6 +231,13 @@ struct Item {
     // GameDataFunction::addHackDictionary. Empty when the bridge had no map
     // entry — mod logs and drops in that case.
     char hack_name[kCheckFieldCap] = {};
+    // M-color: AP item classification (wire form: "progression"/"useful"/
+    // "trap"/"filler", empty when the bridge didn't send one — older bridge
+    // against newer Switch). Used for log lines + future post-collection
+    // effects; pre-collection moon color comes from ShineScouts, not here.
+    // Fixed buffer per the same M6.1 allocator-safety contract every other
+    // inbound field uses.
+    char classification[kCheckFieldCap] = {};
 };
 
 struct Print {
@@ -281,6 +292,28 @@ struct MoonLabel {
     int valid_for_ms = 4000;
 };
 
+// One entry of the AP-classification palette table. Sent by the bridge in
+// chunked ShineScouts after AP `LocationInfo` lands (i.e. once at AP-connect
+// time, plus a full replay on every Switch reconnect via HELLO). The Switch
+// merges chunks into ApState::shine_palette by shine_uid overwrite, then
+// the ShineAppearanceHook substitutes the palette index in rs::set
+// StageShineAnimFrame.
+struct ShineScout {
+    int shine_uid = -1;
+    int palette = 0;  // 0 means "no override; keep stage default frame"
+};
+
+struct ShineScouts {
+    // Fixed-size array (same M6.1 allocator-safety contract as
+    // CheckedReplay.ids). Bridge chunks at 200 entries per message;
+    // kMaxEntries holds one full chunk with headroom for protocol drift.
+    // Overflow truncates with a log line on the consumer side.
+    static constexpr std::size_t kMaxEntries = 256;
+    ShineScout entries[kMaxEntries]{};
+    std::size_t entry_count = 0;
+    bool truncated = false;
+};
+
 // (de)serialization --------------------------------------------------------
 // Implementations in ApProtocol.cpp use util/Json.hpp (no STL exceptions).
 //
@@ -313,6 +346,7 @@ struct DecodedMsg {
     Err err{};
     Kill kill{};
     MoonLabel moon_label{};
+    ShineScouts shine_scouts{};
 };
 bool decode(const char* data, std::size_t len, DecodedMsg& out);
 

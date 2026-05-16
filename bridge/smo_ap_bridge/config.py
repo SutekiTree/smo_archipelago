@@ -44,11 +44,46 @@ class DeathLinkOptions:
 
 
 @dataclass
+class ColorsConfig:
+    """Maps AP item classification -> SMO per-stage shine-animation palette index.
+
+    SMO ships a per-stage color animation for shines; we trampoline
+    rs::setStageShineAnimFrame to substitute our index whenever the bridge
+    has scouted the shine. Indices are stage-specific (the same number can
+    map to different visual colors across kingdoms), so the defaults below
+    are intentionally conservative — bump per kingdom in slot_data overrides
+    later if needed.
+
+    A palette of 0 means "leave the stage default frame untouched"; the
+    Switch treats this as "no override" and runs orig() unchanged.
+    """
+    enabled: bool = True
+    progression: int = 1
+    useful: int = 2
+    trap: int = 3
+    filler: int = 0
+
+    def for_classification(self, classification: str) -> int:
+        """Look up the palette index for a wire-form classification string.
+
+        Unknown strings (including None-as-empty) fall through to filler.
+        """
+        if classification == "progression":
+            return self.progression
+        if classification == "useful":
+            return self.useful
+        if classification == "trap":
+            return self.trap
+        return self.filler
+
+
+@dataclass
 class Config:
     ap: ApConfig = field(default_factory=ApConfig)
     switch: SwitchConfig = field(default_factory=SwitchConfig)
     bridge: BridgeOptions = field(default_factory=BridgeOptions)
     deathlink: DeathLinkOptions = field(default_factory=DeathLinkOptions)
+    colors: ColorsConfig = field(default_factory=ColorsConfig)
 
     @classmethod
     def load(cls, path: Path | str | None) -> "Config":
@@ -64,6 +99,8 @@ class Config:
                 cfg.bridge = BridgeOptions(**{**cfg.bridge.__dict__, **raw["bridge"]})
             if "deathlink" in raw:
                 cfg.deathlink = DeathLinkOptions(**{**cfg.deathlink.__dict__, **raw["deathlink"]})
+            if "colors" in raw:
+                cfg.colors = ColorsConfig(**{**cfg.colors.__dict__, **raw["colors"]})
 
         env_password = os.environ.get("SMOAP_PASSWORD")
         if env_password:

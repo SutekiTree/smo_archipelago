@@ -227,13 +227,14 @@ bool parseItemRefBody(Reader& r, ItemRef& out) {
     // Reads object fields for an ItemRef. Caller has already consumed '{'.
     std::string_view key;
     while (r.nextField(key)) {
-        if      (key == "kind")     { if (!readKindField(r, out.kind)) return false; }
-        else if (key == "kingdom")  { if (!readIntoField(r, out.kingdom)) return false; }
-        else if (key == "shine_id") { if (!readIntoField(r, out.shine_id)) return false; }
-        else if (key == "cap")      { if (!readIntoField(r, out.cap)) return false; }
-        else if (key == "name")     { if (!readIntoField(r, out.name)) return false; }
-        else if (key == "slot")     { if (!readIntoInt(r, out.slot)) return false; }
-        else                        { return false; }
+        if      (key == "kind")           { if (!readKindField(r, out.kind)) return false; }
+        else if (key == "kingdom")        { if (!readIntoField(r, out.kingdom)) return false; }
+        else if (key == "shine_id")       { if (!readIntoField(r, out.shine_id)) return false; }
+        else if (key == "cap")            { if (!readIntoField(r, out.cap)) return false; }
+        else if (key == "name")           { if (!readIntoField(r, out.name)) return false; }
+        else if (key == "slot")           { if (!readIntoInt(r, out.slot)) return false; }
+        else if (key == "classification") { if (!readIntoField(r, out.classification)) return false; }
+        else                              { return false; }
     }
     return true;
 }
@@ -270,18 +271,53 @@ bool parseCheckedReplay(Reader& r, CheckedReplay& out) {
 bool parseItem(Reader& r, Item& out) {
     std::string_view key;
     while (r.nextField(key)) {
-        if      (key == "kind")     { if (!readKindField(r, out.kind)) return false; }
-        else if (key == "kingdom")  { if (!readIntoField(r, out.kingdom)) return false; }
-        else if (key == "shine_id") { if (!readIntoField(r, out.shine_id)) return false; }
-        else if (key == "cap")      { if (!readIntoField(r, out.cap)) return false; }
-        else if (key == "name")     { if (!readIntoField(r, out.name)) return false; }
-        else if (key == "slot")     { if (!readIntoInt(r, out.slot)) return false; }
-        else if (key == "from")     { if (!readIntoField(r, out.from)) return false; }
+        if      (key == "kind")           { if (!readKindField(r, out.kind)) return false; }
+        else if (key == "kingdom")        { if (!readIntoField(r, out.kingdom)) return false; }
+        else if (key == "shine_id")       { if (!readIntoField(r, out.shine_id)) return false; }
+        else if (key == "cap")            { if (!readIntoField(r, out.cap)) return false; }
+        else if (key == "name")           { if (!readIntoField(r, out.name)) return false; }
+        else if (key == "slot")           { if (!readIntoInt(r, out.slot)) return false; }
+        else if (key == "from")           { if (!readIntoField(r, out.from)) return false; }
         // M6 phase B: bridge populates hack_name for capture items (cap → hack
         // reverse lookup via CaptureMap). Mod-side passes hack_name straight
         // to GameDataFunction::addHackDictionary.
-        else if (key == "hack_name"){ if (!readIntoField(r, out.hack_name)) return false; }
-        else                        { return false; }
+        else if (key == "hack_name")      { if (!readIntoField(r, out.hack_name)) return false; }
+        // M-color: AP classification, see ApProtocol.hpp Item.classification.
+        else if (key == "classification") { if (!readIntoField(r, out.classification)) return false; }
+        else                              { return false; }
+    }
+    return true;
+}
+
+bool parseShineScouts(Reader& r, ShineScouts& out) {
+    out.entry_count = 0;
+    out.truncated = false;
+    std::string_view key;
+    while (r.nextField(key)) {
+        if (key == "entries") {
+            if (!r.enterArray()) return false;
+            while (r.hasMoreInArray()) {
+                if (!r.enterObject()) return false;
+                ShineScout sc;
+                std::string_view k2;
+                while (r.nextField(k2)) {
+                    if      (k2 == "shine_uid") { if (!readIntoInt(r, sc.shine_uid)) return false; }
+                    else if (k2 == "palette")   { if (!readIntoInt(r, sc.palette)) return false; }
+                    else                        { return false; }
+                }
+                if (!r.exitObject()) return false;
+                if (out.entry_count < ShineScouts::kMaxEntries) {
+                    out.entries[out.entry_count++] = sc;
+                } else {
+                    // Parsed-and-discarded so the JSON stays well-formed;
+                    // the consumer logs truncation.
+                    out.truncated = true;
+                }
+            }
+            if (!r.exitArray()) return false;
+        } else {
+            return false;
+        }
     }
     return true;
 }
@@ -379,6 +415,7 @@ bool decode(const char* data, std::size_t len, DecodedMsg& out) {
     else if (eqStr(out.t, "err"))            ok = parseErr(r, out.err);
     else if (eqStr(out.t, "kill"))           ok = parseKill(r, out.kill);
     else if (eqStr(out.t, "moon_label"))     ok = parseMoonLabel(r, out.moon_label);
+    else if (eqStr(out.t, "shine_scouts"))   ok = parseShineScouts(r, out.shine_scouts);
     else {
         // Unknown type: leave out.t set so handleLine can warn. Don't bother
         // draining the rest of the object — caller treats unknown as ignored.

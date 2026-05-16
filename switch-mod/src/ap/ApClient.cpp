@@ -548,6 +548,29 @@ void ApClient::handleLine(char* line, std::size_t line_len) {
                        m.moon_label.valid_for_ms);
         ApState::instance().setPendingMoonLabel(
             m.moon_label.text, m.moon_label.seq, deadline);
+    } else if (eq(m.t, "shine_scouts")) {
+        // AP-classification moon color. Bridge sends one or more chunks of
+        // (shine_uid -> palette) after AP LocationInfo lands, and a full
+        // replay on every HELLO. Push each into the SPSC ring; the frame
+        // thread folds them into ApState::shine_palette in applyOnFrame.
+        // Ring is sized 4096 — well above the seed's ~565 moons — so a full
+        // replay in one HELLO won't backpressure.
+        auto& ring = ApState::instance().inbound_scouts;
+        std::size_t pushed = 0, dropped = 0;
+        for (std::size_t i = 0; i < m.shine_scouts.entry_count; ++i) {
+            if (ring.push(m.shine_scouts.entries[i])) {
+                ++pushed;
+            } else {
+                ++dropped;
+            }
+        }
+        if (m.shine_scouts.truncated) {
+            SMOAP_LOG_WARN("[shine-color] shine_scouts chunk truncated at %zu entries; "
+                           "bridge sent more than ShineScouts::kMaxEntries — bump cap",
+                           m.shine_scouts.entry_count);
+        }
+        SMOAP_LOG_INFO("[shine-color] enqueued %zu palette entries (dropped %zu)",
+                       pushed, dropped);
     } else {
         SMOAP_LOG_WARN("unknown message t=%s", m.t);
     }

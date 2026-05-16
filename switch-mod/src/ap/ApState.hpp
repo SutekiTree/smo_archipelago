@@ -179,6 +179,12 @@ public:
     SpscRing<Check, 256> outbound_checks;
     SpscRing<StatusEvent, 16> outbound_status;
 
+    // socket -> frame. Pre-collection moon color: bridge sends
+    // ShineScoutsMsg(s) once per AP connect after LocationScouts, then again
+    // on every Switch HELLO. Each chunk holds up to ~200 (shine_uid, palette)
+    // pairs. Frame thread drains and folds into shine_palette[].
+    SpscRing<ShineScout, 4096> inbound_scouts;
+
     // frame-thread-only state below
 
     std::bitset<128> captures_unlocked;     // 43 used; index from capture_table.h
@@ -212,6 +218,36 @@ public:
     // visibility guarantee — matches the player_hp_cache pattern above.
     // Stored as void* to avoid leaking the game header here.
     std::atomic<void*> game_data_holder_cache{nullptr};
+
+    // AP-classification moon color (M-color milestone).
+    // Indexed by SMO ShineInfo::shineId (s32). 0xFF = "no override; let the
+    // game's stage color animation pick the default frame". Storage choice:
+    // fixed array, NO std::map, to avoid the libstdc++ allocator NULL-deref
+    // we hit in earlier milestones. 1 KiB BSS — cheap.
+    //
+    // Populated entirely on the frame thread by draining inbound_scouts in
+    // applyOnFrame. Read on the frame thread by ShineAppearanceHook's
+    // trampoline (single-threaded — both run inside drawMain or downstream).
+    // Real shine_uid values observed in SMO 1.0.0 reach 1135+, so the original
+    // 1024-cap was dropping ~half the moons. 2048 leaves ample headroom (2 KiB
+    // BSS — still trivial) and stays a power of 2 for clarity.
+    static constexpr std::size_t kMaxShineUid = 2048;
+    static constexpr std::uint8_t kNoPaletteOverride = 0xFF;
+    // Non-zero sentinel default: we want every uninitialized slot to mean
+    // "no override" (let the game run orig() unchanged), not "use palette
+    // frame 0" (an actual visible override). Filled to 0xFF in the ctor.
+    std::uint8_t shine_palette[kMaxShineUid];
+
+    // Bounds-checked accessors. Out-of-range uids return "no override" and
+    // log once (the producer should never send these).
+    std::uint8_t getShinePalette(int uid) const {
+        if (uid < 0 || static_cast<std::size_t>(uid) >= kMaxShineUid) return kNoPaletteOverride;
+        return shine_palette[uid];
+    }
+    void setShinePalette(int uid, std::uint8_t palette) {
+        if (uid < 0 || static_cast<std::size_t>(uid) >= kMaxShineUid) return;
+        shine_palette[uid] = palette;
+    }
 
     // DeathLink debounce. Set by the frame thread when PlayerHitPointData::kill
     // fires; cleared by the socket worker after the death message ships. A
@@ -300,7 +336,11 @@ public:
     static std::int64_t nowMs();
 
 private:
-    ApState() = default;
+    ApState() {
+        // Fill the palette table with the "no override" sentinel so a shine
+        // we've never scouted just runs orig() and keeps its stage default.
+        for (auto& slot : shine_palette) slot = kNoPaletteOverride;
+    }
 
     // Drain inbound_kill_pending; called from applyOnFrame.
     void maybeApplyInboundKill();

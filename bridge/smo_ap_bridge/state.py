@@ -44,6 +44,12 @@ class BridgeState:
         self.moons_checked_by_kingdom: dict[str, int] = {}
         self.last_messages: list[str] = []  # PrintJSON-style log (cap 200)
         self.death_count: int = 0  # M4 DeathLink: how many times Mario died
+        # AP-classification moon coloring. Populated when AP's LocationInfo
+        # reply lands (scouted at Connected) and replayed to the Switch on
+        # every (re)connect via SwitchServer._on_hello. Key is SMO's
+        # ShineInfo::shineId int; value is the palette index for
+        # rs::setStageShineAnimFrame.
+        self.shine_palette: dict[int, int] = {}
         # Dedup keyset for checked_locations. Snapshot replays emit synthetic
         # checks for everything in the save; without dedup the list would
         # grow on every reconnect. Key is the full ItemRef identity (canonical
@@ -113,6 +119,20 @@ class BridgeState:
     def bump_death_count(self) -> None:
         with self._lock:
             self.death_count += 1
+
+    def set_shine_palette(self, entries: dict[int, int]) -> None:
+        """Replace the (shine_uid -> palette) table with the given entries.
+
+        Called once per AP `LocationInfo` reply. Non-zero values overwrite
+        existing entries; zero is treated as a "no override" sentinel and
+        also stored so reconnect-replay reflects the same intent.
+        """
+        with self._lock:
+            self.shine_palette = dict(entries)
+
+    def all_shine_palette(self) -> dict[int, int]:
+        with self._lock:
+            return dict(self.shine_palette)
 
     # ---------- Snapshot for web tracker / replay ----------
 

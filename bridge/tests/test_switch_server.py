@@ -247,6 +247,42 @@ async def test_second_connection_rejected_busy():
         await sw.stop()
 
 
+@pytest.mark.asyncio
+async def test_hello_replays_shine_palette():
+    """When the bridge already has a (shine_uid -> palette) map from a
+    previous AP LocationInfo, a fresh Switch HELLO must replay it so the
+    mod restores colors after a reboot."""
+    state = BridgeState()
+    state.set_shine_palette({12: 1, 47: 3, 100: 2})
+
+    async def on_check(_): ...
+    async def on_goal(): ...
+
+    sw = SwitchServer("127.0.0.1", 0, state, on_check, on_goal)
+    server = await asyncio.start_server(sw._handle_client, "127.0.0.1", 0)
+    sw._server = server
+    port = server.sockets[0].getsockname()[1]
+
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        writer.write(protocol.encode(HelloMsg()))
+        await writer.drain()
+        # hello_ack + checked_replay + shine_scouts + ap_state
+        msgs = await _drain_messages(reader, n=4, timeout=2.0)
+        kinds = [m["t"] for m in msgs]
+        assert "shine_scouts" in kinds
+        scouts = next(m for m in msgs if m["t"] == "shine_scouts")
+        entries = {e["shine_uid"]: e["palette"] for e in scouts["entries"]}
+        assert entries == {12: 1, 47: 3, 100: 2}
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        await sw.stop()
+
+
 async def _drain_messages(reader: asyncio.StreamReader, n: int, timeout: float) -> list[dict]:
     """Read until we've parsed n full JSON lines or timeout expires."""
     buf = bytearray()

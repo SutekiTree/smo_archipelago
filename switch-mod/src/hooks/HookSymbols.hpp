@@ -250,6 +250,20 @@ inline constexpr const char* kRsIsActiveCapMessage =
     "_ZN2rs18isActiveCapMessageEPKN2al18IUseSceneObjHolderE";
 
 // =============================================================================
+// M-color — per-shine palette override (AP classification -> moon color).
+// =============================================================================
+//
+// Implemented as inline patches at 4 BL call sites inside Shine::init
+// (offsets 0x1cdce4 / 0x1cdd3c / 0x1cddcc / 0x1cde24 on 1.0.0). See
+// hooks/ShineAppearanceHook.cpp. No symbol lookup needed.
+//
+// The patched BLs target rs::setStageShineAnimFrame(al::LiveActor*,
+// const char*, s32, bool) — we don't hook it, we just substitute the color
+// arg right before the BL fires. Earlier attempts to trampoline-hook that
+// symbol directly crashed because it's also called from ShineTowerRocket
+// (and other non-Shine actors) where Shine-class field offsets aren't valid.
+
+// =============================================================================
 // Legacy / aliasing — kept so existing call sites don't break.
 // =============================================================================
 inline constexpr const char* kSeadGameSystemCtor       = kGameSystemInit;
