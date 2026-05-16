@@ -253,19 +253,15 @@ inline constexpr const char* kRsIsActiveCapMessage =
 // M-color — per-shine palette override (AP classification -> moon color).
 // =============================================================================
 //
-// rs::setStageShineAnimFrame(al::LiveActor*, const char*, s32, bool) drives
-// SMO's per-stage shine color animation. Kgamer77's SMO Archipelago fork
-// (MIT, https://github.com/Kgamer77/SuperMarioOdysseyArchipelago) trampolines
-// this exact function on the same 1.0.0 binary to recolor shines by kingdom
-// or item-category, which is direct existence proof the symbol resolves.
+// Implemented as inline patches at 4 BL call sites inside Shine::init
+// (offsets 0x1cdce4 / 0x1cdd3c / 0x1cddcc / 0x1cde24 on 1.0.0). See
+// hooks/ShineAppearanceHook.cpp. No symbol lookup needed.
 //
-// We substitute a palette index sourced from ApState::shine_palette[uid] (in
-// turn populated from a bridge-side LocationScouts round-trip that maps each
-// shine_uid to an AP-classification-derived palette).
-//
-// Mangling verified locally via aarch64-none-elf-g++ -c.
-inline constexpr const char* kRsSetStageShineAnimFrame =
-    "_ZN2rs22setStageShineAnimFrameEPN2al9LiveActorEPKcib";
+// The patched BLs target rs::setStageShineAnimFrame(al::LiveActor*,
+// const char*, s32, bool) — we don't hook it, we just substitute the color
+// arg right before the BL fires. Earlier attempts to trampoline-hook that
+// symbol directly crashed because it's also called from ShineTowerRocket
+// (and other non-Shine actors) where Shine-class field offsets aren't valid.
 
 // =============================================================================
 // Legacy / aliasing — kept so existing call sites don't break.

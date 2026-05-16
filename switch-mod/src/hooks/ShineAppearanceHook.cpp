@@ -1,132 +1,89 @@
-// Hook on rs::setStageShineAnimFrame(al::LiveActor*, const char*, s32, bool).
+// Per-shine palette override via inline patches at 4 BL call sites inside
+// Shine::init. Matches Kgamer77/SuperMarioOdysseyArchipelago's technique
+// (MIT, codehook.slpatch) on SMO 1.0.0 — they redirect each BL to a wrapper;
+// we use exlaunch's HOOK_DEFINE_INLINE to intercept before the BL fires and
+// modify the color arg register in place.
 //
-// SMO ships per-stage shine color animations; this function (called from
-// Shine::* methods during spawn/animate) selects which animation frame the
-// shine renders at. By substituting the frame index we recolor individual
-// shines without touching any model assets.
+// Why inline patches, not a symbol hook on rs::setStageShineAnimFrame?
+// That function is called from MULTIPLE actor types (Shine AND
+// ShineTowerRocket, observed live). Reading Shine-class fields off a
+// non-Shine actor crashed in StageScene init. Patching inside Shine::init's
+// body guarantees the actor IS a Shine, so we can safely read mShineIdx
+// at the offset Kgamer77's Mod/include/game/Actors/Shine.h documents.
 //
-// Reference impl: Kgamer77/SuperMarioOdysseyArchipelago Mod/source/main.cpp
-// `setShineColor` / `setShineModelColor` callbacks (MIT). Theirs trampolines
-// the Shine class methods that call this function; ours trampolines the
-// function itself, which is one layer lower but functionally equivalent
-// because every shine color update goes through here.
+// 1.0.0 offsets (verified against main.nso by Kgamer77):
+//   0x1cdce4 -> BL rs::setStageShineAnimFrame   (setShineColor pair 1)
+//   0x1cdd3c -> BL rs::setStageShineAnimFrame   (setShineModelColor pair 1)
+//   0x1cddcc -> BL rs::setStageShineAnimFrame   (setShineColor pair 2)
+//   0x1cde24 -> BL rs::setStageShineAnimFrame   (setShineModelColor pair 2)
 //
-// Actor -> shine_uid recovery: SMO's Shine actor is an al::LiveActor subclass
-// that holds a ShineInfo* somewhere in its member layout. We don't have a
-// public reference for the exact offset on 1.0.0 (lunakit-vendor doesn't ship
-// a Shine class definition and OdysseyDecomp leaves Shine in the un-decomp'd
-// remainder). For now, this hook PROBES a few plausible offsets at runtime
-// and logs which (if any) point at a ShineInfo whose stageName matches the
-// animation argument. Once Ryujinx confirms an offset, the speculative probe
-// gets collapsed into a single hard-coded read.
-//
-// Until then the hook passes through every call unchanged; the only effect
-// is a diagnostic log line on the first N invocations so we can identify
-// the right offset off-device.
+// At each site, the AArch64 ABI has:
+//   X0 = Shine* self
+//   X1 = const char* stageName
+//   W2 = int color           <-- substitute this
+//   W3 = bool flag
 
-#include "lib.hpp"  // HOOK_DEFINE_TRAMPOLINE
+#include "lib.hpp"  // HOOK_DEFINE_INLINE, exl::hook::InlineCtx
 #include "../ap/ApState.hpp"
-#include "../game/ShineInfoLayout.hpp"
 #include "../util/Log.hpp"
-#include "HookSymbols.hpp"
 #include "SoftInstall.hpp"
 
 #include <cstdint>
-#include <cstring>
-
-namespace al { class LiveActor; }
 
 namespace smoap::hooks {
 
 namespace {
 
-bool stringSane(const char* s) {
-    if (!s) return false;
-    auto p = reinterpret_cast<std::uintptr_t>(s);
-    if (p < 0x10000) return false;
-    for (int i = 0; i < 8; ++i) {
-        const unsigned char c = static_cast<unsigned char>(s[i]);
-        if (c == 0) return i > 0;
-        if (c < 0x20 || c > 0x7e) return false;
-    }
-    return true;
-}
+// Shine::mShineIdx offset per Kgamer77/SuperMarioOdysseyArchipelago
+// Mod/include/game/Actors/Shine.h (MIT). Same value the bridge keys the
+// palette table by — MoonGetHook reports it as ShineInfo::shineId for
+// outbound checks, and Shine caches it locally on the actor.
+inline constexpr std::size_t kShineMShineIdxOffset = 0x290;
 
-// Candidate offsets for the ShineInfo* within the Shine actor. SMO actors
-// typically place subclass members at 0xC0-0x250 past the al::LiveActor base;
-// we try a small set of plausible spots. The probe accepts the first offset
-// where (a) the pointer dereferences cleanly, (b) the would-be ShineInfo's
-// stageName field is printable ASCII, and (c) (optional) it matches the
-// `anim` argument fed to setStageShineAnimFrame.
-constexpr std::size_t kCandidateShineInfoOffsets[] = {
-    0xC8, 0xD0, 0xE0, 0xF0, 0x100, 0x108, 0x110, 0x118, 0x120, 0x130, 0x150, 0x1C8, 0x200,
+// 1.0.0 BL call sites Kgamer77 patches in Shine::init. Same 4 offsets
+// applied to our exlaunch InlineHook give us the same effect: substitute
+// the color arg right before the BL fires.
+inline constexpr ptrdiff_t kShineColorPatchOffsets[] = {
+    0x1cdce4, 0x1cdd3c, 0x1cddcc, 0x1cde24,
 };
 
-// Try each candidate offset; return shine_uid (>=0) on first match. Caller
-// passes the animation-arg stage name so we can prefer offsets whose
-// would-be ShineInfo agrees with it.
-int probeShineUid(const void* actor, const char* anim_arg) {
-    if (!actor) return -1;
-    for (std::size_t off : kCandidateShineInfoOffsets) {
-        auto candidate_ptr = *reinterpret_cast<void* const*>(
-            static_cast<const std::uint8_t*>(actor) + off);
-        if (!candidate_ptr) continue;
-        auto cp = reinterpret_cast<std::uintptr_t>(candidate_ptr);
-        if (cp < 0x10000) continue;
-        const char* stage = smoap::game::shine_info_layout::stageName(candidate_ptr);
-        if (!stringSane(stage)) continue;
-        // Prefer an offset whose ShineInfo.stageName matches the anim arg
-        // (which is the stage's own name string). Accept any sane offset
-        // otherwise — we'll still get a uid that's at least likely correct.
-        const int uid = smoap::game::shine_info_layout::shineId(candidate_ptr);
-        if (uid < 0) continue;
-        if (anim_arg && std::strcmp(stage, anim_arg) == 0) {
-            return uid;
-        }
-        // Fallback: take the first plausible-looking entry. (Will still get
-        // overwritten by a later better match if the loop continued, but we
-        // return early on a stage-match win.)
-        return uid;
-    }
-    return -1;
-}
-
-HOOK_DEFINE_TRAMPOLINE(StageShineAnimFrameHook) {
-    static void Callback(al::LiveActor* actor, const char* anim, int frame, bool flag) {
-        static int s_call_count = 0;
-        const int uid = probeShineUid(actor, anim);
-        const std::uint8_t pal = (uid >= 0)
-            ? smoap::ap::ApState::instance().getShinePalette(uid)
-            : smoap::ap::ApState::kNoPaletteOverride;
-
-        // Log the first handful of calls so we can characterize the actor's
-        // ShineInfo* offset in Ryujinx, plus any time we'd actually substitute.
-        const bool log_this = (s_call_count < 8) ||
-                              (pal != smoap::ap::kNoPaletteOverride);
-        if (log_this) {
-            SMOAP_LOG_INFO("[shine-color] call#%d actor=%p anim=%s frame=%d "
-                           "uid=%d palette=%u flag=%d",
-                           s_call_count + 1, static_cast<const void*>(actor),
-                           anim ? anim : "<null>", frame, uid,
-                           static_cast<unsigned>(pal), flag ? 1 : 0);
-        }
-        ++s_call_count;
-
-        if (pal != smoap::ap::kNoPaletteOverride) {
-            Orig(actor, anim, static_cast<int>(pal), flag);
+HOOK_DEFINE_INLINE(ShineInitColorPatch) {
+    static void Callback(exl::hook::InlineCtx* ctx) {
+        // X0 is `this` (the Shine* about to be passed to setStageShineAnim
+        // Frame). Sites are inside Shine::init so this cast is sound.
+        const auto* self = reinterpret_cast<const std::uint8_t*>(ctx->X[0]);
+        if (!self) return;
+        const int uid = *reinterpret_cast<const int*>(
+            self + kShineMShineIdxOffset);
+        if (uid < 0 ||
+            static_cast<std::size_t>(uid) >= smoap::ap::ApState::kMaxShineUid) {
             return;
         }
-        Orig(actor, anim, frame, flag);
+        const std::uint8_t pal = smoap::ap::ApState::instance().getShinePalette(uid);
+        if (pal == smoap::ap::ApState::kNoPaletteOverride) return;
+
+        // Log first few real substitutions so we can confirm in Ryujinx.
+        // Per-shine, each Shine::init fires 2 of the 4 patches, so 2 fires
+        // per moon is the natural rate — 16 substitutions covers ~8 shines.
+        static int s_subst_count = 0;
+        if (s_subst_count < 16) {
+            SMOAP_LOG_INFO("[shine-color] subst#%d shine=%p uid=%d palette=%u",
+                           s_subst_count + 1, ctx->X[0], uid,
+                           static_cast<unsigned>(pal));
+        }
+        ++s_subst_count;
+        ctx->W[2] = pal;  // substitute the color arg (zero-extends X2)
     }
 };
 
 }  // namespace
 
 void installShineAppearanceHook() {
-    SMOAP_LOG_INFO("installing ShineAppearanceHook -> %s",
-                   smoap::sym::kRsSetStageShineAnimFrame);
-    softInstallAtSymbol<StageShineAnimFrameHook>(
-        smoap::sym::kRsSetStageShineAnimFrame);
+    for (ptrdiff_t off : kShineColorPatchOffsets) {
+        SMOAP_LOG_INFO("installing ShineInitColorPatch @ +0x%lx",
+                       static_cast<unsigned long>(off));
+        ShineInitColorPatch::InstallAtOffset(off);
+    }
 }
 
 }  // namespace smoap::hooks

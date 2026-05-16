@@ -228,7 +228,10 @@ public:
     // Populated entirely on the frame thread by draining inbound_scouts in
     // applyOnFrame. Read on the frame thread by ShineAppearanceHook's
     // trampoline (single-threaded — both run inside drawMain or downstream).
-    static constexpr std::size_t kMaxShineUid = 1024;
+    // Real shine_uid values observed in SMO 1.0.0 reach 1135+, so the original
+    // 1024-cap was dropping ~half the moons. 2048 leaves ample headroom (2 KiB
+    // BSS — still trivial) and stays a power of 2 for clarity.
+    static constexpr std::size_t kMaxShineUid = 2048;
     static constexpr std::uint8_t kNoPaletteOverride = 0xFF;
     // Non-zero sentinel default: we want every uninitialized slot to mean
     // "no override" (let the game run orig() unchanged), not "use palette
