@@ -1,64 +1,96 @@
 #include "Json.hpp"
 
+#include <cstdio>
+#include <cstdlib>
+
 namespace smoap::util::json {
 
-Encoder& Encoder::beginObject() { maybeComma(); out_ += '{'; needs_comma_stack_.push_back(false); return *this; }
+Encoder& Encoder::beginObject() { maybeComma(); out_.append('{'); pushFrame(); return *this; }
 Encoder& Encoder::endObject() {
-    out_ += '}';
-    needs_comma_stack_.pop_back();
+    out_.append('}');
+    popFrame();
     // We just emitted a complete value; the outer frame needs a comma before
     // its next entry. Without this, e.g. an array of objects emits "[{...}{...}".
-    if (!needs_comma_stack_.empty()) needs_comma_stack_.back() = true;
+    markNeedsComma();
     return *this;
 }
-Encoder& Encoder::beginArray()  { maybeComma(); out_ += '['; needs_comma_stack_.push_back(false); return *this; }
+Encoder& Encoder::beginArray()  { maybeComma(); out_.append('['); pushFrame(); return *this; }
 Encoder& Encoder::endArray() {
-    out_ += ']';
-    needs_comma_stack_.pop_back();
-    if (!needs_comma_stack_.empty()) needs_comma_stack_.back() = true;
+    out_.append(']');
+    popFrame();
+    markNeedsComma();
     return *this;
 }
 
 Encoder& Encoder::key(std::string_view k) {
     maybeComma();
-    out_ += '"'; out_.append(k.data(), k.size()); out_ += '"'; out_ += ':';
-    if (!needs_comma_stack_.empty()) needs_comma_stack_.back() = false;
+    out_.append('"'); out_.append(k.data(), k.size()); out_.append('"'); out_.append(':');
+    clearNeedsComma();
     return *this;
 }
 
 Encoder& Encoder::value(std::string_view s) {
     maybeComma();
-    out_ += '"';
+    out_.append('"');
     for (char c : s) {
-        if (c == '"' || c == '\\') { out_ += '\\'; out_ += c; }
-        else if (c == '\n') { out_ += "\\n"; }
-        else if (c == '\r') { out_ += "\\r"; }
-        else if (c == '\t') { out_ += "\\t"; }
-        else { out_ += c; }
+        switch (c) {
+            case '"':  out_.append('\\'); out_.append('"');  break;
+            case '\\': out_.append('\\'); out_.append('\\'); break;
+            case '\n': out_.append('\\'); out_.append('n');  break;
+            case '\r': out_.append('\\'); out_.append('r');  break;
+            case '\t': out_.append('\\'); out_.append('t');  break;
+            default:   out_.append(c);                       break;
+        }
     }
-    out_ += '"';
-    if (!needs_comma_stack_.empty()) needs_comma_stack_.back() = true;
+    out_.append('"');
+    markNeedsComma();
     return *this;
 }
 
 Encoder& Encoder::value(std::int64_t v) {
     maybeComma();
-    out_ += std::to_string(v);
-    if (!needs_comma_stack_.empty()) needs_comma_stack_.back() = true;
+    // 20 bytes covers the longest int64 ("-9223372036854775808" = 20 chars)
+    // plus a NUL. snprintf into a stack buffer — no heap touch unlike
+    // std::to_string, which allocates a std::string and tripped the
+    // libstdc++ NULL-allocator path in subsdk9.
+    char tmp[24];
+    int n = std::snprintf(tmp, sizeof(tmp), "%lld", static_cast<long long>(v));
+    if (n > 0) out_.append(tmp, static_cast<std::size_t>(n));
+    markNeedsComma();
     return *this;
 }
 Encoder& Encoder::value(int v) { return value(static_cast<std::int64_t>(v)); }
 
 Encoder& Encoder::value(bool v) {
     maybeComma();
-    out_ += v ? "true" : "false";
-    if (!needs_comma_stack_.empty()) needs_comma_stack_.back() = true;
+    if (v) out_.append("true", 4);
+    else   out_.append("false", 5);
+    markNeedsComma();
     return *this;
 }
 
 void Encoder::maybeComma() {
-    if (needs_comma_stack_.empty()) return;
-    if (needs_comma_stack_.back()) out_ += ',';
+    if (depth_ == 0) return;
+    if (needs_comma_stack_[depth_ - 1]) out_.append(',');
+}
+
+void Encoder::pushFrame() {
+    if (depth_ < kMaxDepth) {
+        needs_comma_stack_[depth_] = false;
+        ++depth_;
+    }
+}
+
+void Encoder::popFrame() {
+    if (depth_ > 0) --depth_;
+}
+
+void Encoder::markNeedsComma() {
+    if (depth_ > 0) needs_comma_stack_[depth_ - 1] = true;
+}
+
+void Encoder::clearNeedsComma() {
+    if (depth_ > 0) needs_comma_stack_[depth_ - 1] = false;
 }
 
 Reader::Reader(const char* data, std::size_t len) : p_(data), end_(data + len) {}

@@ -9,6 +9,8 @@
 
 #include "CaptureGate.hpp"
 
+#include <cstring>
+
 #include "lib/nx/nx.h"          // Result, R_FAILED
 #include "nn/ro.h"              // nn::ro::LookupSymbol
 #include "../ap/ApState.hpp"
@@ -35,14 +37,20 @@ IsExistInHackDictionaryFn s_isExistInHackDictionary = nullptr;
 
 }  // namespace
 
-std::uint8_t captureBitFor(const std::string& cap_name) {
+std::uint8_t captureBitFor(const char* cap_name) {
+    if (!cap_name) return 0xff;
+    // kCaptureNames holds std::string_views (not necessarily NUL-terminated
+    // in general; here they back literal strings, so they are, but rely on
+    // length+memcmp for correctness regardless).
+    const std::size_t n = std::strlen(cap_name);
     for (std::uint8_t i = 0; i < kCaptureNames.size(); ++i) {
-        if (cap_name == kCaptureNames[i]) return i;
+        const auto& sv = kCaptureNames[i];
+        if (sv.size() == n && std::memcmp(cap_name, sv.data(), n) == 0) return i;
     }
     return 0xff;
 }
 
-bool captureBlocked(const std::string& cap_name) {
+bool captureBlocked(const char* cap_name) {
     const std::uint8_t bit = captureBitFor(cap_name);
     if (bit == 0xff) return false;  // unknown -> don't block (fail open)
     return !smoap::ap::ApState::instance().captures_unlocked.test(bit);
@@ -65,16 +73,16 @@ void enumerateOwnedCaptures(CaptureEnumerationCallback cb, void* ctx) {
     (void)ctx;
 }
 
-void grantCapture(const std::string& cap_name, const std::string& hack_name) {
-    if (hack_name.empty()) {
+void grantCapture(const char* cap_name, const char* hack_name) {
+    if (!hack_name || !*hack_name) {
         SMOAP_LOG_WARN("[m6-capture] dropped: empty hack_name (cap='%s')",
-                       cap_name.c_str());
+                       cap_name ? cap_name : "");
         return;
     }
     if (!s_addHackDictionary || !s_isExistInHackDictionary) {
         SMOAP_LOG_WARN("[m6-capture] dropped: symbols unresolved "
                        "(cap='%s' hack='%s')",
-                       cap_name.c_str(), hack_name.c_str());
+                       cap_name ? cap_name : "", hack_name);
         return;
     }
     void* gdh = smoap::ap::ApState::instance().game_data_holder_cache.load(
@@ -82,19 +90,19 @@ void grantCapture(const std::string& cap_name, const std::string& hack_name) {
     if (!gdh) {
         SMOAP_LOG_WARN("[m6-capture] dropped: GameDataHolder not cached yet "
                        "(cap='%s' hack='%s')",
-                       cap_name.c_str(), hack_name.c_str());
+                       cap_name ? cap_name : "", hack_name);
         return;
     }
     GameDataHolderAccessor acc{gdh};
-    if (s_isExistInHackDictionary(acc, hack_name.c_str())) {
+    if (s_isExistInHackDictionary(acc, hack_name)) {
         SMOAP_LOG_INFO("[m6-capture] already in dictionary cap='%s' hack='%s'",
-                       cap_name.c_str(), hack_name.c_str());
+                       cap_name ? cap_name : "", hack_name);
         return;
     }
     GameDataHolderWriter w{gdh};
-    s_addHackDictionary(w, hack_name.c_str());
+    s_addHackDictionary(w, hack_name);
     SMOAP_LOG_INFO("[m6-capture] addHackDictionary OK cap='%s' hack='%s'",
-                   cap_name.c_str(), hack_name.c_str());
+                   cap_name ? cap_name : "", hack_name);
 }
 
 void installCaptureGrantSymbols() {

@@ -68,6 +68,16 @@ bool decodeFrom(std::string s, DecodedMsg& out) {
     return decode(s.data(), s.size(), out);
 }
 
+// Encoders write into a caller-owned LineBuffer (no heap touch) and return
+// void. Tests want the bytes back as a std::string so they can compare. This
+// helper bridges the two — `f` calls one of the encoders against `buf`.
+template <typename F>
+std::string wire(F&& f) {
+    smoap::util::json::LineBuffer buf;
+    f(buf);
+    return std::string(buf.data(), buf.size());
+}
+
 // --------------------------------------------------------------------------
 // ItemKind <-> wire
 // --------------------------------------------------------------------------
@@ -96,57 +106,57 @@ TEST(itemkind_from_wire) {
 
 TEST(encode_hello) {
     Hello h{.mod_ver="0.1.0+abc1234", .smo_ver="1.3.0", .cap_table_hash="sha1:deadbeef"};
-    EXPECT_EQ_S(encodeHello(h),
+    EXPECT_EQ_S(wire([&](auto& b){ encodeHello(b, h); }),
         R"({"t":"hello","mod_ver":"0.1.0+abc1234","smo_ver":"1.3.0","cap_table_hash":"sha1:deadbeef"})" "\n");
 }
 
 TEST(encode_check_moon) {
     Check c{.kind=ItemKind::Moon, .kingdom="Cascade", .shine_id="Our First Power Moon"};
-    EXPECT_EQ_S(encodeCheck(c),
+    EXPECT_EQ_S(wire([&](auto& b){ encodeCheck(b, c); }),
         R"({"t":"check","kind":"moon","kingdom":"Cascade","shine_id":"Our First Power Moon"})" "\n");
 }
 
 TEST(encode_check_capture) {
     Check c{.kind=ItemKind::Capture, .cap="Goomba"};
-    EXPECT_EQ_S(encodeCheck(c),
+    EXPECT_EQ_S(wire([&](auto& b){ encodeCheck(b, c); }),
         R"({"t":"check","kind":"capture","cap":"Goomba"})" "\n");
 }
 
 TEST(encode_check_shop_with_slot) {
     Check c{.kind=ItemKind::Shop, .kingdom="Cap", .slot=3};
-    EXPECT_EQ_S(encodeCheck(c),
+    EXPECT_EQ_S(wire([&](auto& b){ encodeCheck(b, c); }),
         R"({"t":"check","kind":"shop","kingdom":"Cap","slot":3})" "\n");
 }
 
 TEST(encode_check_skips_empty_fields) {
     Check c{.kind=ItemKind::Other};
-    EXPECT_EQ_S(encodeCheck(c), R"({"t":"check","kind":"other"})" "\n");
+    EXPECT_EQ_S(wire([&](auto& b){ encodeCheck(b, c); }), R"({"t":"check","kind":"other"})" "\n");
 }
 
 TEST(encode_status_full) {
     Status s{.kingdom="Metro", .scenario=2, .moons_collected=47};
-    EXPECT_EQ_S(encodeStatus(s),
+    EXPECT_EQ_S(wire([&](auto& b){ encodeStatus(b, s); }),
         R"({"t":"status","kingdom":"Metro","scenario":2,"moons_collected":47})" "\n");
 }
 
 TEST(encode_status_empty_skips_fields) {
     Status s{};
-    EXPECT_EQ_S(encodeStatus(s), R"({"t":"status"})" "\n");
+    EXPECT_EQ_S(wire([&](auto& b){ encodeStatus(b, s); }), R"({"t":"status"})" "\n");
 }
 
 TEST(encode_goal) {
-    EXPECT_EQ_S(encodeGoal(), R"({"t":"goal"})" "\n");
+    EXPECT_EQ_S(wire([&](auto& b){ encodeGoal(b); }), R"({"t":"goal"})" "\n");
 }
 
 TEST(encode_ping) {
     Ping p{.ts_ms=1731536400000LL};
-    EXPECT_EQ_S(encodePing(p),
+    EXPECT_EQ_S(wire([&](auto& b){ encodePing(b, p); }),
         R"({"t":"ping","ts_ms":1731536400000})" "\n");
 }
 
 TEST(encode_log) {
     Log lg{.level="info", .msg="hook installed for ShineGet at 0x..."};
-    EXPECT_EQ_S(encodeLog(lg),
+    EXPECT_EQ_S(wire([&](auto& b){ encodeLog(b, lg); }),
         R"({"t":"log","level":"info","msg":"hook installed for ShineGet at 0x..."})" "\n");
 }
 
@@ -156,13 +166,13 @@ TEST(encode_log) {
 
 TEST(encode_state_begin_with_save_slot) {
     StateBegin b{.mod_ver = "0.1.0", .save_slot = 0};
-    EXPECT_EQ_S(encodeStateBegin(b),
+    EXPECT_EQ_S(wire([&](auto& buf){ encodeStateBegin(buf, b); }),
         R"({"t":"state_begin","mod_ver":"0.1.0","save_slot":0})" "\n");
 }
 
 TEST(encode_state_begin_omits_save_slot_when_negative) {
     StateBegin b{.mod_ver = "0.1.0", .save_slot = -1};
-    EXPECT_EQ_S(encodeStateBegin(b),
+    EXPECT_EQ_S(wire([&](auto& buf){ encodeStateBegin(buf, b); }),
         R"({"t":"state_begin","mod_ver":"0.1.0"})" "\n");
 }
 
@@ -171,7 +181,7 @@ TEST(encode_state_chunk_per_stage) {
     c.stage_name = "CapWorldHomeStage";
     c.shines.push_back({"MoonOurFirst", 100});
     c.shines.push_back({"MoonHatTrampoline", 101});
-    EXPECT_EQ_S(encodeStateChunk(c),
+    EXPECT_EQ_S(wire([&](auto& buf){ encodeStateChunk(buf, c); }),
         R"({"t":"state_chunk","stage_name":"CapWorldHomeStage",)"
         R"("shines":[{"object_id":"MoonOurFirst","shine_uid":100},)"
         R"({"object_id":"MoonHatTrampoline","shine_uid":101}]})" "\n");
@@ -183,7 +193,7 @@ TEST(encode_state_chunk_meta_carries_captures_and_goal) {
     c.captures = {"Kuribo", "Frog"};
     c.include_goal_reached = true;
     c.goal_reached = false;
-    EXPECT_EQ_S(encodeStateChunk(c),
+    EXPECT_EQ_S(wire([&](auto& buf){ encodeStateChunk(buf, c); }),
         R"({"t":"state_chunk","stage_name":"_meta",)"
         R"("captures":["Kuribo","Frog"],"goal_reached":false})" "\n");
 }
@@ -192,12 +202,12 @@ TEST(encode_state_chunk_skips_empty_arrays) {
     StateChunk c;
     c.stage_name = "_meta";
     // No captures, no goal_reached_included.
-    EXPECT_EQ_S(encodeStateChunk(c),
+    EXPECT_EQ_S(wire([&](auto& buf){ encodeStateChunk(buf, c); }),
         R"({"t":"state_chunk","stage_name":"_meta"})" "\n");
 }
 
 TEST(encode_state_end) {
-    EXPECT_EQ_S(encodeStateEnd(), R"({"t":"state_end"})" "\n");
+    EXPECT_EQ_S(wire([&](auto& b){ encodeStateEnd(b); }), R"({"t":"state_end"})" "\n");
 }
 
 // Regression: Encoder must emit commas between successive nested objects in
@@ -208,11 +218,11 @@ TEST(encode_state_chunk_multi_shine_has_comma_between_objects) {
     c.shines.push_back({"A", 1});
     c.shines.push_back({"B", 2});
     c.shines.push_back({"C", 3});
-    const std::string wire = encodeStateChunk(c);
+    const std::string w = wire([&](auto& buf){ encodeStateChunk(buf, c); });
     // Spot-check: must contain "},{" as the separator between adjacent objects.
-    EXPECT(wire.find("},{") != std::string::npos);
+    EXPECT(w.find("},{") != std::string::npos);
     // And the array must close properly.
-    EXPECT(wire.find("}]}") != std::string::npos);
+    EXPECT(w.find("}]}") != std::string::npos);
 }
 
 // --------------------------------------------------------------------------
@@ -239,6 +249,44 @@ TEST(decode_hello_ack_with_err) {
     EXPECT_EQ_S(m.hello_ack.err, "bad slot");
 }
 
+TEST(decode_checked_replay_truncates_past_cap) {
+    // Synthesize a checked_replay with kMaxIds + 4 entries; the decoder must
+    // fill the buffer to capacity, set truncated=true, and still successfully
+    // close out the rest of the JSON without overrunning the fixed array.
+    std::string body = R"({"t":"checked_replay","ids":[)";
+    constexpr std::size_t kOver = CheckedReplay::kMaxIds + 4;
+    for (std::size_t i = 0; i < kOver; ++i) {
+        if (i > 0) body += ',';
+        body += R"({"kind":"moon","kingdom":"Cascade","shine_id":"Moon )";
+        body += std::to_string(i);
+        body += R"("})";
+    }
+    body += "]}";
+    DecodedMsg m;
+    EXPECT(decodeFrom(body, m));
+    EXPECT_EQ_I(m.checked_replay.id_count, CheckedReplay::kMaxIds);
+    EXPECT(m.checked_replay.truncated);
+    // First-and-last sanity: first slot is "Moon 0", last filled is
+    // "Moon {kMaxIds-1}". The 4 overflow entries are consumed and dropped.
+    EXPECT_EQ_S(m.checked_replay.ids[0].shine_id, "Moon 0");
+    char last[32];
+    std::snprintf(last, sizeof(last), "Moon %zu", CheckedReplay::kMaxIds - 1);
+    EXPECT_EQ_S(m.checked_replay.ids[CheckedReplay::kMaxIds - 1].shine_id, last);
+}
+
+TEST(decode_field_overlong_string_truncates) {
+    // ItemRef.shine_id is char[kMediumFieldCap=128]. Feed a 200-char value;
+    // copyFixedFieldN must truncate to 127 chars + NUL, no overrun.
+    std::string huge(200, 'x');
+    std::string body = R"({"t":"item","kind":"moon","shine_id":")" + huge + R"("})";
+    DecodedMsg m;
+    EXPECT(decodeFrom(body, m));
+    // shine_id is char[128], so the visible length is 127 chars.
+    EXPECT_EQ_I(std::strlen(m.item.shine_id), 127u);
+    // Buffer must be NUL-terminated at exactly position 127.
+    EXPECT(m.item.shine_id[127] == '\0');
+}
+
 TEST(decode_checked_replay_two_entries) {
     DecodedMsg m;
     EXPECT(decodeFrom(
@@ -247,7 +295,8 @@ TEST(decode_checked_replay_two_entries) {
         R"({"kind":"capture","cap":"Frog"}]})",
         m));
     EXPECT_EQ_S(m.t, "checked_replay");
-    EXPECT_EQ_I(m.checked_replay.ids.size(), 2u);
+    EXPECT_EQ_I(m.checked_replay.id_count, 2u);
+    EXPECT(!m.checked_replay.truncated);
     EXPECT(m.checked_replay.ids[0].kind == ItemKind::Moon);
     EXPECT_EQ_S(m.checked_replay.ids[0].kingdom, "Cascade");
     EXPECT_EQ_S(m.checked_replay.ids[0].shine_id, "Our First Power Moon");
@@ -258,7 +307,7 @@ TEST(decode_checked_replay_two_entries) {
 TEST(decode_checked_replay_empty) {
     DecodedMsg m;
     EXPECT(decodeFrom(R"({"t":"checked_replay","ids":[]})", m));
-    EXPECT_EQ_I(m.checked_replay.ids.size(), 0u);
+    EXPECT_EQ_I(m.checked_replay.id_count, 0u);
 }
 
 TEST(decode_item_moon) {
@@ -364,10 +413,10 @@ TEST(decode_rejects_truncated) {
 
 TEST(roundtrip_check_via_reader) {
     Check c{.kind=ItemKind::Moon, .kingdom="Cap", .shine_id="Spinning-Hat Stack"};
-    std::string wire = encodeCheck(c);
+    std::string w = wire([&](auto& b){ encodeCheck(b, c); });
     // Strip newline.
-    if (!wire.empty() && wire.back() == '\n') wire.pop_back();
-    smoap::util::json::Reader r(wire.data(), wire.size());
+    if (!w.empty() && w.back() == '\n') w.pop_back();
+    smoap::util::json::Reader r(w.data(), w.size());
     EXPECT(r.enterObject());
     std::string_view k, v;
     EXPECT(r.nextField(k)); EXPECT(k == "t");        EXPECT(r.nextString(v)); EXPECT(v == "check");

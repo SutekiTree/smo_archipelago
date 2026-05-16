@@ -13,7 +13,7 @@ namespace smoap::game {
 
 // Returns the bit index for `cap_name` (matching apworld's enemy ordering)
 // or 0xff if the name is unknown.
-std::uint8_t captureBitFor(const std::string& cap_name);
+std::uint8_t captureBitFor(const char* cap_name);
 
 // M6 phase B: write `hack_name` into SMO's hack dictionary so the capture
 // shows as unlocked in the compendium (and is treated as known by gameplay).
@@ -31,14 +31,14 @@ std::uint8_t captureBitFor(const std::string& cap_name);
 // installCaptureGrantSymbols below) to bind the GameDataFunction:: function
 // pointers via nn::ro::LookupSymbol. If the lookup fails, grantCapture logs
 // and drops.
-void grantCapture(const std::string& cap_name, const std::string& hack_name);
+void grantCapture(const char* cap_name, const char* hack_name);
 
 // Resolve the addHackDictionary + isExistInHackDictionary symbols once at
 // module init. Wired from main.cpp alongside the existing softInstall calls.
 void installCaptureGrantSymbols();
 
 // True if the player has *not* received the unlock item for this capture.
-bool captureBlocked(const std::string& cap_name);
+bool captureBlocked(const char* cap_name);
 
 // Resolve the capture's canonical name from a PlayerHackData / hack-target.
 // (Implementation pulls from sead string tables in the game.)

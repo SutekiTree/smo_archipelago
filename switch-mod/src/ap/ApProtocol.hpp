@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "../util/Json.hpp"
+
 namespace smoap::ap {
 
 inline constexpr std::size_t kMaxLineBytes = 8 * 1024;
@@ -23,7 +25,8 @@ enum class ItemKind : std::uint8_t {
 };
 
 const char* toWire(ItemKind k);          // "moon" / "capture" / ...
-ItemKind fromWire(const std::string& s); // returns Other for unknown
+ItemKind fromWire(const char* s);        // returns Other for unknown
+ItemKind fromWire(const std::string& s); // legacy overload — forwards to char*
 
 // Switch -> Bridge ----------------------------------------------------------
 
@@ -41,6 +44,14 @@ struct Hello {
 // stage name, moon objectId, capture, and kingdom string SMO emits.
 inline constexpr std::size_t kCheckFieldCap = 64;
 
+// Inbound-side caps. DecodedMsg fields use these — see comment on the
+// structs below for the empirical justification (the worker-thread
+// std::string allocator NULL-derefs once heap state has drifted, observed
+// 2026-05-16 in parseCheckedReplay → readIntoString on a 20-char shine_id).
+inline constexpr std::size_t kMediumFieldCap = 128;  // shine_id, name, ctx
+inline constexpr std::size_t kLongFieldCap   = 256;  // err msgs, kill cause
+inline constexpr std::size_t kPrintFieldCap  = 512;  // bridge print.text
+
 // Copy a C-string into a fixed buffer, null-terminating. Null src -> empty.
 inline void copyCheckField(char (&dst)[kCheckFieldCap], const char* src) {
     if (!src) { dst[0] = '\0'; return; }
@@ -50,6 +61,30 @@ inline void copyCheckField(char (&dst)[kCheckFieldCap], const char* src) {
         ++i;
     }
     dst[i] = '\0';
+}
+
+// Generic fixed-buffer copy (C-string source). Same shape as copyCheckField
+// but works for any compile-time buffer size — used by inbound DecodedMsg
+// fields which use varying sizes (64/128/256/512).
+template <std::size_t N>
+inline void copyFixedField(char (&dst)[N], const char* src) {
+    if (!src) { dst[0] = '\0'; return; }
+    std::size_t i = 0;
+    while (i + 1 < N && src[i] != '\0') {
+        dst[i] = src[i];
+        ++i;
+    }
+    dst[i] = '\0';
+}
+
+// Length-bounded variant — used when the source is a string_view from the
+// inbound JSON Reader (which does NOT null-terminate). Truncates and always
+// null-terminates the destination.
+template <std::size_t N>
+inline void copyFixedFieldN(char (&dst)[N], const char* src, std::size_t n) {
+    const std::size_t take = (n < N - 1) ? n : (N - 1);
+    for (std::size_t i = 0; i < take; ++i) dst[i] = src[i];
+    dst[take] = '\0';
 }
 
 struct Check {
@@ -98,9 +133,13 @@ struct Log {
 // capture_map.json. The bridge is the source of truth for what AP knows; the
 // snapshot lets AP learn about anything collected while disconnected.
 //
-// These structs live on the WORKER thread (ApClient). std::string is safe
-// there (Encoder uses it internally already); only the frame-thread Check
-// requires the char[64] dance.
+// Outbound state-snapshot structs (Switch -> Bridge). std::string fields
+// here get assigned then immediately handed to encodeStateChunk for one-shot
+// serialization on the worker. Disproven assumption (2026-05-16): "std::string
+// is safe on the worker" — *outbound* assignment can still allocate. Most
+// values here are short (stage_name max ~24 chars, object_id ~8 chars) and
+// have not crashed in practice; converting them to char[] is M-future work.
+// The crash-driven fix-up has only addressed inbound DecodedMsg fields.
 
 struct StateBegin {
     std::string mod_ver;
@@ -127,56 +166,72 @@ struct StateChunk {
 struct StateEnd {};
 
 // Bridge -> Switch ----------------------------------------------------------
+//
+// Fixed-size char buffers throughout. Originally these were std::string
+// fields under the assumption "std::string is safe on the worker." That
+// assumption broke 2026-05-16: parseCheckedReplay's first ItemRef.shine_id
+// assignment (a 20-char "Our First Power Moon") NULL-deref'd inside
+// libstdc++'s allocator. The encoder path was fixed by going through a
+// LineBuffer; this is the matching inbound-side fix. Sizes are budgeted from
+// observed traffic + 2x headroom.
 
 struct HelloAck {
     bool ok = false;
-    std::string seed;
-    std::string slot;
-    std::string cap_table_hash;
+    char seed[kCheckFieldCap] = {};
+    char slot[kCheckFieldCap] = {};
+    char cap_table_hash[kCheckFieldCap] = {};
     // Bridge-owned DeathLink toggle. Mod ships the inbound apply path
     // unconditionally; this flag gates whether we act on inbound kill messages
     // so the user enables DeathLink in bridge config without rebuilding.
     bool deathlink_enabled = false;
-    std::string err;
+    char err[kLongFieldCap] = {};
 };
 
 struct ItemRef {
     ItemKind kind = ItemKind::Other;
-    std::string kingdom;
-    std::string shine_id;
-    std::string cap;
-    std::string name;
+    char kingdom[kCheckFieldCap] = {};
+    char shine_id[kMediumFieldCap] = {};
+    char cap[kCheckFieldCap] = {};
+    char name[kMediumFieldCap] = {};
     int slot = -1;
 };
 
 struct CheckedReplay {
-    std::vector<ItemRef> ids;
+    // Fixed-size array — `std::vector::push_back` triggered the libstdc++
+    // allocator NULL-deref on a re-HELLO 2026-05-16, same root cause as the
+    // other inbound fields. 128 entries covers typical session replay (the
+    // bridge only emits checks observed since the last connect). Overflow
+    // truncates with a log line.
+    static constexpr std::size_t kMaxIds = 128;
+    ItemRef ids[kMaxIds]{};
+    std::size_t id_count = 0;
+    bool truncated = false;
 };
 
 struct Item {
     ItemKind kind = ItemKind::Other;
-    std::string kingdom;
-    std::string shine_id;
-    std::string cap;
-    std::string name;
+    char kingdom[kCheckFieldCap] = {};
+    char shine_id[kMediumFieldCap] = {};
+    char cap[kCheckFieldCap] = {};
+    char name[kMediumFieldCap] = {};
     int slot = -1;
-    std::string from;
+    char from[kCheckFieldCap] = {};
     // M6 phase B: populated by the bridge for capture items via the reverse
     // CaptureMap (cap_name -> hack_name). Mod feeds straight to
     // GameDataFunction::addHackDictionary. Empty when the bridge had no map
     // entry — mod logs and drops in that case.
-    std::string hack_name;
+    char hack_name[kCheckFieldCap] = {};
 };
 
 struct Print {
-    std::string text;
+    char text[kPrintFieldCap] = {};
 };
 
 struct ApStateMsg {
     // Renamed from ApState to avoid collision with class smoap::ap::ApState
     // (the in-process singleton). Carries the bridge's view of the AP-server
     // connection state.
-    std::string conn;  // "disconnected" | "connecting" | "ready"
+    char conn[kCheckFieldCap] = {};  // "disconnected" | "connecting" | "ready"
 };
 
 struct Pong {
@@ -184,34 +239,40 @@ struct Pong {
 };
 
 struct Err {
-    std::string code;
-    std::string ctx;
+    char code[kCheckFieldCap] = {};
+    char ctx[kMediumFieldCap] = {};
 };
 
 struct Kill {
     // DeathLink forwarded from another slot. M4 logs this; killing Mario
     // belongs to M6 where we also have the player-state-write machinery.
-    std::string source;
-    std::string cause;
+    char source[kCheckFieldCap] = {};
+    char cause[kLongFieldCap] = {};
 };
 
 // (de)serialization --------------------------------------------------------
 // Implementations in ApProtocol.cpp use util/Json.hpp (no STL exceptions).
+//
+// Encoders write into a caller-owned LineBuffer. The trailing '\n' is
+// included. Use `line.data()` / `line.size()` to send on the socket.
+// Caller-owned buffers keep the encode path off the libstdc++ allocator,
+// which NULL-derefs in our subsdk9 link once heap state drifts (see project
+// memory `libstdcpp_allocator_broken_in_subsdk9`).
 
-std::string encodeHello(const Hello&);
-std::string encodeCheck(const Check&);
-std::string encodeStatus(const Status&);
-std::string encodeGoal();
-std::string encodeDeath(const Death&);
-std::string encodePing(const Ping&);
-std::string encodeLog(const Log&);
-std::string encodeStateBegin(const StateBegin&);
-std::string encodeStateChunk(const StateChunk&);
-std::string encodeStateEnd();
+void encodeHello(smoap::util::json::LineBuffer&, const Hello&);
+void encodeCheck(smoap::util::json::LineBuffer&, const Check&);
+void encodeStatus(smoap::util::json::LineBuffer&, const Status&);
+void encodeGoal(smoap::util::json::LineBuffer&);
+void encodeDeath(smoap::util::json::LineBuffer&, const Death&);
+void encodePing(smoap::util::json::LineBuffer&, const Ping&);
+void encodeLog(smoap::util::json::LineBuffer&, const Log&);
+void encodeStateBegin(smoap::util::json::LineBuffer&, const StateBegin&);
+void encodeStateChunk(smoap::util::json::LineBuffer&, const StateChunk&);
+void encodeStateEnd(smoap::util::json::LineBuffer&);
 
 // Returns true on parse success and fills the discriminated union outputs.
 struct DecodedMsg {
-    std::string t;
+    char t[kCheckFieldCap] = {};  // type discriminator: "hello_ack" etc.
     HelloAck hello_ack{};
     CheckedReplay checked_replay{};
     Item item{};

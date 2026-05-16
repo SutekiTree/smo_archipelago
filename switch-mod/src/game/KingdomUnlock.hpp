@@ -6,11 +6,10 @@
 #pragma once
 
 #include <cstdint>
-#include <string>
 
 namespace smoap::game {
 
-std::uint8_t kingdomBitFor(const std::string& kingdom);
+std::uint8_t kingdomBitFor(const char* kingdom);
 const char* kingdomForBit(std::uint8_t bit);
 
 }  // namespace smoap::game

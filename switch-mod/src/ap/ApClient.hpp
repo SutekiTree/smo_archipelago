@@ -9,10 +9,16 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
 namespace smoap::ap {
+
+// Per-line cap for inbound buffering. Matches the wire-protocol max
+// (smoap::ap::kMaxLineBytes = 8 KiB) — declared here without pulling in
+// ApProtocol.hpp to keep header deps light.
+inline constexpr std::size_t kInboundLineCap = 8 * 1024;
 
 struct BridgeTarget {
     std::string host;
@@ -61,20 +67,29 @@ private:
     // Read from socket into read_buf_. Returns false on socket close/error.
     // Does NOT extract lines — popLine pulls one at a time off read_buf_.
     bool recvIntoBuf();
-    // Pop the next complete \n-terminated line from read_buf_ into `out`.
-    // Returns false if no complete line is buffered. Decoupling this from
-    // recv is critical: when the bridge sends N messages in one TCP push,
-    // we must drain ALL of them before going back to Select (which only
-    // checks the socket, not the buffer). Pre-split implementation conflated
-    // these and silently held messages for indefinite time.
-    bool popLine(std::string& out);
-    void handleLine(const std::string& line);
+    // Pop the next complete \n-terminated line from read_buf_ into `out`
+    // (which must hold at least kInboundLineCap bytes; `out_len` receives the
+    // number of bytes written, NOT including the trailing newline). Returns
+    // false if no complete line is buffered. Decoupling this from recv is
+    // critical: when the bridge sends N messages in one TCP push, we must
+    // drain ALL of them before going back to Select (which only checks the
+    // socket, not the buffer). Pre-split implementation conflated these and
+    // silently held messages for indefinite time.
+    //
+    // Fixed `char[]` storage (here + handleLine) keeps the inbound path off
+    // the libstdc++ allocator, which NULL-derefs in our subsdk9 link once
+    // heap state has drifted (`std::string::assign`/`erase` → memcpy from
+    // NULL, seen 2026-05-16 in popLine after sending HELLO on a re-HELLO).
+    bool popLine(char* out, std::size_t& out_len);
+    // `line` must be a mutable buffer; the Reader decodes escapes in place.
+    void handleLine(char* line, std::size_t line_len);
 
     BridgeTarget target_{};
     std::atomic<bool> running_{false};
     std::atomic<bool> rehello_requested_{false};
     int socket_fd_{-1};
-    std::string read_buf_;  // accumulator for partial lines
+    char read_buf_[kInboundLineCap];
+    std::size_t read_buf_len_{0};
 };
 
 }  // namespace smoap::ap

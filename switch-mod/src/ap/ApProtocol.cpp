@@ -8,25 +8,21 @@
 
 #include <cstring>
 
-#include "../util/Json.hpp"
-
 namespace smoap::ap {
 
 namespace {
 
 using smoap::util::json::Encoder;
+using smoap::util::json::LineBuffer;
 using smoap::util::json::Reader;
 
-std::string finishLine(Encoder& e) {
-    auto s = std::move(e).take();
-    s.push_back('\n');
-    return s;
-}
-
-bool readIntoString(Reader& r, std::string& out) {
+// Inbound path: read a JSON string value into a fixed char buffer. Bounded,
+// no heap touch. Used by all the DecodedMsg parse* functions below.
+template <std::size_t N>
+bool readIntoField(Reader& r, char (&dst)[N]) {
     std::string_view v;
     if (!r.nextString(v)) return false;
-    out.assign(v);
+    copyFixedFieldN(dst, v.data(), v.size());
     return true;
 }
 
@@ -54,31 +50,36 @@ const char* toWire(ItemKind k) {
     return "other";
 }
 
-ItemKind fromWire(const std::string& s) {
-    if (s == "moon")    return ItemKind::Moon;
-    if (s == "capture") return ItemKind::Capture;
-    if (s == "kingdom") return ItemKind::Kingdom;
-    if (s == "shop")    return ItemKind::Shop;
+ItemKind fromWire(const char* s) {
+    if (!s) return ItemKind::Other;
+    if (std::strcmp(s, "moon")    == 0) return ItemKind::Moon;
+    if (std::strcmp(s, "capture") == 0) return ItemKind::Capture;
+    if (std::strcmp(s, "kingdom") == 0) return ItemKind::Kingdom;
+    if (std::strcmp(s, "shop")    == 0) return ItemKind::Shop;
     return ItemKind::Other;
 }
+
+ItemKind fromWire(const std::string& s) { return fromWire(s.c_str()); }
 
 // ---------------------------------------------------------------------------
 // Encoders (Switch -> Bridge)
 // ---------------------------------------------------------------------------
 
-std::string encodeHello(const Hello& h) {
-    Encoder e;
+void encodeHello(LineBuffer& line, const Hello& h) {
+    line.clear();
+    Encoder e{line};
     e.beginObject()
         .key("t").value("hello")
         .key("mod_ver").value(h.mod_ver)
         .key("smo_ver").value(h.smo_ver)
         .key("cap_table_hash").value(h.cap_table_hash)
      .endObject();
-    return finishLine(e);
+    line.append('\n');
 }
 
-std::string encodeCheck(const Check& c) {
-    Encoder e;
+void encodeCheck(LineBuffer& line, const Check& c) {
+    line.clear();
+    Encoder e{line};
     e.beginObject()
         .key("t").value("check")
         .key("kind").value(toWire(c.kind));
@@ -91,11 +92,12 @@ std::string encodeCheck(const Check& c) {
     if (c.shine_uid >= 0) e.key("shine_uid").value(c.shine_uid);
     if (c.hack_name[0])  e.key("hack_name").value(c.hack_name);
     e.endObject();
-    return finishLine(e);
+    line.append('\n');
 }
 
-std::string encodeStatus(const Status& s) {
-    Encoder e;
+void encodeStatus(LineBuffer& line, const Status& s) {
+    line.clear();
+    Encoder e{line};
     e.beginObject()
         .key("t").value("status");
     if (!s.kingdom.empty())     e.key("kingdom").value(s.kingdom);
@@ -103,55 +105,61 @@ std::string encodeStatus(const Status& s) {
     if (s.moons_collected >= 0) e.key("moons_collected").value(s.moons_collected);
     if (!s.stage_name.empty())  e.key("stage_name").value(s.stage_name);
     e.endObject();
-    return finishLine(e);
+    line.append('\n');
 }
 
-std::string encodeGoal() {
-    Encoder e;
+void encodeGoal(LineBuffer& line) {
+    line.clear();
+    Encoder e{line};
     e.beginObject().key("t").value("goal").endObject();
-    return finishLine(e);
+    line.append('\n');
 }
 
-std::string encodeDeath(const Death& d) {
-    Encoder e;
+void encodeDeath(LineBuffer& line, const Death& d) {
+    line.clear();
+    Encoder e{line};
     e.beginObject()
         .key("t").value("death")
         .key("ts_ms").value(d.ts_ms)
      .endObject();
-    return finishLine(e);
+    line.append('\n');
 }
 
-std::string encodePing(const Ping& p) {
-    Encoder e;
+void encodePing(LineBuffer& line, const Ping& p) {
+    line.clear();
+    Encoder e{line};
     e.beginObject()
         .key("t").value("ping")
         .key("ts_ms").value(p.ts_ms)
      .endObject();
-    return finishLine(e);
+    line.append('\n');
 }
 
-std::string encodeLog(const Log& lg) {
-    Encoder e;
+void encodeLog(LineBuffer& line, const Log& lg) {
+    line.clear();
+    Encoder e{line};
     e.beginObject()
         .key("t").value("log")
         .key("level").value(lg.level)
         .key("msg").value(lg.msg)
      .endObject();
-    return finishLine(e);
+    line.append('\n');
 }
 
-std::string encodeStateBegin(const StateBegin& s) {
-    Encoder e;
+void encodeStateBegin(LineBuffer& line, const StateBegin& s) {
+    line.clear();
+    Encoder e{line};
     e.beginObject()
         .key("t").value("state_begin")
         .key("mod_ver").value(s.mod_ver);
     if (s.save_slot >= 0) e.key("save_slot").value(s.save_slot);
     e.endObject();
-    return finishLine(e);
+    line.append('\n');
 }
 
-std::string encodeStateChunk(const StateChunk& s) {
-    Encoder e;
+void encodeStateChunk(LineBuffer& line, const StateChunk& s) {
+    line.clear();
+    Encoder e{line};
     e.beginObject()
         .key("t").value("state_chunk")
         .key("stage_name").value(s.stage_name);
@@ -172,13 +180,14 @@ std::string encodeStateChunk(const StateChunk& s) {
     }
     if (s.include_goal_reached) e.key("goal_reached").value(s.goal_reached);
     e.endObject();
-    return finishLine(e);
+    line.append('\n');
 }
 
-std::string encodeStateEnd() {
-    Encoder e;
+void encodeStateEnd(LineBuffer& line) {
+    line.clear();
+    Encoder e{line};
     e.beginObject().key("t").value("state_end").endObject();
-    return finishLine(e);
+    line.append('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -187,30 +196,41 @@ std::string encodeStateEnd() {
 
 namespace {
 
+// Local fixed-buffer helper for the one place we read a kind discriminator
+// that we immediately convert to ItemKind and discard. 32 bytes is way
+// more than any wire value ("capture" = 7 chars is the longest).
+bool readKindField(Reader& r, ItemKind& out) {
+    char tmp[32] = {};
+    std::string_view v;
+    if (!r.nextString(v)) return false;
+    copyFixedFieldN(tmp, v.data(), v.size());
+    out = fromWire(tmp);  // const char* overload — zero heap touches
+    return true;
+}
+
 bool parseHelloAck(Reader& r, HelloAck& out) {
     std::string_view key;
     while (r.nextField(key)) {
         if      (key == "ok")                { if (!r.nextBool(out.ok)) return false; }
-        else if (key == "seed")              { if (!readIntoString(r, out.seed)) return false; }
-        else if (key == "slot")              { if (!readIntoString(r, out.slot)) return false; }
-        else if (key == "cap_table_hash")    { if (!readIntoString(r, out.cap_table_hash)) return false; }
+        else if (key == "seed")              { if (!readIntoField(r, out.seed)) return false; }
+        else if (key == "slot")              { if (!readIntoField(r, out.slot)) return false; }
+        else if (key == "cap_table_hash")    { if (!readIntoField(r, out.cap_table_hash)) return false; }
         else if (key == "deathlink_enabled") { if (!r.nextBool(out.deathlink_enabled)) return false; }
-        else if (key == "err")               { if (!readIntoString(r, out.err)) return false; }
+        else if (key == "err")               { if (!readIntoField(r, out.err)) return false; }
         else                                 { return false; }  // unknown field
     }
     return true;
 }
 
-bool parseItemRefBody(Reader& r, ItemRef& out, bool& want_comma_handled) {
+bool parseItemRefBody(Reader& r, ItemRef& out) {
     // Reads object fields for an ItemRef. Caller has already consumed '{'.
-    want_comma_handled = false;  // Reader handles array commas via prepareValue
     std::string_view key;
     while (r.nextField(key)) {
-        if      (key == "kind")     { std::string s; if (!readIntoString(r, s)) return false; out.kind = fromWire(s); }
-        else if (key == "kingdom")  { if (!readIntoString(r, out.kingdom)) return false; }
-        else if (key == "shine_id") { if (!readIntoString(r, out.shine_id)) return false; }
-        else if (key == "cap")      { if (!readIntoString(r, out.cap)) return false; }
-        else if (key == "name")     { if (!readIntoString(r, out.name)) return false; }
+        if      (key == "kind")     { if (!readKindField(r, out.kind)) return false; }
+        else if (key == "kingdom")  { if (!readIntoField(r, out.kingdom)) return false; }
+        else if (key == "shine_id") { if (!readIntoField(r, out.shine_id)) return false; }
+        else if (key == "cap")      { if (!readIntoField(r, out.cap)) return false; }
+        else if (key == "name")     { if (!readIntoField(r, out.name)) return false; }
         else if (key == "slot")     { if (!readIntoInt(r, out.slot)) return false; }
         else                        { return false; }
     }
@@ -218,17 +238,25 @@ bool parseItemRefBody(Reader& r, ItemRef& out, bool& want_comma_handled) {
 }
 
 bool parseCheckedReplay(Reader& r, CheckedReplay& out) {
+    out.id_count = 0;
+    out.truncated = false;
     std::string_view key;
     while (r.nextField(key)) {
         if (key == "ids") {
             if (!r.enterArray()) return false;
             while (r.hasMoreInArray()) {
                 if (!r.enterObject()) return false;
-                ItemRef ref;
-                bool dummy;
-                if (!parseItemRefBody(r, ref, dummy)) return false;
+                if (out.id_count < CheckedReplay::kMaxIds) {
+                    if (!parseItemRefBody(r, out.ids[out.id_count])) return false;
+                    ++out.id_count;
+                } else {
+                    // Buffer full — parse and discard so the JSON stays
+                    // well-formed; flag for caller logging.
+                    ItemRef discard;
+                    if (!parseItemRefBody(r, discard)) return false;
+                    out.truncated = true;
+                }
                 if (!r.exitObject()) return false;
-                out.ids.push_back(std::move(ref));
             }
             if (!r.exitArray()) return false;
         } else {
@@ -241,17 +269,17 @@ bool parseCheckedReplay(Reader& r, CheckedReplay& out) {
 bool parseItem(Reader& r, Item& out) {
     std::string_view key;
     while (r.nextField(key)) {
-        if      (key == "kind")     { std::string s; if (!readIntoString(r, s)) return false; out.kind = fromWire(s); }
-        else if (key == "kingdom")  { if (!readIntoString(r, out.kingdom)) return false; }
-        else if (key == "shine_id") { if (!readIntoString(r, out.shine_id)) return false; }
-        else if (key == "cap")      { if (!readIntoString(r, out.cap)) return false; }
-        else if (key == "name")     { if (!readIntoString(r, out.name)) return false; }
+        if      (key == "kind")     { if (!readKindField(r, out.kind)) return false; }
+        else if (key == "kingdom")  { if (!readIntoField(r, out.kingdom)) return false; }
+        else if (key == "shine_id") { if (!readIntoField(r, out.shine_id)) return false; }
+        else if (key == "cap")      { if (!readIntoField(r, out.cap)) return false; }
+        else if (key == "name")     { if (!readIntoField(r, out.name)) return false; }
         else if (key == "slot")     { if (!readIntoInt(r, out.slot)) return false; }
-        else if (key == "from")     { if (!readIntoString(r, out.from)) return false; }
+        else if (key == "from")     { if (!readIntoField(r, out.from)) return false; }
         // M6 phase B: bridge populates hack_name for capture items (cap → hack
         // reverse lookup via CaptureMap). Mod-side passes hack_name straight
         // to GameDataFunction::addHackDictionary.
-        else if (key == "hack_name"){ if (!readIntoString(r, out.hack_name)) return false; }
+        else if (key == "hack_name"){ if (!readIntoField(r, out.hack_name)) return false; }
         else                        { return false; }
     }
     return true;
@@ -260,7 +288,7 @@ bool parseItem(Reader& r, Item& out) {
 bool parsePrint(Reader& r, Print& out) {
     std::string_view key;
     while (r.nextField(key)) {
-        if (key == "text") { if (!readIntoString(r, out.text)) return false; }
+        if (key == "text") { if (!readIntoField(r, out.text)) return false; }
         else               { return false; }
     }
     return true;
@@ -269,7 +297,7 @@ bool parsePrint(Reader& r, Print& out) {
 bool parseApStateMsg(Reader& r, ApStateMsg& out) {
     std::string_view key;
     while (r.nextField(key)) {
-        if (key == "conn") { if (!readIntoString(r, out.conn)) return false; }
+        if (key == "conn") { if (!readIntoField(r, out.conn)) return false; }
         else               { return false; }
     }
     return true;
@@ -287,8 +315,8 @@ bool parsePong(Reader& r, Pong& out) {
 bool parseErr(Reader& r, Err& out) {
     std::string_view key;
     while (r.nextField(key)) {
-        if      (key == "code") { if (!readIntoString(r, out.code)) return false; }
-        else if (key == "ctx")  { if (!readIntoString(r, out.ctx)) return false; }
+        if      (key == "code") { if (!readIntoField(r, out.code)) return false; }
+        else if (key == "ctx")  { if (!readIntoField(r, out.ctx)) return false; }
         else                    { return false; }
     }
     return true;
@@ -297,11 +325,19 @@ bool parseErr(Reader& r, Err& out) {
 bool parseKill(Reader& r, Kill& out) {
     std::string_view key;
     while (r.nextField(key)) {
-        if      (key == "source") { if (!readIntoString(r, out.source)) return false; }
-        else if (key == "cause")  { if (!readIntoString(r, out.cause)) return false; }
+        if      (key == "source") { if (!readIntoField(r, out.source)) return false; }
+        else if (key == "cause")  { if (!readIntoField(r, out.cause)) return false; }
         else                      { return false; }
     }
     return true;
+}
+
+// Compare a char buffer's null-terminated contents to a string literal.
+// Replaces former `out.t == "hello_ack"` style comparisons (out.t is now
+// char[]). Same shape as strcmp but with a literal RHS for ergonomics.
+inline bool eqStr(const char* a, const char* b) {
+    while (*a && *b && *a == *b) { ++a; ++b; }
+    return *a == '\0' && *b == '\0';
 }
 
 }  // namespace
@@ -316,17 +352,17 @@ bool decode(const char* data, std::size_t len, DecodedMsg& out) {
     // immediately.
     std::string_view key;
     if (!r.nextField(key) || key != "t") return false;
-    if (!readIntoString(r, out.t)) return false;
+    if (!readIntoField(r, out.t)) return false;
 
     bool ok = true;
-    if      (out.t == "hello_ack")      ok = parseHelloAck(r, out.hello_ack);
-    else if (out.t == "checked_replay") ok = parseCheckedReplay(r, out.checked_replay);
-    else if (out.t == "item")           ok = parseItem(r, out.item);
-    else if (out.t == "print")          ok = parsePrint(r, out.print);
-    else if (out.t == "ap_state")       ok = parseApStateMsg(r, out.ap_state);
-    else if (out.t == "pong")           ok = parsePong(r, out.pong);
-    else if (out.t == "err")            ok = parseErr(r, out.err);
-    else if (out.t == "kill")           ok = parseKill(r, out.kill);
+    if      (eqStr(out.t, "hello_ack"))      ok = parseHelloAck(r, out.hello_ack);
+    else if (eqStr(out.t, "checked_replay")) ok = parseCheckedReplay(r, out.checked_replay);
+    else if (eqStr(out.t, "item"))           ok = parseItem(r, out.item);
+    else if (eqStr(out.t, "print"))          ok = parsePrint(r, out.print);
+    else if (eqStr(out.t, "ap_state"))       ok = parseApStateMsg(r, out.ap_state);
+    else if (eqStr(out.t, "pong"))           ok = parsePong(r, out.pong);
+    else if (eqStr(out.t, "err"))            ok = parseErr(r, out.err);
+    else if (eqStr(out.t, "kill"))           ok = parseKill(r, out.kill);
     else {
         // Unknown type: leave out.t set so handleLine can warn. Don't bother
         // draining the rest of the object — caller treats unknown as ignored.

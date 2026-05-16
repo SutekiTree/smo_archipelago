@@ -27,7 +27,7 @@ ApState& ApState::instance() {
 // suffix to keep this robust across "Multi-Moon", "Cap Kingdom Multi-Moon",
 // etc. — the bridge passes only the kingdom-stripped tail in shine_id.
 static int moonGrantAmount(const Item& item) {
-    const char* s = item.shine_id.c_str();
+    const char* s = item.shine_id;
     // Search for "Multi-Moon" substring (case-sensitive, deliberate — the
     // apworld emits exactly this casing).
     const char* needle = "Multi-Moon";
@@ -46,9 +46,9 @@ void ApState::applyOnFrame() {
     while (inbound.pop(item)) {
         Check synth{};
         synth.kind = item.kind;
-        copyCheckField(synth.kingdom, item.kingdom.c_str());
-        copyCheckField(synth.shine_id, item.shine_id.c_str());
-        copyCheckField(synth.cap, item.cap.c_str());
+        copyCheckField(synth.kingdom, item.kingdom);
+        copyCheckField(synth.shine_id, item.shine_id);
+        copyCheckField(synth.cap, item.cap);
         synth.slot = item.slot;
         const std::uint64_t h = hashCheck(synth);
         (void)h;  // M6 phase A: moon arm no longer dedupes via hash.
@@ -56,7 +56,7 @@ void ApState::applyOnFrame() {
         switch (item.kind) {
             case ItemKind::Moon: {
                 const int amount = moonGrantAmount(item);
-                if (item.kingdom.empty()) {
+                if (item.kingdom[0] == '\0') {
                     // Truly generic "Power Moon" — only contributes to global.
                     const int prev = ap_moons_unkingdomed.fetch_add(amount,
                         std::memory_order_relaxed);
@@ -64,7 +64,7 @@ void ApState::applyOnFrame() {
                         "[m6-moon] credit unkingdomed +%d (was %d, now %d) "
                         "shine_id='%s' from=%s",
                         amount, prev, prev + amount,
-                        item.shine_id.c_str(), item.from.c_str());
+                        item.shine_id, item.from);
                 } else {
                     const std::uint8_t bit = smoap::game::kingdomBitFor(item.kingdom);
                     if (bit < 17) {
@@ -73,9 +73,8 @@ void ApState::applyOnFrame() {
                         SMOAP_LOG_INFO(
                             "[m6-moon] credit kingdom=%s(bit=%u) +%d "
                             "(was %d, now %d) shine_id='%s' from=%s",
-                            item.kingdom.c_str(), bit, amount, prev,
-                            prev + amount, item.shine_id.c_str(),
-                            item.from.c_str());
+                            item.kingdom, bit, amount, prev,
+                            prev + amount, item.shine_id, item.from);
                     } else {
                         // Unknown kingdom name — fall back to unkingdomed so
                         // the credit isn't silently dropped. Loud so we can
@@ -86,38 +85,36 @@ void ApState::applyOnFrame() {
                             "[m6-moon] UNKNOWN kingdom '%s' (bit=%u) — "
                             "credited to unkingdomed +%d (was %d, now %d) "
                             "shine_id='%s'",
-                            item.kingdom.c_str(), bit, amount, prev,
-                            prev + amount, item.shine_id.c_str());
+                            item.kingdom, bit, amount, prev,
+                            prev + amount, item.shine_id);
                     }
                 }
                 break;
             }
             case ItemKind::Capture:
-                if (!item.cap.empty()) {
+                if (item.cap[0] != '\0') {
                     const std::uint8_t bit = smoap::game::captureBitFor(item.cap);
                     if (bit < captures_unlocked.size()) captures_unlocked.set(bit);
                     SMOAP_LOG_INFO("[m6-capture] cap='%s' bit=%u "
                                    "hack='%s' from=%s",
-                                   item.cap.c_str(), bit,
-                                   item.hack_name.c_str(), item.from.c_str());
+                                   item.cap, bit, item.hack_name, item.from);
                     // M6 phase B: actually write into SMO's hack dictionary
                     // so the capture compendium / gameplay treats it as
                     // owned. Falls back to identity (use cap as hack_name)
                     // when bridge didn't resolve — works for the 1:1 names
                     // like Goomba/Goomba.
-                    const std::string& hack = item.hack_name.empty()
-                        ? item.cap : item.hack_name;
+                    const char* hack = item.hack_name[0] ? item.hack_name : item.cap;
                     smoap::game::grantCapture(item.cap, hack);
                 }
                 break;
             case ItemKind::Kingdom:
-                if (!item.kingdom.empty()) {
+                if (item.kingdom[0] != '\0') {
                     const std::uint8_t bit = smoap::game::kingdomBitFor(item.kingdom);
                     if (bit < 32) received_kingdom_mask |= (1u << bit);
                     SMOAP_LOG_INFO("[m6-kingdom] local-bit only (phase C "
                                    "lands unlockWorld write): kingdom='%s' "
                                    "bit=%u from=%s",
-                                   item.kingdom.c_str(), bit, item.from.c_str());
+                                   item.kingdom, bit, item.from);
                 }
                 break;
             case ItemKind::Shop:
@@ -125,7 +122,7 @@ void ApState::applyOnFrame() {
                 SMOAP_LOG_DEBUG("[m6-other] item kind=%u name='%s' from=%s "
                                 "(no in-game effect)",
                                 static_cast<unsigned>(item.kind),
-                                item.name.c_str(), item.from.c_str());
+                                item.name, item.from);
                 break;
         }
     }

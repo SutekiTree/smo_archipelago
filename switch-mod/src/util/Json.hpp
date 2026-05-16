@@ -7,15 +7,63 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
-#include <string>
 #include <string_view>
-#include <vector>
 
 namespace smoap::util::json {
 
+// Fixed-size output buffer for one wire line. Caller-owned so encoder code
+// never touches the heap. 8 KiB matches `smoap::ap::kMaxLineBytes` (the
+// wire-format per-line cap from docs/wire-protocol.md). On overflow,
+// appends are silently dropped — `truncated()` lets callers detect it.
+//
+// Why fixed-size + caller-owned: libstdc++'s allocator NULL-derefs in our
+// subsdk9 link (see project memory `libstdcpp_allocator_broken_in_subsdk9`).
+// A previous Encoder using `std::string out_` crashed inside
+// `Encoder::key()` → `out_.append()` → `__memcpy_device` once the worker's
+// allocator state had drifted (~1 min post-boot, on a re-HELLO triggered
+// by SaveLoadHook). Going via a stack `LineBuffer` removes the only
+// remaining heap path in the encode pipeline.
+class LineBuffer {
+public:
+    static constexpr std::size_t kCap = 8 * 1024;
+
+    void clear() { len_ = 0; trunc_ = false; }
+
+    const char* data() const { return buf_; }
+    std::size_t size() const { return len_; }
+    bool empty() const { return len_ == 0; }
+    bool truncated() const { return trunc_; }
+
+    void append(char c) {
+        if (len_ < kCap) { buf_[len_++] = c; } else { trunc_ = true; }
+    }
+    void append(const char* s, std::size_t n) {
+        std::size_t take = (len_ + n <= kCap) ? n : (kCap - len_);
+        for (std::size_t i = 0; i < take; ++i) buf_[len_ + i] = s[i];
+        len_ += take;
+        if (take < n) trunc_ = true;
+    }
+    void append(std::string_view sv) { append(sv.data(), sv.size()); }
+
+private:
+    char buf_[kCap];
+    std::size_t len_ = 0;
+    bool trunc_ = false;
+};
+
 class Encoder {
 public:
+    // Wire messages nest at most ~3 deep (object → "ids" → array → object).
+    // 16 leaves headroom without touching the libstdc++ allocator. Overflows
+    // are silent: a push past the limit just stops tracking commas for that
+    // depth, which is preferable to crashing on what would already be
+    // malformed JSON.
+    static constexpr int kMaxDepth = 16;
+
+    explicit Encoder(LineBuffer& out) : out_(out) {}
+
     Encoder& beginObject();
     Encoder& endObject();
     Encoder& beginArray();
@@ -27,12 +75,16 @@ public:
     Encoder& value(int v);
     Encoder& value(bool v);
 
-    std::string take() && { return std::move(out_); }
-
 private:
     void maybeComma();
-    std::string out_;
-    std::vector<bool> needs_comma_stack_;
+    void pushFrame();
+    void popFrame();
+    void markNeedsComma();
+    void clearNeedsComma();
+
+    LineBuffer& out_;
+    bool needs_comma_stack_[kMaxDepth]{};
+    int depth_ = 0;
 };
 
 // Minimal scan API. Returns false on malformed input.

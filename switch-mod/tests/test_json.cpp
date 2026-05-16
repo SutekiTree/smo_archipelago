@@ -16,6 +16,8 @@
 #include <string>
 #include <string_view>
 
+using smoap::util::json::Encoder;
+using smoap::util::json::LineBuffer;
 using smoap::util::json::Reader;
 
 namespace {
@@ -368,6 +370,218 @@ TEST(reject_float_value) {
     EXPECT(r.nextField(k));
     std::int64_t n = 0;
     EXPECT(!r.nextInt(n));
+}
+
+// --------------------------------------------------------------------------
+// Encoder
+//
+// These exercise the depth-tracking path that previously used
+// `std::vector<bool>::push_back`. Pushing past the libstdc++ allocator's
+// broken TLS slot in our subsdk9 link crashed the worker on 2026-05-16;
+// the encoder now uses a fixed-size `bool[]`. The Switch crash is not
+// reproducible on host, but these tests pin the output of the new
+// scaffolding so any silent corruption in the bookkeeping shows up here.
+// --------------------------------------------------------------------------
+
+#define EXPECT_EQ_VIEW(buf, expected) do {                                      \
+    std::string_view _a((buf).data(), (buf).size());                            \
+    std::string_view _e(expected);                                              \
+    if (_a != _e) {                                                             \
+        std::fprintf(stderr, "[%s] FAIL %s:%d: \"%.*s\" != \"%.*s\"\n",         \
+                     g_current_test, __FILE__, __LINE__,                        \
+                     (int)_a.size(), _a.data(), (int)_e.size(), _e.data());     \
+        ++g_failures;                                                           \
+    }                                                                           \
+} while (0)
+
+TEST(encode_hello) {
+    // Mirrors the actual sendHello payload that crashed in Ryujinx.
+    LineBuffer buf;
+    Encoder e{buf};
+    e.beginObject()
+        .key("t").value("hello")
+        .key("mod_ver").value("0.1.0")
+        .key("smo_ver").value("1.0.0")
+        .key("cap_table_hash").value("")
+     .endObject();
+    EXPECT_EQ_VIEW(buf,
+        R"({"t":"hello","mod_ver":"0.1.0","smo_ver":"1.0.0","cap_table_hash":""})");
+    EXPECT(!buf.truncated());
+}
+
+TEST(encode_empty_object) {
+    LineBuffer buf;
+    Encoder e{buf};
+    e.beginObject().endObject();
+    EXPECT_EQ_VIEW(buf, "{}");
+}
+
+TEST(encode_empty_array) {
+    LineBuffer buf;
+    Encoder e{buf};
+    e.beginArray().endArray();
+    EXPECT_EQ_VIEW(buf, "[]");
+}
+
+TEST(encode_array_of_objects) {
+    // checked_replay shape: top-level object with an "ids" array of objects.
+    // Without the cross-frame "needs comma" fix this emits "[{...}{...}]".
+    LineBuffer buf;
+    Encoder e{buf};
+    e.beginObject()
+        .key("t").value("checked_replay")
+        .key("ids").beginArray()
+            .beginObject()
+                .key("kind").value("moon")
+                .key("kingdom").value("Cascade")
+            .endObject()
+            .beginObject()
+                .key("kind").value("capture")
+                .key("cap").value("Frog")
+            .endObject()
+        .endArray()
+     .endObject();
+    EXPECT_EQ_VIEW(buf,
+        R"({"t":"checked_replay","ids":[{"kind":"moon","kingdom":"Cascade"},{"kind":"capture","cap":"Frog"}]})");
+}
+
+TEST(encode_mixed_value_types) {
+    LineBuffer buf;
+    Encoder e{buf};
+    e.beginObject()
+        .key("s").value("x")
+        .key("i").value(static_cast<std::int64_t>(-1))
+        .key("ii").value(42)
+        .key("b").value(true)
+        .key("bb").value(false)
+        .key("big").value(static_cast<std::int64_t>(1731536400000LL))
+     .endObject();
+    EXPECT_EQ_VIEW(buf,
+        R"({"s":"x","i":-1,"ii":42,"b":true,"bb":false,"big":1731536400000})");
+}
+
+TEST(encode_int64_boundary) {
+    // INT64_MIN/MAX hit the 20-char path inside our snprintf buffer (size 24).
+    LineBuffer buf;
+    Encoder e{buf};
+    e.beginObject()
+        .key("min").value(static_cast<std::int64_t>(INT64_MIN))
+        .key("max").value(static_cast<std::int64_t>(INT64_MAX))
+     .endObject();
+    EXPECT_EQ_VIEW(buf,
+        R"({"min":-9223372036854775808,"max":9223372036854775807})");
+}
+
+TEST(encode_string_escapes) {
+    LineBuffer buf;
+    Encoder e{buf};
+    e.beginObject().key("s").value("a\"b\\c\nd\re\tf").endObject();
+    EXPECT_EQ_VIEW(buf, R"({"s":"a\"b\\c\nd\re\tf"})");
+}
+
+TEST(encode_nested_deep) {
+    LineBuffer buf;
+    Encoder e{buf};
+    e.beginObject()
+        .key("a").beginObject()
+            .key("b").beginArray()
+                .beginObject()
+                    .key("c").beginArray()
+                        .value(1).value(2).value(3)
+                    .endArray()
+                .endObject()
+            .endArray()
+        .endObject()
+     .endObject();
+    EXPECT_EQ_VIEW(buf, R"({"a":{"b":[{"c":[1,2,3]}]}})");
+}
+
+TEST(encode_round_trip_then_parse) {
+    // Any subtle comma/quote bug in the new encoder should make this fail to
+    // parse with our own Reader.
+    LineBuffer buf;
+    {
+        Encoder e{buf};
+        e.beginObject()
+            .key("t").value("snapshot_chunk")
+            .key("seq").value(7)
+            .key("entries").beginArray()
+                .beginObject().key("kind").value("moon").key("id").value("obj214").endObject()
+                .beginObject().key("kind").value("capture").key("id").value("Frog").endObject()
+                .beginObject().key("kind").value("moon").key("id").value("obj100").endObject()
+            .endArray()
+         .endObject();
+    }
+    // Reader mutates buffer in-place during escape decoding — copy first.
+    std::string copy(buf.data(), buf.size());
+    Reader r(copy.data(), copy.size());
+    EXPECT(r.enterObject());
+    std::string_view k, v;
+    EXPECT(r.nextField(k)); EXPECT_EQ_SV(k, "t");   EXPECT(r.nextString(v)); EXPECT_EQ_SV(v, "snapshot_chunk");
+    std::int64_t n = 0;
+    EXPECT(r.nextField(k)); EXPECT_EQ_SV(k, "seq"); EXPECT(r.nextInt(n));    EXPECT_EQ_I(n, 7);
+    EXPECT(r.nextField(k)); EXPECT_EQ_SV(k, "entries"); EXPECT(r.enterArray());
+    int count = 0;
+    while (r.hasMoreInArray()) {
+        EXPECT(r.enterObject());
+        EXPECT(r.nextField(k)); EXPECT_EQ_SV(k, "kind"); EXPECT(r.nextString(v));
+        EXPECT(r.nextField(k)); EXPECT_EQ_SV(k, "id");   EXPECT(r.nextString(v));
+        EXPECT(!r.nextField(k));
+        EXPECT(r.exitObject());
+        ++count;
+    }
+    EXPECT_EQ_I(count, 3);
+    EXPECT(r.exitArray());
+    EXPECT(!r.nextField(k));
+    EXPECT(r.exitObject());
+}
+
+TEST(encode_depth_overflow_does_not_corrupt_outer) {
+    LineBuffer buf;
+    Encoder e{buf};
+    constexpr int kPush = Encoder::kMaxDepth + 4;
+    for (int i = 0; i < kPush; ++i) {
+        if (i > 0) e.key("k");
+        e.beginObject();
+    }
+    for (int i = 0; i < kPush; ++i) {
+        e.endObject();
+    }
+    int opens = 0, closes = 0;
+    for (std::size_t i = 0; i < buf.size(); ++i) {
+        if (buf.data()[i] == '{') ++opens;
+        if (buf.data()[i] == '}') ++closes;
+    }
+    EXPECT_EQ_I(opens, kPush);
+    EXPECT_EQ_I(closes, kPush);
+}
+
+TEST(encode_reuse_buffer_after_clear) {
+    // The bug pattern: same code path firing repeatedly across many
+    // (re)connections. A LineBuffer reused across iterations must produce
+    // identical output to a fresh one each time.
+    LineBuffer buf;
+    for (int iter = 0; iter < 32; ++iter) {
+        buf.clear();
+        Encoder e{buf};
+        e.beginObject().key("n").value(iter).endObject();
+        char expected[32];
+        std::snprintf(expected, sizeof(expected), R"({"n":%d})", iter);
+        EXPECT_EQ_VIEW(buf, expected);
+        EXPECT(!buf.truncated());
+    }
+}
+
+TEST(encode_overflow_sets_truncated_flag) {
+    // Pump bytes until LineBuffer overflows. The flag must trip, and we
+    // must not crash. Caller-side: kMaxLineBytes (8 KiB) is far larger than
+    // any actual wire message, so this is a guard against future growth.
+    LineBuffer buf;
+    Encoder e{buf};
+    e.beginObject().key("payload").value(std::string(LineBuffer::kCap, 'x'));
+    e.endObject();
+    EXPECT(buf.truncated());
+    EXPECT_EQ_I(buf.size(), LineBuffer::kCap);
 }
 
 }  // namespace
