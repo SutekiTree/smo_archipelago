@@ -53,12 +53,22 @@ class PrereqResult:
     human-readable extra (version string, error message). `install_url`
     is non-empty when `ok=False` so the wizard can surface a clickable
     link.
+
+    `picker_label` + `picker_filter` opt the row into a "Browse..." button.
+    Non-empty `picker_label` tells the wizard to render the button with
+    that label as the file-picker dialog title; the picked path is then
+    persisted (typically into setup_state.json) so subsequent wizard
+    invocations + the build / extract subprocesses can pick it up. Useful
+    for tools that aren't really "installed" on Windows (hactool — a
+    bare .exe most users drop into a folder of their choosing).
     """
     key: str
     name: str
     ok: bool
     detail: str
     install_url: str = ""
+    picker_label: str = ""
+    picker_filter: tuple[str, ...] = ()
 
 
 def _run(cmd: list[str], *, timeout: float = 10.0) -> tuple[int, str, str]:
@@ -120,35 +130,80 @@ def check_python312() -> PrereqResult:
     )
 
 
+# Default install roots probed when DEVKITPRO env var is missing. The
+# Windows installer does NOT reliably set the system env var (devkitPro
+# uses its msys2 shell to set it for that shell only), so a brand-new
+# devkitPro install often shows up with no env var visible to a fresh
+# Python process. We fall back to these well-known defaults so the wizard
+# Just Works on a vanilla install. Order matters: most-specific first.
+_DEVKITPRO_DEFAULT_ROOTS = (
+    Path("C:/devkitPro"),
+    Path("/opt/devkitpro"),
+    Path("/usr/local/devkitpro"),
+)
+
+
+def _devkitpro_gxx_under(root: Path) -> Path | None:
+    """Return the cross-compiler path under `root` if it exists. Tries
+    both Windows (.exe) and POSIX layouts."""
+    win = root / "devkitA64" / "bin" / "aarch64-none-elf-g++.exe"
+    if win.exists():
+        return win
+    posix = root / "devkitA64" / "bin" / "aarch64-none-elf-g++"
+    if posix.exists():
+        return posix
+    return None
+
+
 def check_devkitpro() -> PrereqResult:
     """devkitPro installation (devkitA64 cross-compiler).
 
-    Detection is layered: the env var `DEVKITPRO` is the canonical signal
-    set by the Windows installer; we also verify the cross-compiler binary
-    actually exists at the expected sub-path so a stale env var pointing
-    at a deleted install reports cleanly.
+    Detection is layered: prefer the env var `DEVKITPRO` (canonical signal
+    inside the devkitPro msys2 shell), then probe well-known default
+    install roots so the wizard works on a fresh install where the env
+    var hasn't propagated to a clean Python process. The latter is the
+    common case on Windows because the devkitPro installer sets the env
+    var inside its msys2 shell only, not system-wide.
+
+    Side effect: when a default-root probe succeeds, sets
+    `os.environ["DEVKITPRO"]` for the current process so downstream
+    `run_cmake_configure` subprocess invocations inherit it without the
+    user having to open a shell where the env var is set. The mutation
+    is process-local; nothing persists to the user's environment.
     """
     root = os.environ.get("DEVKITPRO")
-    if not root:
-        return PrereqResult(
-            "devkitpro", "devkitPro / devkitA64", False,
-            "DEVKITPRO env var not set (re-run devkitPro installer or open "
-            "a new shell after install)",
-            INSTALL_URLS["devkitpro"],
-        )
-    gxx = Path(root) / "devkitA64" / "bin" / "aarch64-none-elf-g++.exe"
-    if not gxx.exists():
-        # Try POSIX layout (no .exe extension) for Linux users who set
-        # DEVKITPRO manually.
-        gxx_nox = Path(root) / "devkitA64" / "bin" / "aarch64-none-elf-g++"
-        if not gxx_nox.exists():
+    if root:
+        gxx = _devkitpro_gxx_under(Path(root))
+        if gxx is None:
             return PrereqResult(
                 "devkitpro", "devkitPro / devkitA64", False,
                 f"DEVKITPRO={root} but aarch64-none-elf-g++ not found "
                 f"(install incomplete?)",
                 INSTALL_URLS["devkitpro"],
             )
-        gxx = gxx_nox
+        return _verify_devkitpro_gxx(gxx, root)
+
+    # No env var — fall back to well-known default install paths.
+    for candidate in _DEVKITPRO_DEFAULT_ROOTS:
+        gxx = _devkitpro_gxx_under(candidate)
+        if gxx is not None:
+            # Mutate env so child processes (cmake) see DEVKITPRO. The
+            # user wouldn't otherwise have set it; this saves them a
+            # confusing "found it but cmake says it's missing" downstream.
+            os.environ["DEVKITPRO"] = str(candidate)
+            return _verify_devkitpro_gxx(gxx, str(candidate))
+
+    return PrereqResult(
+        "devkitpro", "devkitPro / devkitA64", False,
+        "DEVKITPRO env var not set and no install found at default paths "
+        f"({', '.join(str(p) for p in _DEVKITPRO_DEFAULT_ROOTS)})",
+        INSTALL_URLS["devkitpro"],
+    )
+
+
+def _verify_devkitpro_gxx(gxx: Path, root: str) -> PrereqResult:
+    """Run `g++ --version` against a discovered cross-compiler; return the
+    success/failure PrereqResult for it."""
     r = _safe_run([str(gxx), "--version"])
     if r and r[0] == 0:
         first_line = (r[1] or r[2]).splitlines()[0] if (r[1] or r[2]) else "ok"
@@ -212,22 +267,52 @@ def check_ninja() -> PrereqResult:
     return PrereqResult("ninja", "Ninja", True, ver)
 
 
-def check_hactool() -> PrereqResult:
+def check_hactool(override_path: Path | None = None) -> PrereqResult:
     """`hactool` for unpacking the user's SMO NSP during map extraction.
 
     The extractor script (`scripts/extract_shine_map.py`) calls hactool
     to extract program NCA → RomFS. It is NOT bundled (Switch-tooling
     license + the extractor already accepts an explicit `--hactool` path
-    override), so the wizard just confirms it's on PATH.
+    override).
+
+    Detection order:
+      1. `override_path` if provided (typically read from
+         setup_state.json's `hactool_path` key — set when the user
+         pointed the wizard's "Browse..." button at a hactool.exe).
+      2. PATH lookup via `shutil.which`.
+
+    Fails open (returns not-ok with picker_label set) when neither works,
+    so the wizard can surface a "Browse..." button. hactool is unusual
+    among our prereqs because Windows users don't typically "install" it
+    — they download a single .exe and drop it somewhere of their choosing
+    — so requiring PATH membership is a poor UX.
     """
+    if override_path is not None:
+        if override_path.is_file():
+            return PrereqResult(
+                "hactool", "hactool", True,
+                f"{override_path} (user-picked)",
+            )
+        # Fall through to PATH lookup — the persisted path may have moved
+        # since the user picked it; we should not silently lock them out.
+
     exe = shutil.which("hactool") or shutil.which("hactool.exe")
-    if not exe:
-        return PrereqResult(
-            "hactool", "hactool", False,
-            "not found on PATH (needed to extract RomFS from your SMO NSP)",
-            INSTALL_URLS["hactool"],
+    if exe:
+        return PrereqResult("hactool", "hactool", True, exe)
+
+    detail = "not found on PATH (needed to extract RomFS from your SMO NSP)"
+    if override_path is not None:
+        detail = (
+            f"previously-picked path {override_path} no longer exists, and "
+            "hactool not found on PATH"
         )
-    return PrereqResult("hactool", "hactool", True, exe)
+    return PrereqResult(
+        "hactool", "hactool", False,
+        detail,
+        INSTALL_URLS["hactool"],
+        picker_label="Locate hactool.exe",
+        picker_filter=("hactool*", "*.exe", "*"),
+    )
 
 
 def check_prod_keys() -> PrereqResult:
@@ -249,21 +334,22 @@ def check_prod_keys() -> PrereqResult:
     return PrereqResult("prodkeys", "prod.keys", True, str(p))
 
 
-# Order matters for UI: heaviest / most-likely-missing first so the user
-# isn't surprised at the end of the list.
-_ALL_CHECKS = (
-    check_devkitpro,
-    check_cmake,
-    check_ninja,
-    check_python312,
-    check_hactool,
-    check_prod_keys,
-)
+def check_all(*, hactool_override: Path | None = None) -> list[PrereqResult]:
+    """Run every detector. Order is wizard-display order — heaviest /
+    most-likely-missing first so the user isn't surprised at the end of
+    the list.
 
-
-def check_all() -> list[PrereqResult]:
-    """Run every detector. Order is wizard-display order."""
-    return [check() for check in _ALL_CHECKS]
+    `hactool_override` flows from the wizard's persisted user-picked
+    path (setup_state.json's `hactool_path` key); pass None on first
+    invocation or when the user has not yet picked a custom location."""
+    return [
+        check_devkitpro(),
+        check_cmake(),
+        check_ninja(),
+        check_python312(),
+        check_hactool(override_path=hactool_override),
+        check_prod_keys(),
+    ]
 
 
 def all_ok(results: list[PrereqResult]) -> bool:

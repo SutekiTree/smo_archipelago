@@ -71,11 +71,42 @@ def test_python312_missing(fake_run) -> None:
 
 # ---------- check_devkitpro ----------
 
-def test_devkitpro_env_missing(monkeypatch) -> None:
+def test_devkitpro_env_missing_and_no_default(monkeypatch) -> None:
+    """No DEVKITPRO + no install at the default paths → not ok."""
     monkeypatch.delenv("DEVKITPRO", raising=False)
+    # Point default-path probe at locations that don't exist so the test
+    # is independent of whether the machine running it has devkitPro.
+    monkeypatch.setattr(prereqs, "_DEVKITPRO_DEFAULT_ROOTS",
+                        (Path("/nope/devkitpro-not-real-1"),
+                         Path("/nope/devkitpro-not-real-2")))
     r = check_devkitpro()
     assert not r.ok
     assert "DEVKITPRO" in r.detail
+    assert "default paths" in r.detail
+
+
+def test_devkitpro_env_missing_but_found_at_default(
+    monkeypatch, tmp_path, fake_run,
+) -> None:
+    """No DEVKITPRO env var, but a valid install exists at C:/devkitPro
+    (or /opt/devkitpro etc) — fall back to it AND set the env var so
+    downstream cmake subprocesses inherit the path."""
+    monkeypatch.delenv("DEVKITPRO", raising=False)
+    # Build a fake devkitPro tree at a tmp location, then point the
+    # default-path probe at it.
+    fake_root = tmp_path / "devkitPro"
+    bindir = fake_root / "devkitA64" / "bin"
+    bindir.mkdir(parents=True)
+    gxx = bindir / "aarch64-none-elf-g++.exe"
+    gxx.write_text("")
+    monkeypatch.setattr(prereqs, "_DEVKITPRO_DEFAULT_ROOTS", (fake_root,))
+    fake_run({f"{gxx} --version": (0, "g++ (devkitA64) 15.1.0\n", "")})
+
+    r = check_devkitpro()
+    assert r.ok
+    # Detector must mutate env so cmake child processes inherit it.
+    import os
+    assert os.environ.get("DEVKITPRO") == str(fake_root)
 
 
 def test_devkitpro_env_set_binary_present(monkeypatch, tmp_path, fake_run) -> None:
@@ -165,10 +196,77 @@ def test_hactool_present(monkeypatch, tmp_path) -> None:
     assert str(hac) in r.detail
 
 
-def test_hactool_missing(monkeypatch) -> None:
+def test_hactool_missing_surfaces_picker(monkeypatch) -> None:
+    """Failure case must include a `picker_label` so the wizard can
+    render a Browse button. hactool is the canonical not-installed-via-
+    installer case; PATH-only detection is too strict on Windows."""
     monkeypatch.setattr("shutil.which", lambda name: None)
     r = check_hactool()
     assert not r.ok
+    assert r.picker_label, "missing picker_label — wizard can't render Browse button"
+    assert r.picker_filter, "missing picker_filter — file dialog needs an extension filter"
+
+
+def test_hactool_user_picked_path_used(monkeypatch, tmp_path) -> None:
+    """When the user has used the wizard's Browse button to point at a
+    hactool.exe, that path wins even when hactool isn't on PATH."""
+    user_picked = tmp_path / "MyTools" / "hactool.exe"
+    user_picked.parent.mkdir(parents=True)
+    user_picked.write_text("")
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    r = check_hactool(override_path=user_picked)
+    assert r.ok
+    assert str(user_picked) in r.detail
+    assert "user-picked" in r.detail
+
+
+def test_hactool_stale_user_picked_path_falls_back_to_path(
+    monkeypatch, tmp_path,
+) -> None:
+    """If the persisted user-picked path no longer exists but hactool is
+    on PATH, prefer PATH rather than locking the user out. Persisted
+    state can rot; PATH is authoritative for the current shell."""
+    stale = tmp_path / "deleted" / "hactool.exe"  # never created
+    hac = tmp_path / "hactool.exe"
+    hac.write_text("")
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda name: str(hac) if name in ("hactool", "hactool.exe") else None,
+    )
+    r = check_hactool(override_path=stale)
+    assert r.ok
+    assert str(hac) in r.detail
+
+
+def test_hactool_stale_picked_path_and_no_path_fails_clearly(
+    monkeypatch, tmp_path,
+) -> None:
+    """Both override and PATH missing → fail with a detail that names
+    the missing override (so the user understands what to re-pick)."""
+    stale = tmp_path / "deleted" / "hactool.exe"
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    r = check_hactool(override_path=stale)
+    assert not r.ok
+    assert str(stale) in r.detail
+    assert r.picker_label
+
+
+def test_check_all_threads_hactool_override(monkeypatch, tmp_path) -> None:
+    """check_all must forward the persisted hactool path through to
+    the per-detector function — without this the wizard's persistence
+    has no effect."""
+    user_picked = tmp_path / "hactool.exe"
+    user_picked.write_text("")
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    # Also stub the devkitpro probe so check_all doesn't fail on
+    # machines without devkitPro installed at the default location.
+    monkeypatch.delenv("DEVKITPRO", raising=False)
+    monkeypatch.setattr(prereqs, "_DEVKITPRO_DEFAULT_ROOTS", ())
+
+    results = check_all(hactool_override=user_picked)
+    hactool = next(r for r in results if r.key == "hactool")
+    assert hactool.ok
+    assert str(user_picked) in hactool.detail
 
 
 # ---------- check_prod_keys ----------

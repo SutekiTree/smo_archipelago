@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import threading
 import webbrowser
@@ -233,14 +234,48 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
 
         next_btn_holder: dict[str, Any] = {}
 
+        def open_picker_for(r: PrereqResult) -> None:
+            """Open a Kivy file dialog filtered for the given prereq, then
+            persist the picked path under the prereq's key in setup_state
+            and re-run the prereq check so the row turns green."""
+            popup_root = BoxLayout(orientation="vertical", spacing=8, padding=8)
+            chooser = FileChooserListView(filters=list(r.picker_filter) or ["*"])
+            popup_root.add_widget(chooser)
+            btn_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=40, spacing=8)
+            ok_btn = Button(text="OK")
+            cancel_btn = Button(text="Cancel")
+            btn_row.add_widget(cancel_btn)
+            btn_row.add_widget(ok_btn)
+            popup_root.add_widget(btn_row)
+            popup = Popup(title=r.picker_label, content=popup_root, size_hint=(0.9, 0.9))
+
+            def commit(_i):
+                sel = chooser.selection
+                if sel:
+                    state = load_setup_state()
+                    state[f"{r.key}_path"] = sel[0]
+                    save_setup_state(state)
+                popup.dismiss()
+                do_check()
+
+            ok_btn.bind(on_release=commit)
+            cancel_btn.bind(on_release=lambda _i: popup.dismiss())
+            popup.open()
+
         def render(results: list[PrereqResult]) -> None:
             rows_box.clear_widgets()
             for r in results:
                 row = BoxLayout(orientation="horizontal", size_hint_y=None, height=36, spacing=8)
                 mark = "[color=00aa00][b]OK[/b][/color]" if r.ok else "[color=cc0000][b]X[/b][/color]"
                 row.add_widget(Label(text=mark, markup=True, size_hint_x=0.1))
-                row.add_widget(Label(text=r.name, size_hint_x=0.3, halign="left", text_size=(180, None)))
-                row.add_widget(Label(text=r.detail[:80], size_hint_x=0.5, halign="left", text_size=(360, None)))
+                row.add_widget(Label(text=r.name, size_hint_x=0.25, halign="left", text_size=(150, None)))
+                row.add_widget(Label(text=r.detail[:80], size_hint_x=0.45, halign="left", text_size=(320, None)))
+                if not r.ok and r.picker_label:
+                    pick = Button(text="Browse...", size_hint_x=0.1)
+                    pick.bind(on_release=lambda _i, res=r: open_picker_for(res))
+                    row.add_widget(pick)
+                else:
+                    row.add_widget(Label(text="", size_hint_x=0.1))
                 if not r.ok and r.install_url:
                     link = Button(text="Install...", size_hint_x=0.1)
                     link.bind(on_release=lambda _i, url=r.install_url: webbrowser.open(url))
@@ -253,7 +288,9 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
                 next_btn_holder["next_btn"].disabled = not ok
 
         def do_check() -> None:
-            results = check_all()
+            state = load_setup_state()
+            hactool_override = Path(state["hactool_path"]) if state.get("hactool_path") else None
+            results = check_all(hactool_override=hactool_override)
             render(results)
 
         recheck = Button(text="Re-check", size_hint_y=None, height=40)
@@ -334,7 +371,17 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
             nsp = wizard_state["nsp_path"]
             status.text = f"Extracting from {nsp.name}..."
             try:
-                result = run_extract_maps(nsp, on_line=on_line)
+                # Use the user-picked hactool path if the wizard's prereq
+                # page persisted one; extractor falls back to PATH otherwise.
+                state = load_setup_state()
+                hactool_override = (
+                    Path(state["hactool_path"]) if state.get("hactool_path") else None
+                )
+                result = run_extract_maps(
+                    nsp,
+                    hactool_path=hactool_override,
+                    on_line=on_line,
+                )
             except Exception as e:  # pragma: no cover
                 from kivy.clock import Clock as _Clock
                 _Clock.schedule_once(lambda dt: status.setter("text")(
@@ -431,9 +478,18 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
             steps: list[tuple[str, callable]] = [
                 ("Syncing capture table...",
                  lambda: run_sync_capture_table(on_line=on_line)),
+                # `check_devkitpro` mutates os.environ["DEVKITPRO"] on a
+                # default-path fallback, so cmake inherits it naturally —
+                # but pass explicitly too as belt-and-braces in case the
+                # detector hasn't run in this wizard session (Re-check
+                # always runs it; first-render also runs it; this is just
+                # defensive).
                 (f"Configuring CMake (bridge={wizard_state['bridge_ip']})...",
-                 lambda: run_cmake_configure(wizard_state["bridge_ip"],
-                                              on_line=on_line)),
+                 lambda: run_cmake_configure(
+                     wizard_state["bridge_ip"],
+                     devkitpro=os.environ.get("DEVKITPRO"),
+                     on_line=on_line,
+                 )),
                 ("Compiling Switch module (this can take ~1 minute)...",
                  lambda: run_cmake_build(on_line=on_line)),
             ]
