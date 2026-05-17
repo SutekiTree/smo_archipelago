@@ -23,11 +23,19 @@ Prereqs the user must have:
 """
 from __future__ import annotations
 
+# Pre-import diagnostic line: proves the script even started executing.
+# When the AP frozen Launcher's wizard captures our stdout, "no output for
+# 60s" usually means we never got here (path resolution broke, stdout pipe
+# closed). Print to stderr (wizard merges stderr->stdout) and flush so the
+# line appears even if the parent forgot -u / PYTHONUNBUFFERED.
+import sys
+print(f"[extract] script invoked: __file__={__file__!r}", file=sys.stderr, flush=True)
+print(f"[extract] python={sys.executable!r} argv={sys.argv!r}", file=sys.stderr, flush=True)
+
 import argparse
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent

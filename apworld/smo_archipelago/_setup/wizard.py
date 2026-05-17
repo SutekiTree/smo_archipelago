@@ -342,6 +342,16 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
         root.add_widget(_h1("Extract moon + capture maps"))
         status = _label("Starting extraction...")
         root.add_widget(status)
+        # Always-visible hint pointing at the parallel file log. The Kivy
+        # text widget can hide output in subtle ways (worker-thread races,
+        # clock-callback drops, multiprocess pipe weirdness); the file log
+        # is the ground-truth backstop.
+        log_hint = _label(
+            "If this looks frozen, tail %APPDATA%\\SMOArchipelago\\extract.log "
+            "to see what the subprocess is actually doing.",
+            height=24,
+        )
+        root.add_widget(log_hint)
         log_lines: list[str] = []
         log_box = TextInput(text="", readonly=True, font_name="RobotoMono-Regular"
                             if False else "Roboto",
@@ -355,6 +365,27 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
         root.add_widget(nav)
         s.add_widget(root)
 
+        # File-log handle shared across helpers. Opened/closed by start_worker.
+        # Mirrors every on_line message + adds wizard-side breadcrumbs the
+        # subprocess can't emit (heartbeats, the exact spawn command, etc).
+        extract_log_path = appdata_root() / "extract.log"
+        _state: dict[str, Any] = {
+            "log_file": None,            # TextIOWrapper | None
+            "last_output_ts": None,      # float
+            "worker_thread": None,
+            "heartbeat_thread": None,
+        }
+
+        def _log_to_file(line: str) -> None:
+            f = _state["log_file"]
+            if f is not None:
+                try:
+                    import time
+                    f.write(f"[{time.strftime('%H:%M:%S')}] {line}\n")
+                    f.flush()
+                except Exception:
+                    pass
+
         def append_line(line: str) -> None:
             log_lines.append(line)
             # Cap the visible log so 5000 lines of compiler output don't
@@ -364,12 +395,60 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
             log_box.text = "\n".join(log_lines[-300:])
 
         def on_line(line: str) -> None:
+            """Worker-thread callback: invoked from `_stream_subprocess`'s
+            stdout-reader loop once per child-process line. Two destinations:
+
+              1. The file log, immediately + synchronously, so the line is
+                 durable even if the wizard process dies before the next
+                 Kivy frame.
+              2. The Kivy text widget, via Clock.schedule_once because we're
+                 on a worker thread and direct UI mutation is unsafe.
+
+            Also updates the heartbeat timestamp so the watcher knows the
+            subprocess is still producing output."""
+            import time
+            _state["last_output_ts"] = time.monotonic()
+            _log_to_file(line)
             from kivy.clock import Clock as _Clock
             _Clock.schedule_once(lambda dt: append_line(line))
 
+        def _heartbeat() -> None:
+            """Emit "still running" lines to BOTH the file log and the
+            Kivy widget every 10s of subprocess silence. Lets the user
+            distinguish "wizard hung" from "subprocess working silently".
+            Exits when the worker thread terminates."""
+            import time
+            while True:
+                worker = _state.get("worker_thread")
+                if worker is None or not worker.is_alive():
+                    return
+                time.sleep(5)
+                last = _state.get("last_output_ts")
+                if last is None:
+                    continue
+                elapsed = time.monotonic() - last
+                if elapsed >= 10:
+                    msg = (
+                        f"[wizard] no subprocess output for {int(elapsed)}s "
+                        f"(python.exe still alive; check Task Manager CPU/I/O)"
+                    )
+                    on_line(msg)
+                    _state["last_output_ts"] = time.monotonic()  # debounce
+
         def run_in_worker() -> None:
             nsp = wizard_state["nsp_path"]
+            import time
+            _state["last_output_ts"] = time.monotonic()
+            # Open file log fresh per run; "w" truncates so each Retry
+            # gets a clean log instead of compounding across attempts.
+            try:
+                _state["log_file"] = open(extract_log_path, "w", encoding="utf-8")
+            except OSError as e:
+                _state["log_file"] = None
+                on_line(f"[wizard] could not open {extract_log_path}: {e}")
             status.text = f"Extracting from {nsp.name}..."
+            on_line(f"[wizard] === extract run start: {time.strftime('%Y-%m-%d %H:%M:%S')} ===")
+            on_line(f"[wizard] NSP: {nsp}")
             try:
                 # Use the user-picked hactool path if the wizard's prereq
                 # page persisted one; extractor falls back to PATH otherwise.
@@ -377,15 +456,27 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
                 hactool_override = (
                     Path(state["hactool_path"]) if state.get("hactool_path") else None
                 )
+                on_line(f"[wizard] hactool override: {hactool_override}")
+                on_line(f"[wizard] DEVKITPRO env: {os.environ.get('DEVKITPRO', '<unset>')}")
+                on_line(f"[wizard] PATH (first 200 chars): {os.environ.get('PATH', '')[:200]}")
+                # Start the heartbeat *after* we've laid down the header so
+                # the first few lines aren't drowned out by "no output" pings.
+                import threading as _threading
+                hb = _threading.Thread(target=_heartbeat, daemon=True)
+                _state["heartbeat_thread"] = hb
+                hb.start()
                 result = run_extract_maps(
                     nsp,
                     hactool_path=hactool_override,
                     on_line=on_line,
                 )
+                on_line(f"[wizard] subprocess exit code: {result.returncode}")
             except Exception as e:  # pragma: no cover
+                on_line(f"[wizard] EXCEPTION: {type(e).__name__}: {e}")
                 from kivy.clock import Clock as _Clock
                 _Clock.schedule_once(lambda dt: status.setter("text")(
                     status, f"Failed: {e}"))
+                _close_log()
                 return
             from kivy.clock import Clock as _Clock
             def finish(_dt):
@@ -397,13 +488,25 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
                     status.text = f"Extraction failed (exit {result.returncode})."
                     retry_btn.disabled = False
             _Clock.schedule_once(finish)
+            _close_log()
+
+        def _close_log() -> None:
+            f = _state.pop("log_file", None)
+            if f is not None:
+                try:
+                    f.close()
+                except Exception:
+                    pass
 
         def start_worker() -> None:
             log_lines.clear()
             log_box.text = ""
             next_btn.disabled = True
             retry_btn.disabled = True
-            threading.Thread(target=run_in_worker, daemon=True).start()
+            import threading as _threading
+            t = _threading.Thread(target=run_in_worker, daemon=True)
+            _state["worker_thread"] = t
+            t.start()
 
         retry_btn.bind(on_release=lambda _i: start_worker())
         s.bind(on_pre_enter=lambda _i: start_worker())

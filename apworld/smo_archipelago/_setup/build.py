@@ -90,6 +90,11 @@ def _stream_subprocess(
 
     stderr is merged into stdout so cmake's "this file failed to compile"
     interleaves correctly with the progress chatter on stdout.
+
+    The exact `cmd` is emitted via `on_line` BEFORE spawning so the
+    wizard's file log + Kivy widget show what would have been run, even
+    if the child produces zero output (which has been the failure mode
+    we keep chasing in the extract step).
     """
     log_lines: list[str] = []
 
@@ -97,6 +102,8 @@ def _stream_subprocess(
         log_lines.append(line)
         if on_line is not None:
             on_line(line)
+
+    _emit(f"[stream] spawning: {cmd}")
 
     try:
         proc = subprocess.Popen(
@@ -113,10 +120,12 @@ def _stream_subprocess(
         _emit(msg)
         return BuildResult(ok=False, returncode=127, log=msg)
 
+    _emit(f"[stream] spawned pid={proc.pid}; waiting for stdout...")
     assert proc.stdout is not None
     for raw in proc.stdout:
         _emit(raw.rstrip("\r\n"))
     rc = proc.wait()
+    _emit(f"[stream] subprocess exited with code {rc}")
     return BuildResult(ok=(rc == 0), returncode=rc, log="\n".join(log_lines))
 
 
