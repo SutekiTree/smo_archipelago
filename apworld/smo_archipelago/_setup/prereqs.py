@@ -158,45 +158,47 @@ def _devkitpro_gxx_under(root: Path) -> Path | None:
 def check_devkitpro() -> PrereqResult:
     """devkitPro installation (devkitA64 cross-compiler).
 
-    Detection is layered: prefer the env var `DEVKITPRO` (canonical signal
-    inside the devkitPro msys2 shell), then probe well-known default
-    install roots so the wizard works on a fresh install where the env
-    var hasn't propagated to a clean Python process. The latter is the
-    common case on Windows because the devkitPro installer sets the env
-    var inside its msys2 shell only, not system-wide.
+    Probes a chain of candidate install roots in order; the first one
+    with a working cross-compiler wins. The chain is:
 
-    Side effect: when a default-root probe succeeds, sets
-    `os.environ["DEVKITPRO"]` for the current process so downstream
-    `run_cmake_configure` subprocess invocations inherit it without the
-    user having to open a shell where the env var is set. The mutation
+      1. `DEVKITPRO` env var, if set.
+      2. Well-known default install roots (`_DEVKITPRO_DEFAULT_ROOTS`).
+
+    Important: the env var is checked AND the defaults are probed even
+    when the env var IS set. On Windows the devkitPro installer often
+    sets `DEVKITPRO=/opt/devkitpro` — its msys2-rooted convention path,
+    which a native-Windows Python process resolves to a non-existent
+    `\\opt\\devkitpro\\…`. Falling through to the defaults (where
+    `C:/devkitPro` is the real install root) is how we recover.
+
+    Side effect: on success, sets `os.environ["DEVKITPRO"]` to the
+    resolved-working path so downstream `run_cmake_configure` subprocess
+    invocations inherit a value that actually resolves. This OVERRIDES
+    a bogus env-var value (like the msys2-form `/opt/devkitpro` above)
+    rather than passing the broken value through to cmake. The mutation
     is process-local; nothing persists to the user's environment.
     """
-    root = os.environ.get("DEVKITPRO")
-    if root:
-        gxx = _devkitpro_gxx_under(Path(root))
-        if gxx is None:
-            return PrereqResult(
-                "devkitpro", "devkitPro / devkitA64", False,
-                f"DEVKITPRO={root} but aarch64-none-elf-g++ not found "
-                f"(install incomplete?)",
-                INSTALL_URLS["devkitpro"],
-            )
-        return _verify_devkitpro_gxx(gxx, root)
+    candidates: list[tuple[Path, str]] = []
+    env_val = os.environ.get("DEVKITPRO")
+    if env_val:
+        candidates.append((Path(env_val), f"DEVKITPRO env var ({env_val})"))
+    for default in _DEVKITPRO_DEFAULT_ROOTS:
+        if not any(str(c) == str(default) for c, _ in candidates):
+            candidates.append((default, f"default install path ({default})"))
 
-    # No env var — fall back to well-known default install paths.
-    for candidate in _DEVKITPRO_DEFAULT_ROOTS:
-        gxx = _devkitpro_gxx_under(candidate)
+    tried: list[str] = []
+    for root, source in candidates:
+        gxx = _devkitpro_gxx_under(root)
         if gxx is not None:
-            # Mutate env so child processes (cmake) see DEVKITPRO. The
-            # user wouldn't otherwise have set it; this saves them a
-            # confusing "found it but cmake says it's missing" downstream.
-            os.environ["DEVKITPRO"] = str(candidate)
-            return _verify_devkitpro_gxx(gxx, str(candidate))
+            # Overwrite env so cmake sees the path that actually works,
+            # even when the user's environment had a bogus value.
+            os.environ["DEVKITPRO"] = str(root)
+            return _verify_devkitpro_gxx(gxx, str(root))
+        tried.append(source)
 
     return PrereqResult(
         "devkitpro", "devkitPro / devkitA64", False,
-        "DEVKITPRO env var not set and no install found at default paths "
-        f"({', '.join(str(p) for p in _DEVKITPRO_DEFAULT_ROOTS)})",
+        f"aarch64-none-elf-g++ not found at any of: {'; '.join(tried)}",
         INSTALL_URLS["devkitpro"],
     )
 

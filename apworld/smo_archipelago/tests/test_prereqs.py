@@ -72,7 +72,10 @@ def test_python312_missing(fake_run) -> None:
 # ---------- check_devkitpro ----------
 
 def test_devkitpro_env_missing_and_no_default(monkeypatch) -> None:
-    """No DEVKITPRO + no install at the default paths → not ok."""
+    """No DEVKITPRO + no install at the default paths → not ok, and the
+    detail enumerates the default paths that WERE checked so the user
+    knows where to install (or which path-probe to extend if their
+    layout is non-standard)."""
     monkeypatch.delenv("DEVKITPRO", raising=False)
     # Point default-path probe at locations that don't exist so the test
     # is independent of whether the machine running it has devkitPro.
@@ -81,8 +84,9 @@ def test_devkitpro_env_missing_and_no_default(monkeypatch) -> None:
                          Path("/nope/devkitpro-not-real-2")))
     r = check_devkitpro()
     assert not r.ok
-    assert "DEVKITPRO" in r.detail
-    assert "default paths" in r.detail
+    assert "not found" in r.detail
+    assert "devkitpro-not-real-1" in r.detail
+    assert "devkitpro-not-real-2" in r.detail
 
 
 def test_devkitpro_env_missing_but_found_at_default(
@@ -123,11 +127,51 @@ def test_devkitpro_env_set_binary_present(monkeypatch, tmp_path, fake_run) -> No
 
 
 def test_devkitpro_env_set_binary_missing(monkeypatch, tmp_path) -> None:
-    # Env points at empty dir — installer aborted or got cleaned up.
+    # Env points at empty dir AND no default-path install exists either —
+    # installer aborted or got cleaned up.
     monkeypatch.setenv("DEVKITPRO", str(tmp_path))
+    monkeypatch.setattr(prereqs, "_DEVKITPRO_DEFAULT_ROOTS",
+                        (Path("/nope/devkitpro-not-real"),))
     r = check_devkitpro()
     assert not r.ok
-    assert "not found" in r.detail or "incomplete" in r.detail
+    assert "not found" in r.detail
+    assert "DEVKITPRO env var" in r.detail
+
+
+def test_devkitpro_env_set_to_msys2_path_falls_back_to_default(
+    monkeypatch, tmp_path, fake_run,
+) -> None:
+    """The devkitPro Windows installer sets DEVKITPRO=/opt/devkitpro (its
+    msys2-rooted convention path) which is meaningless to a native-Windows
+    Python process. The detector must fall through to the well-known
+    default install root (typically C:/devkitPro) — and overwrite
+    os.environ["DEVKITPRO"] so the downstream cmake child process gets
+    the resolved-working path instead of the broken msys2-form value.
+
+    Regression test for v0.1.5-alpha bug report: prereq page showed
+    "DEVKITPRO=/opt/devkitpro but aarch64-none-elf-g++ not found
+    (install incomplete?)" when devkitPro was actually installed at the
+    canonical C:/devkitPro location."""
+    # The env var points at a path that doesn't resolve to an install.
+    monkeypatch.setenv("DEVKITPRO", "/opt/devkitpro")
+    # The "real" install lives at a default path. Use tmp_path stand-in.
+    fake_root = tmp_path / "devkitPro"
+    bindir = fake_root / "devkitA64" / "bin"
+    bindir.mkdir(parents=True)
+    gxx = bindir / "aarch64-none-elf-g++.exe"
+    gxx.write_text("")
+    monkeypatch.setattr(prereqs, "_DEVKITPRO_DEFAULT_ROOTS", (fake_root,))
+    fake_run({f"{gxx} --version": (0, "g++ (devkitA64) 15.2.0\n", "")})
+
+    r = check_devkitpro()
+    assert r.ok, (
+        f"detector should fall through from broken env-var value to default "
+        f"install path. detail={r.detail!r}"
+    )
+    # Critical: the env var must be REWRITTEN to the resolved path so
+    # cmake doesn't choke on the bogus /opt/devkitpro value.
+    import os
+    assert os.environ["DEVKITPRO"] == str(fake_root)
 
 
 # ---------- check_cmake ----------
