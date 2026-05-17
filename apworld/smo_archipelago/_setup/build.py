@@ -408,9 +408,16 @@ def run_cmake_configure(
     if devkitpro:
         env["DEVKITPRO"] = devkitpro
     toolchain = mod_root / "lunakit-vendor" / "cmake" / "toolchain.cmake"
+    # Use the cmake binary the prereq check resolved (Windows-native if
+    # available). A bare `"cmake"` here would re-resolve via PATH, and
+    # devkitPro's installer puts `C:\devkitPro\msys2\usr\bin` ahead of
+    # the Windows CMake install dir — msys2 cmake then mangles
+    # `C:\Users\...` paths into `/c/cwd/C:/Users/...` because it treats
+    # `:` as a path separator rather than a drive-letter marker.
+    from .prereqs import resolved_cmake
     return _stream_subprocess(
         [
-            "cmake",
+            resolved_cmake(),
             "-S", str(mod_root),
             "-B", str(build_dir() / "cmake"),
             "-G", "Ninja",
@@ -426,8 +433,10 @@ def run_cmake_build(on_line: ProgressFn | None = None) -> BuildResult:
     """CMake build step: invokes Ninja under the hood, produces
     `subsdk9`, `subsdk9.elf`, `main.npdm`, `ap_config.json` inside
     `%APPDATA%/SMOArchipelago/build/cmake/`."""
+    # Same Windows-vs-msys2 cmake-binary rationale as run_cmake_configure.
+    from .prereqs import resolved_cmake
     return _stream_subprocess(
-        ["cmake", "--build", str(build_dir() / "cmake")],
+        [resolved_cmake(), "--build", str(build_dir() / "cmake")],
         on_line=on_line,
     )
 
