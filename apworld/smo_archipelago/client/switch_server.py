@@ -16,11 +16,13 @@ from . import protocol
 from .protocol import (
     ApStateMsg,
     CheckedReplayMsg,
+    DepositAckMsg,
     ErrMsg,
     HelloAckMsg,
     ItemMsg,
     KillMsg,
     MoonLabelMsg,
+    OutstandingMsg,
     PongMsg,
     ShineScoutsMsg,
 )
@@ -40,6 +42,14 @@ GoalHandler = Callable[[], Awaitable[None]]
 DeathHandler = Callable[[int], Awaitable[None]]
 LabelComposer = Callable[[int], "str | None"]              # loc_id -> label text
 SwitchReadyHandler = Callable[[], Awaitable[None]]         # fired post-HELLO
+# M6 phase D — DepositHandler(seq=int, kingdom=str, amount=int) -> applied?
+# Returns True if newly applied (caller can log), False if idempotent skip.
+# Either way the server still sends a DepositAckMsg for the Switch to
+# drop the matching entry from its pending-deposit ring.
+DepositHandler = Callable[..., Awaitable[bool]]
+# M6 phase D — OutstandingProvider() -> list[OutstandingEntry]. Used at HELLO
+# time to snapshot the current per-kingdom balance for the Switch.
+OutstandingProvider = Callable[[], "list"]
 
 
 class SwitchServer:
@@ -54,6 +64,8 @@ class SwitchServer:
         deathlink_enabled: bool = False,
         compose_moon_label: LabelComposer | None = None,
         on_switch_ready: SwitchReadyHandler | None = None,
+        on_deposit: DepositHandler | None = None,
+        get_outstanding_entries: OutstandingProvider | None = None,
     ):
         self._host = host
         self._port = port
@@ -64,6 +76,8 @@ class SwitchServer:
         self._deathlink_enabled = deathlink_enabled
         self._compose_label = compose_moon_label
         self._on_switch_ready = on_switch_ready
+        self._on_deposit = on_deposit
+        self._get_outstanding = get_outstanding_entries
         self._writer: asyncio.StreamWriter | None = None
         self._writer_lock = asyncio.Lock()
         self._server: asyncio.AbstractServer | None = None
@@ -120,6 +134,15 @@ class SwitchServer:
 
     async def send_moon_label(self, label: MoonLabelMsg) -> None:
         await self._send(label)
+
+    async def send_outstanding(self, msg: OutstandingMsg) -> None:
+        """Push the authoritative per-kingdom balance to the Switch.
+
+        Called from context.py whenever outstanding_by_kingdom mutates (AP
+        store retrieval, grant arrival, deposit applied) AND once at HELLO
+        ack. The Switch overwrites `ap_moons_kingdom[bit]` for each entry.
+        """
+        await self._send(msg)
 
     async def send_shine_scouts(self, palette: dict[int, int]) -> None:
         """Push (shine_uid -> palette) to the Switch, chunked.
@@ -232,9 +255,44 @@ class SwitchServer:
                 self._state.add_snapshot_chunk_shines(stage, msg.get("shines") or [])
         elif t == "state_end":
             await self._on_state_end()
+        elif t == "deposit":
+            await self._on_deposit_msg(msg)
         else:
             log.warning("unknown message type from Switch: %s", t)
             await self._send(ErrMsg(code="unknown_kind", ctx=str(t)))
+
+    async def _on_deposit_msg(self, msg: dict) -> None:
+        """M6 phase D — Switch reported a moon deposit (per-toss or pay-all).
+
+        Always sends a DepositAckMsg (idempotent re-ack on re-sent seqs so
+        Switch reliably drops them from its pending ring). If `on_deposit`
+        is wired, calls it to apply the debit to BridgeState.outstanding.
+        """
+        try:
+            seq = int(msg.get("seq", 0))
+            kingdom = str(msg.get("kingdom") or "")
+            amount = int(msg.get("amount", 0))
+        except (TypeError, ValueError):
+            log.warning("malformed DepositMsg: %r", msg)
+            await self._send(ErrMsg(code="bad_deposit", ctx=str(msg)))
+            return
+
+        if seq <= 0 or not kingdom or amount < 0:
+            log.warning("invalid DepositMsg seq=%d kingdom=%r amount=%d", seq, kingdom, amount)
+            await self._send(ErrMsg(code="bad_deposit", ctx=str(msg)))
+            return
+
+        if self._on_deposit is not None:
+            try:
+                await self._on_deposit(seq=seq, kingdom=kingdom, amount=amount)
+            except Exception:
+                log.exception("on_deposit handler raised for seq=%d", seq)
+                # Still ack — Switch's pending ring should drop the entry
+                # even if the bridge's persistence failed. The OutstandingMsg
+                # the Switch already has remains authoritative; on next
+                # AP-store reconnect we'd recover.
+
+        await self._send(DepositAckMsg(seq=seq))
 
     async def _dispatch_check(self, msg: dict) -> None:
         """Forward a check (live or snapshot-derived) to AP and record locally.
@@ -292,10 +350,37 @@ class SwitchServer:
         ))
         self._state.set_switch_conn("ready")
 
+        # M6 phase D — fresh HELLO session: reset the seq dedup high-water
+        # mark so the Switch's replayed-deposits aren't all dropped as
+        # already-seen (and so a brand new Switch session starting at seq=1
+        # isn't filtered against an old session's high-water mark either).
+        self._state.reset_deposit_session()
+
+        # M6 phase D — push authoritative per-kingdom balance to the Switch
+        # BEFORE replaying items. The Switch overwrites ap_moons_kingdom[]
+        # to match. Item replay below skips Moons (else we'd double-count
+        # — once from OutstandingMsg, once from the item-apply path on the
+        # mod side).
+        if self._get_outstanding is not None:
+            try:
+                entries = self._get_outstanding()
+            except Exception:
+                log.exception("get_outstanding_entries failed during HELLO")
+                entries = []
+            await self._send(OutstandingMsg(entries=entries))
+
         # Replay snapshots so the Switch can re-apply state idempotently.
         replay_ids = [evt.item for evt in self._state.all_checked_locations()]
         await self._send(CheckedReplayMsg(ids=replay_ids))
         for evt in self._state.all_received_items():
+            # M6 phase D — skip Moon items in the replay loop. OutstandingMsg
+            # above is authoritative for per-kingdom moon credit; the
+            # ItemMsg-apply path on the mod side would also fetch_add to
+            # ap_moons_kingdom[], double-counting every grant on every
+            # reconnect. Captures + kingdoms + others still replay (they're
+            # persistent unlocks, not spendable balances).
+            if evt.item.kind == "moon":
+                continue
             await self._send(ItemMsg(
                 kind=evt.item.kind,
                 kingdom=evt.item.kingdom,

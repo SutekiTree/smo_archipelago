@@ -53,6 +53,17 @@ SYMBOLS = [
     "_ZN2rs18isActiveCapMessageEPKN2al18IUseSceneObjHolderE",
     # (M-color uses inline patches at fixed offsets inside Shine::init,
     # not a symbol hook — see hooks/ShineAppearanceHook.cpp.)
+    # M6 phase D — moon-deposit debit (AP credit decremented on Odyssey toss).
+    # Hook the GameDataFunction wrappers (not the inlined GameDataFile
+    # members) — Phase 0 confirmed GameDataFile::addPayShine(s32) is fully
+    # inlined into callers and not present in dynsym, but the public
+    # GameDataFunction::addPayShine(GameDataHolderWriter, int) IS exposed
+    # (same pattern as addHackDictionary). All game-side payment paths
+    # (Odyssey-fueling, NPC payment, scripted scenario consumption) go
+    # through the GameDataFunction layer per OdysseyDecomp.
+    "_ZN16GameDataFunction11addPayShineE20GameDataHolderWriteri",
+    "_ZN16GameDataFunction21addPayShineCurrentAllE20GameDataHolderWriter",
+    "_ZN16GameDataFunction26getCurrentWorldIdNoDevelopE22GameDataHolderAccessor",
 ]
 
 

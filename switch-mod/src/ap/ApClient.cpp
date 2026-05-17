@@ -33,6 +33,7 @@
 #include "ApProtocol.hpp"
 #include "ApState.hpp"
 #include "../game/CaptureGate.hpp"
+#include "../game/KingdomUnlock.hpp"  // kingdomBitFor (M6 phase D OutstandingMsg apply)
 #include "../game/MoonApply.hpp"
 #include "../util/Log.hpp"
 
@@ -55,6 +56,73 @@ constexpr std::uint32_t kBackoffCapMs = 30 * 1000;
 // CreateThread takes the BASE address + size (svcCreateThread takes top).
 alignas(0x1000) std::byte g_worker_stack[kWorkerStackSize];
 nn::os::ThreadType g_worker_thread{};
+
+// M6 phase D — worker-thread-only "in-flight" deposit tracking. After the
+// frame thread pushes into ApState::pending_deposits, the worker copies the
+// entry here AND sends it to the bridge. The entry sits until the bridge
+// acks (DepositAckMsg) or until reconnect re-sends. Fixed-size array (not
+// std::vector / std::map) per the libstdc++-allocator-NULL-deref discipline.
+//
+// 32 slots covers many seconds of offline buffering even at the most
+// pessimistic Multi-Moon cadence (one deposit ≤ once per few seconds in
+// practice). Overflow truncates with a warn log.
+constexpr std::size_t kUnackedDepositCap = 32;
+struct UnackedDeposit {
+    bool slot_used = false;
+    std::uint64_t seq = 0;
+    char kingdom[32] = {};
+    int amount = 0;
+};
+UnackedDeposit g_unacked_deposits[kUnackedDepositCap]{};
+
+// Reset all slots — called when a re-HELLO request fires after save load,
+// since SaveLoadHook clears last_acked_deposit_seq and the bridge will send
+// a fresh OutstandingMsg that supersedes anything we have queued.
+void clearUnackedDeposits() {
+    for (auto& u : g_unacked_deposits) {
+        u.slot_used = false;
+        u.seq = 0;
+        u.kingdom[0] = '\0';
+        u.amount = 0;
+    }
+}
+
+void copyKingdomTo32(char (&dst)[32], const char* src) {
+    if (!src) { dst[0] = '\0'; return; }
+    std::size_t i = 0;
+    while (i + 1 < sizeof(dst) && src[i] != '\0') {
+        dst[i] = src[i];
+        ++i;
+    }
+    dst[i] = '\0';
+}
+
+// Place a pending deposit into g_unacked_deposits. Returns true on success,
+// false if the array is full (caller logs).
+bool stashUnackedDeposit(const ApState::PendingDeposit& pd) {
+    for (auto& u : g_unacked_deposits) {
+        if (!u.slot_used) {
+            u.slot_used = true;
+            u.seq = pd.seq;
+            copyKingdomTo32(u.kingdom, pd.kingdom);
+            u.amount = pd.amount;
+            return true;
+        }
+    }
+    return false;
+}
+
+// Serialize an unacked entry into the caller's LineBuffer + transmit. Returns
+// the Send() return value (n bytes written, or negative on socket error).
+int sendDepositMessage(int socket_fd, smoap::util::json::LineBuffer& line,
+                       std::uint64_t seq, const char* kingdom, int amount) {
+    Deposit dep{};
+    dep.seq = seq;
+    copyCheckField(dep.kingdom, kingdom);
+    dep.amount = amount;
+    encodeDeposit(line, dep);
+    return nn::socket::Send(socket_fd, line.data(), line.size(), 0);
+}
 
 extern "C" void workerEntry(void* arg) {
     static_cast<ApClient*>(arg)->threadMain();
@@ -149,6 +217,15 @@ void ApClient::threadMain() {
         if (rehello_requested_.compare_exchange_strong(expected, false)) {
             SMOAP_LOG_INFO("re-HELLO requested; cycling connection");
             disconnect();
+            // M6 phase D — save-load-triggered re-HELLOs (the only producer
+            // of requestRehello today) invalidate any in-flight deposits.
+            // Vanilla's PayShine counter rolled back to the save state; the
+            // bridge-side outstanding remains authoritative for AP credit
+            // and will arrive as a fresh OutstandingMsg on the next HELLO.
+            // Ordinary reconnect-after-network-drop does NOT take this path
+            // — those keep unacked entries for replay.
+            clearUnackedDeposits();
+            ApState::instance().last_acked_deposit_seq.store(0, std::memory_order_relaxed);
         }
 
         if (socket_fd_ < 0) {
@@ -163,6 +240,32 @@ void ApClient::threadMain() {
             sendHello();
             sendSnapshot();
             ApState::instance().conn.store(ConnState::Hello);
+
+            // M6 phase D — replay every unacked deposit so a reconnect-blip
+            // (or a save-load-driven re-HELLO) doesn't lose the bridge-side
+            // notification. The bridge's deposit handler is idempotent for
+            // re-acks; seqs already applied in a previous HELLO session of
+            // THIS bridge process get treated as fresh because the bridge
+            // resets last_processed_seq on every HELLO (acceptable rare
+            // double-apply across bridge restarts — see plan).
+            {
+                smoap::util::json::LineBuffer line;
+                std::size_t replayed = 0;
+                for (const auto& u : g_unacked_deposits) {
+                    if (!u.slot_used) continue;
+                    if (sendDepositMessage(socket_fd_, line, u.seq, u.kingdom,
+                                           u.amount) < 0) {
+                        SMOAP_LOG_WARN("[m6-deposit] replay send failed seq=%llu — "
+                                       "will retry on next reconnect", u.seq);
+                        break;
+                    }
+                    ++replayed;
+                }
+                if (replayed > 0) {
+                    SMOAP_LOG_INFO("[m6-deposit] replayed %zu unacked deposits on reconnect",
+                                   replayed);
+                }
+            }
         }
 
         // Wait up to recv_timeout_ms for inbound data.
@@ -253,7 +356,13 @@ void ApClient::disconnect() {
         socket_fd_ = -1;
     }
     read_buf_len_ = 0;
-    ApState::instance().conn.store(ConnState::Disconnected);
+    auto& st = ApState::instance();
+    st.conn.store(ConnState::Disconnected);
+    // M6 phase D: clear bridge_connected so ShineNumGetHook freezes the HUD
+    // to 0 and AddPayShineHook stops acting. Unacked deposits remain in
+    // pending_deposits ring + unacked tracking; they'll replay after
+    // reconnect.
+    st.bridge_connected.store(false, std::memory_order_relaxed);
 }
 
 void ApClient::sendHello() {
@@ -405,6 +514,32 @@ void ApClient::pumpOnce() {
         }
         st.outbound_status.popDiscard();
     }
+
+    // M6 phase D — drain pending_deposits: copy into worker-local unacked
+    // array, then transmit to bridge. The unacked array survives across
+    // reconnects (a save-load-driven re-HELLO would clear it via
+    // clearUnackedDeposits in the requestRehello path; ordinary disconnects
+    // do not, so we replay on reconnect).
+    ApState::PendingDeposit pd;
+    while (st.pending_deposits.pop(pd)) {
+        if (!stashUnackedDeposit(pd)) {
+            SMOAP_LOG_WARN("[m6-deposit] unacked array full, dropping seq=%llu "
+                           "kingdom=%s amount=%d",
+                           pd.seq, pd.kingdom, pd.amount);
+            // Don't send — losing the ack tracking but vanilla state already
+            // applied. Better to drop than send something we can't track.
+            continue;
+        }
+        const int n = sendDepositMessage(socket_fd_, line, pd.seq, pd.kingdom,
+                                         pd.amount);
+        if (n < 0) {
+            SMOAP_LOG_WARN("[m6-deposit] send seq=%llu failed; will retry on reconnect", pd.seq);
+            // Entry stays in g_unacked_deposits, will replay after reconnect.
+            return;
+        }
+        SMOAP_LOG_INFO("[m6-deposit] sent seq=%llu kingdom=%s amount=%d (%d bytes)",
+                       pd.seq, pd.kingdom, pd.amount, n);
+    }
 }
 
 bool ApClient::recvIntoBuf() {
@@ -487,6 +622,9 @@ void ApClient::handleLine(char* line, std::size_t line_len) {
                       "%s", m.hello_ack.slot);
         st.deathlink_enabled.store(m.hello_ack.deathlink_enabled, std::memory_order_relaxed);
         st.conn.store(ConnState::Ready, std::memory_order_release);
+        // M6 phase D: bridge_connected gates AddPayShineHook + ShineNumGetHook.
+        // Set AFTER conn.store so the same release fence orders both.
+        st.bridge_connected.store(true, std::memory_order_release);
         SMOAP_LOG_INFO("hello_ack: ok=%d seed=%s slot=%s deathlink_enabled=%d",
                        m.hello_ack.ok ? 1 : 0,
                        m.hello_ack.seed,
@@ -570,6 +708,51 @@ void ApClient::handleLine(char* line, std::size_t line_len) {
         }
         SMOAP_LOG_INFO("[shine-color] enqueued %zu palette entries (dropped %zu)",
                        pushed, dropped);
+    } else if (eq(m.t, "deposit_ack")) {
+        // M6 phase D — bridge confirmed this deposit. Clear the matching
+        // slot from g_unacked_deposits + advance last_acked_deposit_seq for
+        // observability (SaveLoadHook reads it for diagnostics; not the
+        // ground truth for replay).
+        const std::uint64_t seq = m.deposit_ack.seq;
+        std::size_t cleared = 0;
+        for (auto& u : g_unacked_deposits) {
+            if (u.slot_used && u.seq == seq) {
+                u.slot_used = false;
+                u.seq = 0;
+                u.kingdom[0] = '\0';
+                u.amount = 0;
+                ++cleared;
+            }
+        }
+        auto& st = ApState::instance();
+        // High-water mark — never go backwards on out-of-order acks (bridge
+        // is in-order today but be defensive).
+        std::uint64_t cur = st.last_acked_deposit_seq.load(std::memory_order_relaxed);
+        while (seq > cur && !st.last_acked_deposit_seq.compare_exchange_weak(
+                   cur, seq, std::memory_order_relaxed)) {}
+        SMOAP_LOG_INFO("[m6-deposit] ack seq=%llu (cleared %zu unacked slot%s)",
+                       seq, cleared, cleared == 1 ? "" : "s");
+    } else if (eq(m.t, "outstanding")) {
+        // M6 phase D — bridge-authoritative per-kingdom balance. Overwrite
+        // ap_moons_kingdom[bit] for each entry the bridge sent (kingdoms
+        // not present in the message are LEFT UNTOUCHED, allowing partial
+        // updates if a future bridge optimization sends only deltas).
+        auto& st = ApState::instance();
+        std::size_t applied = 0;
+        for (std::size_t i = 0; i < m.outstanding.entry_count; ++i) {
+            const auto& entry = m.outstanding.entries[i];
+            if (entry.kingdom[0] == '\0') continue;
+            const std::uint8_t bit = smoap::game::kingdomBitFor(entry.kingdom);
+            if (bit >= 17) {
+                SMOAP_LOG_WARN("[m6-outstanding] unknown kingdom='%s' count=%d",
+                               entry.kingdom, entry.count);
+                continue;
+            }
+            const int v = (entry.count < 0) ? 0 : entry.count;
+            st.ap_moons_kingdom[bit].store(v, std::memory_order_relaxed);
+            ++applied;
+        }
+        SMOAP_LOG_INFO("[m6-outstanding] applied %zu kingdom balances", applied);
     } else {
         SMOAP_LOG_WARN("unknown message t=%s", m.t);
     }

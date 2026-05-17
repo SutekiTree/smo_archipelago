@@ -27,7 +27,14 @@ from .config import ColorsConfig
 from .datapackage import DataPackage
 from .display import format_moon_label
 from .maps import CaptureMap, ShineMap
-from .protocol import ItemKind, ItemMsg, KillMsg, classification_from_flags
+from .protocol import (
+    ItemKind,
+    ItemMsg,
+    KillMsg,
+    OutstandingEntry,
+    OutstandingMsg,
+    classification_from_flags,
+)
 from .scout_cache import ScoutCache, request_scout
 from .state import BridgeState, ItemEvent
 
@@ -38,6 +45,15 @@ log = logging.getLogger(__name__)
 
 
 GAME_NAME = "Spicy Meatball Overdrive"
+
+
+def _moon_grant_amount(shine_id: str | None) -> int:
+    """Mirror of the Switch's moonGrantAmount: Multi-Moons grant 3, all
+    other moon items grant 1. Case-sensitive substring match per the
+    apworld's exact item naming ("X Kingdom Multi-Moon")."""
+    if shine_id and "Multi-Moon" in shine_id:
+        return 3
+    return 1
 
 
 class SMOClientCommandProcessor(ClientCommandProcessor):
@@ -300,6 +316,110 @@ class SMOContext(CommonContext):
 
     # ----------------------------------------------------------- AP -> Switch
 
+    # M6 phase D — AP data store key for our per-slot outstanding-moon
+    # balance. Follows the convention established by every other apworld
+    # using set_notify (pokemon_emerald, cvcotm, mlss, pokemon_rb):
+    # `{game_short}_{purpose}_{team}_{slot}`.
+    def _outstanding_key(self) -> str | None:
+        if self.team is None or self.slot is None:
+            return None
+        return f"smo_outstanding_{self.team}_{self.slot}"
+
+    def _persist_outstanding(self) -> None:
+        """Write the current outstanding_by_kingdom to the AP data store.
+
+        Fire-and-forget Set (`want_reply: False`). The AP server's Set
+        handler is single-coroutine async (MultiServer.py:2176-2195), so
+        back-to-back Sets are linearized — last writer wins, no
+        read-modify-write race for a single bridge. Defaults the key to {}
+        so a never-before-seen slot doesn't 404.
+        """
+        key = self._outstanding_key()
+        if key is None:
+            return
+        value = self.state.get_outstanding()
+        # Cast keys/values to plain JSON-serializable types (the AP server
+        # round-trips through json.dumps).
+        payload = {str(k): int(v) for k, v in value.items()}
+        asyncio.create_task(self.send_msgs([{
+            "cmd": "Set",
+            "key": key,
+            "default": {},
+            "want_reply": False,
+            "operations": [{"operation": "replace", "value": payload}],
+        }]), name="smo_outstanding_persist")
+
+    def _outstanding_entries_for_switch(self) -> list[OutstandingEntry]:
+        """Snapshot of current outstanding balance as wire entries."""
+        return [
+            OutstandingEntry(kingdom=k, count=int(v))
+            for k, v in sorted(self.state.get_outstanding().items())
+        ]
+
+    async def _push_outstanding_to_switch(self) -> None:
+        """Send the current OutstandingMsg to the Switch (no-op if no switch).
+
+        Called whenever outstanding_by_kingdom changes (grant arrival,
+        AP-store retrieval, deposit applied). The Switch overwrites
+        ap_moons_kingdom[bit] for each entry.
+        """
+        if self.switch is None:
+            return
+        await self.switch.send_outstanding(OutstandingMsg(
+            entries=self._outstanding_entries_for_switch(),
+        ))
+
+    async def _hydrate_outstanding_from_ap(self) -> None:
+        """Pull the current outstanding from `ctx.stored_data` (populated by
+        CommonClient's Retrieved/SetReply handler) into BridgeState, then
+        push to Switch.
+
+        Handles the initial Connected -> Retrieved cycle and subsequent
+        SetReply notifications. None-valued stored_data entries (server has
+        no entry yet) hydrate as an empty dict.
+        """
+        key = self._outstanding_key()
+        if key is None:
+            return
+        raw = self.stored_data.get(key) or {}
+        if not isinstance(raw, dict):
+            log.warning("AP store entry %r has unexpected type %s; resetting",
+                        key, type(raw).__name__)
+            raw = {}
+        # Coerce values to ints defensively (AP store round-trips through
+        # JSON; serialized values come back as whatever JSON typed them).
+        coerced: dict[str, int] = {}
+        for k, v in raw.items():
+            try:
+                coerced[str(k)] = int(v)
+            except (TypeError, ValueError):
+                log.warning("AP store outstanding[%r] = %r is not coercible to int", k, v)
+        self.state.replace_outstanding(coerced)
+        log.info("[m6-deposit] hydrated outstanding from AP store: %r", coerced)
+        await self._push_outstanding_to_switch()
+
+    async def apply_deposit_from_switch(
+        self, *, seq: int, kingdom: str, amount: int
+    ) -> bool:
+        """Handler called by SwitchServer when a DepositMsg lands.
+
+        Returns True if this seq was newly applied (caller can log it as a
+        fresh deposit), False if it was idempotent-skipped (re-ack only).
+        Either way, the caller MUST send a DepositAckMsg back to the Switch
+        so its pending-deposit ring drops the entry.
+        """
+        if self.state.should_skip_deposit(seq):
+            log.info("[m6-deposit] re-ack seq=%d (already applied this session)", seq)
+            return False
+        new = self.state.apply_deposit(kingdom, amount)
+        log.info(
+            "[m6-deposit] applied seq=%d kingdom=%s amount=%d new_balance=%d",
+            seq, kingdom, amount, new,
+        )
+        self._persist_outstanding()
+        await self._push_outstanding_to_switch()
+        return True
+
     async def _handle_ap_package(self, cmd: str, args: dict) -> None:
         if cmd == "Connected":
             self._populate_datapackage_from_self()
@@ -307,6 +427,14 @@ class SMOContext(CommonContext):
             self.state.slot = self.auth or ""
             if self.switch is not None:
                 await self.switch.send_ap_state("ready")
+            # M6 phase D — subscribe to the outstanding-moon-balance key in
+            # the AP data store. `set_notify` sends Get + SetNotify in one
+            # batch; the Retrieved reply lands in `ctx.stored_data` BEFORE
+            # our on_package override sees the cmd, so the Retrieved arm
+            # below can hydrate from `stored_data` directly.
+            key = self._outstanding_key()
+            if key is not None:
+                self.set_notify(key)
             if self.display_enabled or self.colors.enabled:
                 # Warm the scout cache so (a) Channel A's moon-get cutscene
                 # label is ready before the cutscene fires, and (b) M-color
@@ -329,6 +457,11 @@ class SMOContext(CommonContext):
             if seed:
                 self.state.seed = seed
         elif cmd == "ReceivedItems":
+            # M6 phase D — track whether any Moon item was applied this
+            # batch so we only do one Set + one OutstandingMsg push at the
+            # end (debounces Multi-Moon arrivals + multi-item ReceivedItems
+            # packets).
+            moon_granted_this_batch = False
             for ni in args.get("items", []):
                 item_id = ni.get("item") if isinstance(ni, dict) else getattr(ni, "item", None)
                 sender_idx = ni.get("player") if isinstance(ni, dict) else getattr(ni, "player", None)
@@ -350,6 +483,20 @@ class SMOContext(CommonContext):
                 ref.classification = classification
                 sender_name = self._sender_name(sender_idx)
                 self.state.add_received_item(ItemEvent(item=ref, sender=sender_name))
+                # M6 phase D — Moon grants bump the per-kingdom outstanding
+                # balance. The Switch's ItemMsg path is now a no-op for
+                # moons (the per-kingdom counter is driven by OutstandingMsg
+                # from the bridge instead), but we still send ItemMsg so the
+                # mod's logging, ApState bookkeeping, and Cappy speech
+                # filter still fire.
+                if ref.kind == ItemKind.MOON.value and ref.kingdom:
+                    amount = _moon_grant_amount(ref.shine_id)
+                    new = self.state.apply_grant(ref.kingdom, amount)
+                    log.info(
+                        "[m6-deposit] grant kingdom=%s +%d new_balance=%d (sender=%s)",
+                        ref.kingdom, amount, new, sender_name,
+                    )
+                    moon_granted_this_batch = True
                 if self.switch is not None:
                     await self.switch.send_item(ItemMsg(
                         kind=ref.kind,
@@ -361,6 +508,27 @@ class SMOContext(CommonContext):
                         hack_name=ref.hack_name,
                         classification=classification,
                     ))
+            if moon_granted_this_batch:
+                # One Set + one OutstandingMsg covers all Moon items in the
+                # batch (debounces ReceivedItems packets that arrive with
+                # many items at once — common during reconnect / bulk
+                # grants).
+                self._persist_outstanding()
+                await self._push_outstanding_to_switch()
+        elif cmd in ("Retrieved", "SetReply"):
+            # M6 phase D — CommonContext's default handler has already
+            # written into ctx.stored_data before our on_package runs
+            # (CommonClient.py:1099+). Hydrate from there and push to Switch
+            # IFF this update was for our outstanding key.
+            key = self._outstanding_key()
+            if key is None:
+                return
+            if cmd == "Retrieved":
+                if key in args.get("keys", {}):
+                    await self._hydrate_outstanding_from_ap()
+            else:  # SetReply
+                if args.get("key") == key:
+                    await self._hydrate_outstanding_from_ap()
         elif cmd == "DataPackage":
             data = args.get("data", {}).get("games", {})
             for game_name, package in data.items():

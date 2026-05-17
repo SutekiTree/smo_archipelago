@@ -10,12 +10,16 @@ from client import protocol
 from client.protocol import (
     CheckMsg,
     Classification,
+    DepositAckMsg,
+    DepositMsg,
     HelloAckMsg,
     HelloMsg,
     ItemMsg,
     ItemRef,
     ItemKind,
     MoonLabelMsg,
+    OutstandingEntry,
+    OutstandingMsg,
     PingMsg,
     PongMsg,
     ShineScoutsMsg,
@@ -226,3 +230,60 @@ def test_shine_scouts_msg_round_trip():
     parsed = protocol.decode(raw)
     assert parsed["t"] == "shine_scouts"
     assert parsed["entries"] == entries
+
+
+# ---------------------------------------------------------------------------
+# M6 phase D — deposit + outstanding wire messages
+# ---------------------------------------------------------------------------
+
+
+def test_deposit_msg_round_trip():
+    msg = DepositMsg(seq=7, kingdom="Wooded", amount=1)
+    raw = protocol.encode(msg)
+    parsed = protocol.decode(raw)
+    assert parsed == {"t": "deposit", "seq": 7, "kingdom": "Wooded", "amount": 1}
+
+
+def test_deposit_msg_multi_moon_amount_three():
+    msg = DepositMsg(seq=42, kingdom="Cap", amount=3)
+    parsed = protocol.decode(protocol.encode(msg))
+    assert parsed["amount"] == 3
+
+
+def test_deposit_ack_msg_round_trip():
+    msg = DepositAckMsg(seq=99)
+    parsed = protocol.decode(protocol.encode(msg))
+    assert parsed == {"t": "deposit_ack", "seq": 99}
+
+
+def test_outstanding_msg_empty_round_trip():
+    msg = OutstandingMsg(entries=[])
+    parsed = protocol.decode(protocol.encode(msg))
+    assert parsed == {"t": "outstanding", "entries": []}
+
+
+def test_outstanding_msg_multiple_kingdoms_round_trip():
+    msg = OutstandingMsg(entries=[
+        OutstandingEntry(kingdom="Cap", count=2),
+        OutstandingEntry(kingdom="Cascade", count=5),
+        OutstandingEntry(kingdom="Wooded", count=0),
+    ])
+    parsed = protocol.decode(protocol.encode(msg))
+    assert parsed["t"] == "outstanding"
+    assert parsed["entries"] == [
+        {"kingdom": "Cap", "count": 2},
+        {"kingdom": "Cascade", "count": 5},
+        {"kingdom": "Wooded", "count": 0},
+    ]
+
+
+def test_outstanding_msg_serialises_entries_as_dicts():
+    """OutstandingMsg uses a to_wire() override so OutstandingEntry instances
+    don't accidentally serialize as plain dataclass(asdict) — verify the
+    wire shape matches what the C++ decoder expects."""
+    msg = OutstandingMsg(entries=[OutstandingEntry(kingdom="Snow", count=3)])
+    raw = protocol.encode(msg)
+    # The bytes should not contain Python-style class info.
+    assert b"OutstandingEntry" not in raw
+    assert b'"kingdom":"Snow"' in raw
+    assert b'"count":3' in raw

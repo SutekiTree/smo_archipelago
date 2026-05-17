@@ -172,6 +172,25 @@ class StateEndMsg:
     t: str = "state_end"
 
 
+@dataclass
+class DepositMsg:
+    """M6 phase D — Switch reports a moon deposit (per-toss or pay-all).
+
+    Sent by AddPayShineHook / AddPayShineAllHook on the mod side every time
+    Mario hands moons to an Odyssey. `seq` is a monotonic per-Switch-session
+    counter used by the bridge for idempotent dedup of reconnect replays;
+    `kingdom` is the kingdom Mario was in at the time of the deposit (debit
+    applies to that kingdom's outstanding balance only); `amount` is the
+    number of moons actually debited (clamped at the AP-credit balance, so
+    `amount` may be less than the vanilla addPayShine count if Mario also
+    had natural moons in the pool).
+    """
+    t: str = "deposit"
+    seq: int = 0
+    kingdom: str = ""
+    amount: int = 0
+
+
 # ---------------------------------------------------------------------------
 # Bridge -> Switch
 # ---------------------------------------------------------------------------
@@ -323,6 +342,55 @@ class KillMsg:
     t: str = "kill"
     source: str = ""
     cause: str = ""
+
+
+@dataclass
+class DepositAckMsg:
+    """M6 phase D — bridge acknowledges a DepositMsg.
+
+    Sent unconditionally for every received DepositMsg (idempotent — a re-ack
+    of an already-processed seq is a no-op on the Switch side). The Switch
+    uses this to drop the matching entry from its pending-deposit ring so
+    the next reconnect won't replay it.
+    """
+    t: str = "deposit_ack"
+    seq: int = 0
+
+
+@dataclass
+class OutstandingEntry:
+    """One per-kingdom balance row inside an OutstandingMsg.
+
+    `kingdom` is the apworld-canonical kingdom name (matching kKingdoms[]
+    on the mod side). `count` is the current AP-credit balance: positive
+    integer.
+    """
+    kingdom: str = ""
+    count: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"kingdom": self.kingdom, "count": self.count}
+
+
+@dataclass
+class OutstandingMsg:
+    """M6 phase D — bridge-authoritative per-kingdom balance.
+
+    Sent immediately after HelloAckMsg on every Switch reconnect, and again
+    every time the bridge's `outstanding_by_kingdom` mutates (grant arrival
+    or deposit applied). The Switch overwrites `ap_moons_kingdom[bit]` for
+    each kingdom present in `entries`; kingdoms missing from the message are
+    left untouched (lets the bridge omit zero entries if it wants to —
+    today it sends all known kingdoms for unambiguous full-state replace).
+    """
+    t: str = "outstanding"
+    entries: list[OutstandingEntry] = field(default_factory=list)
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "t": self.t,
+            "entries": [e.to_dict() for e in self.entries],
+        }
 
 
 @dataclass

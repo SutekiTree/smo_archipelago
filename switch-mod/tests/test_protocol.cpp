@@ -404,6 +404,105 @@ TEST(decode_rejects_truncated) {
 // verify our encoders produce JSON the Reader can re-parse.
 // --------------------------------------------------------------------------
 
+// --------------------------------------------------------------------------
+// M6 phase D — deposit + outstanding wire messages
+// --------------------------------------------------------------------------
+
+TEST(encode_deposit_basic) {
+    Deposit d{};
+    d.seq = 7;
+    copyCheckField(d.kingdom, "Wooded");
+    d.amount = 1;
+    EXPECT_EQ_S(wire([&](auto& b){ encodeDeposit(b, d); }),
+        R"({"t":"deposit","seq":7,"kingdom":"Wooded","amount":1})" "\n");
+}
+
+TEST(encode_deposit_multi_moon_amount_three) {
+    Deposit d{};
+    d.seq = 42;
+    copyCheckField(d.kingdom, "Cap");
+    d.amount = 3;
+    EXPECT_EQ_S(wire([&](auto& b){ encodeDeposit(b, d); }),
+        R"({"t":"deposit","seq":42,"kingdom":"Cap","amount":3})" "\n");
+}
+
+TEST(decode_deposit_ack) {
+    DecodedMsg m;
+    EXPECT(decodeFrom(R"({"t":"deposit_ack","seq":7})", m));
+    EXPECT_EQ_S(m.t, "deposit_ack");
+    EXPECT_EQ_I(m.deposit_ack.seq, 7u);
+}
+
+TEST(decode_deposit_ack_zero) {
+    DecodedMsg m;
+    EXPECT(decodeFrom(R"({"t":"deposit_ack","seq":0})", m));
+    EXPECT_EQ_I(m.deposit_ack.seq, 0u);
+}
+
+TEST(decode_outstanding_empty) {
+    DecodedMsg m;
+    EXPECT(decodeFrom(R"({"t":"outstanding","entries":[]})", m));
+    EXPECT_EQ_S(m.t, "outstanding");
+    EXPECT_EQ_I(m.outstanding.entry_count, 0u);
+}
+
+TEST(decode_outstanding_multiple_kingdoms) {
+    DecodedMsg m;
+    EXPECT(decodeFrom(
+        R"({"t":"outstanding","entries":[)"
+        R"({"kingdom":"Cap","count":2},)"
+        R"({"kingdom":"Cascade","count":5},)"
+        R"({"kingdom":"Wooded","count":0}]})",
+        m));
+    EXPECT_EQ_I(m.outstanding.entry_count, 3u);
+    EXPECT_EQ_S(m.outstanding.entries[0].kingdom, "Cap");
+    EXPECT_EQ_I(m.outstanding.entries[0].count, 2);
+    EXPECT_EQ_S(m.outstanding.entries[1].kingdom, "Cascade");
+    EXPECT_EQ_I(m.outstanding.entries[1].count, 5);
+    EXPECT_EQ_S(m.outstanding.entries[2].kingdom, "Wooded");
+    EXPECT_EQ_I(m.outstanding.entries[2].count, 0);
+}
+
+TEST(decode_outstanding_caps_at_max_entries) {
+    // Build a synthetic message with kMaxEntries + 2 entries; decoder must
+    // accept up to the cap and silently drop the rest (no error, partial OK).
+    std::string body = R"({"t":"outstanding","entries":[)";
+    constexpr std::size_t kOver = Outstanding::kMaxEntries + 2;
+    for (std::size_t i = 0; i < kOver; ++i) {
+        if (i > 0) body += ',';
+        body += R"({"kingdom":"K)";
+        body += std::to_string(i);
+        body += R"(","count":)";
+        body += std::to_string(static_cast<int>(i) + 1);
+        body += '}';
+    }
+    body += "]}";
+    DecodedMsg m;
+    EXPECT(decodeFrom(body, m));
+    EXPECT_EQ_I(m.outstanding.entry_count, Outstanding::kMaxEntries);
+    EXPECT_EQ_S(m.outstanding.entries[0].kingdom, "K0");
+    EXPECT_EQ_I(m.outstanding.entries[0].count, 1);
+}
+
+TEST(roundtrip_deposit_via_reader) {
+    Deposit d{};
+    d.seq = 99;
+    copyCheckField(d.kingdom, "Snow");
+    d.amount = 2;
+    std::string w = wire([&](auto& b){ encodeDeposit(b, d); });
+    if (!w.empty() && w.back() == '\n') w.pop_back();
+    smoap::util::json::Reader r(w.data(), w.size());
+    EXPECT(r.enterObject());
+    std::string_view k, v;
+    std::int64_t iv;
+    EXPECT(r.nextField(k)); EXPECT(k == "t");       EXPECT(r.nextString(v)); EXPECT(v == "deposit");
+    EXPECT(r.nextField(k)); EXPECT(k == "seq");     EXPECT(r.nextInt(iv));   EXPECT(iv == 99);
+    EXPECT(r.nextField(k)); EXPECT(k == "kingdom"); EXPECT(r.nextString(v)); EXPECT(v == "Snow");
+    EXPECT(r.nextField(k)); EXPECT(k == "amount");  EXPECT(r.nextInt(iv));   EXPECT(iv == 2);
+    EXPECT(!r.nextField(k));
+    EXPECT(r.exitObject());
+}
+
 TEST(roundtrip_check_via_reader) {
     Check c{.kind=ItemKind::Moon, .kingdom="Cap", .shine_id="Spinning-Hat Stack"};
     std::string w = wire([&](auto& b){ encodeCheck(b, c); });

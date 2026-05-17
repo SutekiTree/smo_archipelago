@@ -53,6 +53,9 @@ void installShineNumGetHook();
 void installShineNumByWorldGetHook();
 // M6 phase A.5: moon-get cutscene label substitution (Channel A).
 void installMoonLabelHook();
+// M6 phase D: addPayShine deposit detection + AP-credit debit.
+void installAddPayShineHook();
+void installAddPayShineAllHook();
 // Cappy Messenger: 4 trampolines on the al:: top-level MSBT lookup pair
 // (system + stage existence/get) + LookupSymbol for the rs:: CapMessage
 // entry points used by CappyMessenger.
@@ -65,6 +68,8 @@ void installShineAppearanceHook();
 namespace smoap::game {
 // M6 phase B: resolve addHackDictionary + isExistInHackDictionary once.
 void installCaptureGrantSymbols();
+// M6 phase D: resolve getCurrentWorldIdNoDevelop once (stored on ApState).
+void installDepositKingdomLookupSymbol();
 }  // namespace smoap::game
 
 namespace {
@@ -196,6 +201,12 @@ extern "C" void exl_main(void* /*x0*/, void* /*x1*/) {
 
     SMOAP_LOG_INFO("resolving M6-phase-B capture-grant symbols");
     smoap::game::installCaptureGrantSymbols();
+
+    SMOAP_LOG_INFO("resolving M6-phase-D current-kingdom lookup");
+    smoap::game::installDepositKingdomLookupSymbol();
+    SMOAP_LOG_INFO("installing M6-phase-D deposit hooks (addPayShine + addPayShineCurrentAll)");
+    smoap::hooks::installAddPayShineHook();
+    smoap::hooks::installAddPayShineAllHook();
 
     SMOAP_LOG_INFO("installing CappyMessenger text-lookup trampolines (4)");
     smoap::hooks::installCappyMessageTextHooks();

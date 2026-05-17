@@ -5,19 +5,19 @@
 // orig — only the AP-credit count for the matching kingdom is returned. See
 // ShineNumGetHook.cpp for the design rationale (AP-only counting).
 //
-// Important M6 unknown: SMO's worldId space vs our kingdomBitFor() index.
-// kKingdoms[] in KingdomUnlock.cpp is ordered "Cap, Cascade, Sand, Wooded,
-// Lake, Cloud, Lost, Metro, Snow, Seaside, Luncheon, Ruined, Bowser, Moon,
-// Mushroom, Dark Side, Darker Side". OdysseyDecomp suggests SMO's internal
-// worldId follows the same play order. If playtest reveals a mismatch, the
-// mapping table below is the surgical fix point.
+// M6 phase D audit (2026-05-17): per OdysseyDecomp src/System/GameDataFunction.h,
+// the int parameter is `file_id` (save-slot index, default -1), NOT a world
+// id. The function returns global lifetime collected from that save slot.
+// Our existing `world_id` naming is misleading — what we receive is actually
+// a save-slot id (typically -1 or 0). That's consistent with the M6 phase A
+// finding that this hook never fires in normal Cascade play: SMO's per-world
+// HUD reads `GameDataFile::getShineNum(world_id)` directly (inlined field
+// access) and only calls this wrapper when something genuinely wants a save
+// slot's global total.
 //
-// Second M6 unknown: this hook never fired during the first phase-A playtest.
-// SMO's natural per-kingdom counter (Cascade "5/19" type stats) appears to
-// read shine flags directly rather than going through getGotShineNum. If
-// further playtest confirms the hook stays silent, the per-kingdom counter
-// substitution simply does nothing — kingdom progression then has to be
-// gated via phase B's `unlockWorld` path instead.
+// Kept hooked as defense — returning AP credit instead of vanilla's count is
+// still the correct behavior if any code path does query us. Freeze on
+// bridge-offline mirrors ShineNumGetHook for the same reason.
 
 #include "lib.hpp"
 #include "../ap/ApState.hpp"
@@ -34,22 +34,31 @@ namespace smoap::hooks {
 
 namespace {
 
-// Map SMO's internal worldId to our kKingdoms bit index. M6 phase A assumes
-// identity; phase A playtest logs the mapping so we catch divergence.
-inline int smoWorldIdToOurBit(int world_id) {
-    if (world_id < 0 || world_id >= 17) return -1;
-    return world_id;
+// M6 phase D: the int param is `file_id` (save slot) per OdysseyDecomp, not
+// a world id. But since the function returns a GLOBAL count, and our only
+// defensive purpose for hooking it is "return AP credit instead of vanilla
+// count if anything ever calls us", we just sum all kingdoms' AP credit.
+// The argument is ignored for the AP-credit calculation; we still call Orig
+// with it so the trampoline's diagnostic logging stays meaningful.
+int sumAllKingdomCredits() {
+    int total = 0;
+    auto& s = smoap::ap::ApState::instance();
+    for (auto& a : s.ap_moons_kingdom) {
+        total += a.load(std::memory_order_relaxed);
+    }
+    return total;
 }
 
 HOOK_DEFINE_TRAMPOLINE(ShineNumByWorldGetHook) {
     static int Callback(GameDataHolderAccessor accessor, int world_id) {
         const int orig = Orig(accessor, world_id);  // diagnostic + side effects
-        const int bit = smoWorldIdToOurBit(world_id);
-        int credit = 0;
         auto& s = smoap::ap::ApState::instance();
-        if (bit >= 0 && bit < 17) {
-            credit = s.ap_moons_kingdom[bit].load(std::memory_order_relaxed);
+        // M6 phase D — freeze on bridge-offline.
+        if (!s.bridge_connected.load(std::memory_order_relaxed)) {
+            return 0;
         }
+        const int credit = sumAllKingdomCredits();
+        const int bit = (world_id >= 0 && world_id < 17) ? world_id : -1;
 
         // Throttle: first 6 calls (we expect ~17 distinct world_ids being
         // queried at menu open, want at least a few) plus any change on

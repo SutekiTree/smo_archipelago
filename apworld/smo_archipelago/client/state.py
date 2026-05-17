@@ -42,6 +42,18 @@ class BridgeState:
         self.kingdoms_unlocked: set[str] = set()
         self.moons_received_by_kingdom: dict[str, int] = {}
         self.moons_checked_by_kingdom: dict[str, int] = {}
+        # M6 phase D — per-kingdom AP-credit balance (`grants - deposits`).
+        # Authoritative state lives in the AP data store; this dict mirrors
+        # it for fast access by the Kivy UI / Switch sync paths. Mutated by
+        # apply_grant (on AP ReceivedItems for Moon kind) + apply_deposit
+        # (on DepositMsg from Switch). Persisted out-of-band by context.py
+        # via Set on the AP server.
+        self.outstanding_by_kingdom: dict[str, int] = {}
+        # Session-scoped seq dedup. Reset on each Switch HELLO via
+        # reset_deposit_session. Re-sent deposits with seq <= the high-water
+        # mark are skipped (idempotent re-ack only). Bridge-process-restart
+        # case is documented as a known limitation in the plan.
+        self.last_processed_deposit_seq: int = 0
         self.last_messages: list[str] = []  # PrintJSON-style log (cap 200)
         self.death_count: int = 0  # M4 DeathLink: how many times Mario died
         # AP-classification moon coloring. Populated when AP's LocationInfo
@@ -119,6 +131,73 @@ class BridgeState:
     def bump_death_count(self) -> None:
         with self._lock:
             self.death_count += 1
+
+    # ---------- M6 phase D — per-kingdom AP-credit balance ----------
+
+    def apply_grant(self, kingdom: str, amount: int) -> int:
+        """Add `amount` to the kingdom's outstanding balance.
+
+        Returns the new balance. Called from context.py when AP grants a
+        Moon item to this slot. Caller is responsible for persisting the
+        new state to the AP data store (via Set).
+        """
+        with self._lock:
+            new = self.outstanding_by_kingdom.get(kingdom, 0) + amount
+            self.outstanding_by_kingdom[kingdom] = new
+            return new
+
+    def apply_deposit(self, kingdom: str, amount: int) -> int:
+        """Subtract `amount` from the kingdom's outstanding balance (clamped at 0).
+
+        Returns the new balance. Called from switch_server.py when the
+        Switch reports a moon hand-toss. Caller persists to AP data store.
+        """
+        with self._lock:
+            cur = self.outstanding_by_kingdom.get(kingdom, 0)
+            new = max(0, cur - amount)
+            self.outstanding_by_kingdom[kingdom] = new
+            return new
+
+    def replace_outstanding(self, entries: dict[str, int]) -> None:
+        """Atomically replace outstanding_by_kingdom (hydration path).
+
+        Used when bootstrapping from AP data store on Connected. The
+        replacement is wholesale — keys not in `entries` are dropped, so
+        the caller should pass the full dict (or an empty dict to reset).
+        """
+        with self._lock:
+            self.outstanding_by_kingdom = dict(entries)
+
+    def get_outstanding(self) -> dict[str, int]:
+        """Return a defensive copy of the current outstanding map."""
+        with self._lock:
+            return dict(self.outstanding_by_kingdom)
+
+    def reset_deposit_session(self) -> None:
+        """Drop the session-scoped deposit-seq high-water mark.
+
+        Called on each Switch HELLO so a fresh Switch session (or a
+        reconnect with replays) is dispatched correctly. Re-ack-only
+        replays from the SAME Switch session still get deduped against
+        the high-water mark within the session.
+        """
+        with self._lock:
+            self.last_processed_deposit_seq = 0
+
+    def should_skip_deposit(self, seq: int) -> bool:
+        """Idempotency check + high-water-mark update.
+
+        Returns True iff the deposit with this seq has already been applied
+        in the current session (caller should re-ack only). Returns False
+        and advances the high-water mark for fresh seqs.
+        """
+        if seq <= 0:
+            return True  # invalid seq; safest to skip
+        with self._lock:
+            if seq <= self.last_processed_deposit_seq:
+                return True
+            self.last_processed_deposit_seq = seq
+            return False
 
     def set_shine_palette(self, entries: dict[int, int]) -> None:
         """Replace the (shine_uid -> palette) table with the given entries.

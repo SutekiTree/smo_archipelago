@@ -169,6 +169,26 @@ struct StateChunk {
 
 struct StateEnd {};
 
+// M6 phase D — Switch -> Bridge deposit notification.
+//
+// Each call to GameDataFunction::addPayShine (intercepted by AddPayShineHook)
+// emits one Deposit with the per-toss `amount`, the kingdom Mario was in at
+// the time, and a monotonic-per-session `seq`. The bridge applies the debit
+// to its outstanding cache, writes to the AP data store, and replies with a
+// DepositAck carrying the same seq so the Switch can drop the entry from
+// its pending-deposit ring. Unacked entries are replayed on reconnect.
+//
+// Fixed-size kingdom buffer because this is encoded on the worker thread
+// (allocator-NULL-deref discipline). 32 is generous — the longest internal
+// kingdom string is "Darker Side" (11 chars) plus NUL.
+struct Deposit {
+    std::uint64_t seq = 0;
+    char kingdom[kCheckFieldCap] = {};
+    int amount = 0;
+};
+
+void encodeDeposit(smoap::util::json::LineBuffer&, const Deposit&);
+
 // Bridge -> Switch ----------------------------------------------------------
 //
 // Fixed-size char buffers throughout. Originally these were std::string
@@ -310,6 +330,38 @@ struct ShineScouts {
     bool truncated = false;
 };
 
+// M6 phase D — Bridge -> Switch deposit ack.
+//
+// One ack per inbound Deposit (idempotent: the bridge re-acks already-seen
+// seqs unconditionally so reconnect-replay always self-heals). Switch keeps
+// last_acked_deposit_seq as the high-water mark and drops everything at or
+// below it from the pending-deposit ring.
+struct DepositAck {
+    std::uint64_t seq = 0;
+};
+
+// M6 phase D — Bridge -> Switch authoritative per-kingdom balance.
+//
+// Sent (1) immediately after HelloAckMsg on every Switch reconnect and (2)
+// every time the bridge's outstanding_by_kingdom mutates (grant arrival or
+// deposit applied). The Switch overwrites each `ap_moons_kingdom[bit]` so
+// the AP data store remains the single source of truth across reboots.
+//
+// Up to 17 entries (one per kingdom). Unused entries pad with zero `count`
+// + empty `kingdom` — the consumer skips empty kingdoms (treats as "no
+// update for this slot"); for full-reset behavior, send all 17 explicitly
+// even if some are 0.
+struct OutstandingEntry {
+    char kingdom[kCheckFieldCap] = {};
+    int count = 0;
+};
+
+struct Outstanding {
+    static constexpr std::size_t kMaxEntries = 17;
+    OutstandingEntry entries[kMaxEntries]{};
+    std::size_t entry_count = 0;
+};
+
 // (de)serialization --------------------------------------------------------
 // Implementations in ApProtocol.cpp use util/Json.hpp (no STL exceptions).
 //
@@ -329,6 +381,8 @@ void encodeLog(smoap::util::json::LineBuffer&, const Log&);
 void encodeStateBegin(smoap::util::json::LineBuffer&, const StateBegin&);
 void encodeStateChunk(smoap::util::json::LineBuffer&, const StateChunk&);
 void encodeStateEnd(smoap::util::json::LineBuffer&);
+// encodeDeposit is declared above (next to the Deposit struct) so the
+// Switch->Bridge encoders all live with their associated structs.
 
 // Returns true on parse success and fills the discriminated union outputs.
 struct DecodedMsg {
@@ -343,6 +397,8 @@ struct DecodedMsg {
     Kill kill{};
     MoonLabel moon_label{};
     ShineScouts shine_scouts{};
+    DepositAck deposit_ack{};
+    Outstanding outstanding{};
 };
 bool decode(const char* data, std::size_t len, DecodedMsg& out);
 

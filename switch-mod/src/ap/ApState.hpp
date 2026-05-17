@@ -304,6 +304,45 @@ public:
     // at 1 so the wire encoder's "seq > 0 means present" check works.
     std::atomic<int> next_check_seq{1};
 
+    // ---- M6 phase D — moon-deposit accounting -------------------------------
+    //
+    // bridge_connected: set by ApClient::threadMain on HELLO ack, cleared on
+    // disconnect/socket error. AddPayShineHook + ShineNumGetHook both read
+    // this with relaxed ordering — neither needs synchronization with other
+    // state, just an authoritative "are we online" bit.
+    std::atomic<bool> bridge_connected{false};
+
+    // next_deposit_seq: monotonic per-session sequence id stamped onto each
+    // DepositMsg by AddPayShineHook so the bridge can ack idempotently.
+    // Starts at 1; 0 reserved as "absent" / sentinel.
+    std::atomic<std::uint64_t> next_deposit_seq{1};
+
+    // last_acked_deposit_seq: high-water mark of seqs the bridge has acked.
+    // Updated by ApClient on inbound DepositAckMsg. SaveLoadHook resets to
+    // 0 — the post-load HELLO produces a fresh OutstandingMsg from the
+    // bridge that becomes authoritative.
+    std::atomic<std::uint64_t> last_acked_deposit_seq{0};
+
+    // get_current_world_id_fn: function pointer resolved via nn::ro::Lookup
+    // Symbol at module init (same pattern as M6-B's addHackDictionary). Takes
+    // a GameDataHolderAccessor by value (1 ptr in x0) and returns s32 world
+    // id, clamped to 0 in develop states. Null until resolved.
+    void* get_current_world_id_fn = nullptr;
+
+    // Pending deposits awaiting bridge ack. Replayed on reconnect from
+    // ApClient::threadMain right after HELLO ack. Fixed-size ring (same
+    // allocator-safety discipline as every other outbound buffer) — 32
+    // entries × ~80 bytes = ~2.5 KiB BSS. Per-toss deposits are rate-limited
+    // by the cutscene/fuel-up animation (sub-second cadence on the upper
+    // bound) so the ring covers many seconds of offline buffering before
+    // overflow truncates with a log line.
+    struct PendingDeposit {
+        std::uint64_t seq = 0;
+        char kingdom[32] = {};
+        int amount = 0;
+    };
+    SpscRing<PendingDeposit, 32> pending_deposits;
+
     // Local AP slot name — captured by ApClient when the bridge sends
     // hello_ack. Fixed buffer rather than std::string to avoid subsdk9's
     // libstdc++ allocator NULL-deref (see project_libstdcpp_allocator_broken_in_subsdk9.md).

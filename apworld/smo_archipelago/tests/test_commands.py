@@ -44,6 +44,7 @@ class _StubSwitch:
         self.items: list[ItemMsg] = []
         self.kills: list = []
         self.labels: list = []
+        self.outstanding: list = []
 
     async def send_item(self, item: ItemMsg) -> None:
         self.items.append(item)
@@ -53,6 +54,13 @@ class _StubSwitch:
 
     async def send_moon_label(self, label) -> None:
         self.labels.append(label)
+
+    async def send_outstanding(self, msg) -> None:
+        # M6 phase D: context.py pushes the authoritative per-kingdom
+        # balance to the Switch whenever a Moon item is granted (so
+        # ap_moons_kingdom[bit] on the mod side stays in sync). Stub it
+        # for tests that just observe send_item.
+        self.outstanding.append(msg)
 
 
 @pytest.mark.asyncio

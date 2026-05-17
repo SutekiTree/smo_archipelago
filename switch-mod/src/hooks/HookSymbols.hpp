@@ -112,10 +112,49 @@ inline constexpr const char* kPlayerHitPointDataKill =
 inline constexpr const char* kGameDataFunctionGetCurrentShineNum =
     "_ZN16GameDataFunction18getCurrentShineNumE22GameDataHolderAccessor";
 
-// GameDataFunction::getGotShineNum(GameDataHolderAccessor, s32 worldId)
-// Returns moon count for a specific kingdom (kingdom menu / shine list).
+// GameDataFunction::getGotShineNum(GameDataHolderAccessor, s32 file_id)
+// CAVEAT (M6 phase D audit): the int parameter is `file_id` (save-slot index,
+// default -1), NOT a world id, per OdysseyDecomp src/System/GameDataFunction.h.
+// Returns global lifetime collected moons from the given save slot. SMO's
+// per-kingdom HUD reads GameDataFile::getShineNum(world_id) directly via
+// inlined field access — there's no symbol to hook for the per-kingdom view.
+// CLAUDE.md's note that this hook never fires in normal Cascade play is
+// consistent with that finding. The misleading "GotShineNum" reads as
+// "per-kingdom" because that's the natural interpretation of "world" in SMO
+// terminology, but the API is save-slot-scoped. Kept hooked as defense.
 inline constexpr const char* kGameDataFunctionGetGotShineNum =
     "_ZN16GameDataFunction14getGotShineNumE22GameDataHolderAccessori";
+
+// =============================================================================
+// M6 phase D — moon-deposit debit (AP credit decrements on Odyssey toss).
+// =============================================================================
+//
+// When Mario hand-tosses moons at an Odyssey, vanilla SMO does NOT mutate
+// `mShineNum` directly. It calls GameDataFile::addPayShine(s32) which grows
+// a separate `PayShineNum` counter; the HUD's spendable-fuel total is
+// `getCurrentShineNum() = ShineNum - PayShineNum` clamped to 0.
+//
+// GameDataFile::addPayShine(s32) IS INLINED into all callers in 1.0.0 main.nso
+// and not present in dynsym. The PUBLIC WRAPPER GameDataFunction::addPayShine
+// (GameDataHolderWriter, int) IS in dynsym — verified via
+// scripts/check_nso_symbols.py. Same hookability pattern as addHackDictionary.
+// All game-side payment paths route through this wrapper per OdysseyDecomp.
+//
+// addPayShineCurrentAll() is the "pay everything in current kingdom" variant
+// (probably used in kingdom-complete celebrations). We hook it secondarily so
+// non-per-toss payments aren't lost; for those, the count is computed via the
+// AP-credit balance for currentKingdom.
+//
+// getCurrentWorldIdNoDevelop is the safe `getCurrentWorldId` variant that
+// clamps the develop-state `-1` return to 0. We resolve it via
+// nn::ro::LookupSymbol once and call through a function pointer (same as
+// addHackDictionary), since this is read-only inside our hook callback.
+inline constexpr const char* kGameDataFunctionAddPayShine =
+    "_ZN16GameDataFunction11addPayShineE20GameDataHolderWriteri";
+inline constexpr const char* kGameDataFunctionAddPayShineCurrentAll =
+    "_ZN16GameDataFunction21addPayShineCurrentAllE20GameDataHolderWriter";
+inline constexpr const char* kGameDataFunctionGetCurrentWorldIdNoDevelop =
+    "_ZN16GameDataFunction26getCurrentWorldIdNoDevelopE22GameDataHolderAccessor";
 
 // =============================================================================
 // M6 phase B — capture grant (addHackDictionary + idempotency probe).

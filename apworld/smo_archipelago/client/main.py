@@ -233,6 +233,13 @@ async def main(args: argparse.Namespace) -> None:
         # until the Switch is up; this callback promotes the pending
         # request the moment HELLO arrives.
         on_switch_ready=ctx._on_switch_ready,
+        # M6 phase D: route incoming DepositMsg through ctx so it can
+        # update outstanding_by_kingdom + persist to AP store + push
+        # OutstandingMsg back to Switch. The HELLO handler snapshots
+        # current entries via get_outstanding_entries so the Switch's
+        # ap_moons_kingdom[] is authoritative the moment it reconnects.
+        on_deposit=ctx.apply_deposit_from_switch,
+        get_outstanding_entries=ctx._outstanding_entries_for_switch,
     )
     ctx.switch = sw
     # M-color: ApClient → SwitchServer palette callback. Wired post-

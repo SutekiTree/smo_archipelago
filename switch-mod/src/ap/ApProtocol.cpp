@@ -188,6 +188,21 @@ void encodeStateEnd(LineBuffer& line) {
     line.append('\n');
 }
 
+void encodeDeposit(LineBuffer& line, const Deposit& d) {
+    line.clear();
+    Encoder e{line};
+    e.beginObject()
+        .key("t").value("deposit")
+        // seq is a u64; cast to int64 for the encoder (the max session
+        // deposit count is bounded by ring capacity * runtime, far below
+        // 2^63 — see ApState::next_deposit_seq).
+        .key("seq").value(static_cast<std::int64_t>(d.seq))
+        .key("kingdom").value(d.kingdom)
+        .key("amount").value(d.amount)
+     .endObject();
+    line.append('\n');
+}
+
 // ---------------------------------------------------------------------------
 // Decoder (Bridge -> Switch)
 // ---------------------------------------------------------------------------
@@ -372,6 +387,55 @@ inline bool eqStr(const char* a, const char* b) {
     return *a == '\0' && *b == '\0';
 }
 
+bool parseDepositAck(Reader& r, DepositAck& out) {
+    std::string_view key;
+    while (r.nextField(key)) {
+        if (key == "seq") {
+            std::int64_t v;
+            if (!r.nextInt(v)) return false;
+            // Negative seqs are never emitted by the bridge but be defensive:
+            // clamp to 0 (which the ack-handler treats as a no-op since the
+            // initial last_acked_deposit_seq is 0).
+            out.seq = (v < 0) ? 0u : static_cast<std::uint64_t>(v);
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool parseOutstanding(Reader& r, Outstanding& out) {
+    out.entry_count = 0;
+    std::string_view key;
+    while (r.nextField(key)) {
+        if (key == "entries") {
+            if (!r.enterArray()) return false;
+            while (r.hasMoreInArray()) {
+                if (!r.enterObject()) return false;
+                OutstandingEntry entry;
+                std::string_view k2;
+                while (r.nextField(k2)) {
+                    if      (k2 == "kingdom") { if (!readIntoField(r, entry.kingdom)) return false; }
+                    else if (k2 == "count")   { if (!readIntoInt(r, entry.count)) return false; }
+                    else                      { return false; }
+                }
+                if (!r.exitObject()) return false;
+                if (out.entry_count < Outstanding::kMaxEntries) {
+                    out.entries[out.entry_count++] = entry;
+                }
+                // Overflow: silently drop — the bridge only sends one entry
+                // per kingdom, and the consumer treats kMaxEntries (17) as the
+                // hard cap. A second entry for the same kingdom would be a
+                // bridge bug, not a wire-protocol concern.
+            }
+            if (!r.exitArray()) return false;
+        } else {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool parseMoonLabel(Reader& r, MoonLabel& out) {
     std::int64_t tmp = 0;
     std::string_view key;
@@ -411,6 +475,8 @@ bool decode(const char* data, std::size_t len, DecodedMsg& out) {
     else if (eqStr(out.t, "kill"))           ok = parseKill(r, out.kill);
     else if (eqStr(out.t, "moon_label"))     ok = parseMoonLabel(r, out.moon_label);
     else if (eqStr(out.t, "shine_scouts"))   ok = parseShineScouts(r, out.shine_scouts);
+    else if (eqStr(out.t, "deposit_ack"))    ok = parseDepositAck(r, out.deposit_ack);
+    else if (eqStr(out.t, "outstanding"))    ok = parseOutstanding(r, out.outstanding);
     else {
         // Unknown type: leave out.t set so handleLine can warn. Don't bother
         // draining the rest of the object — caller treats unknown as ignored.
