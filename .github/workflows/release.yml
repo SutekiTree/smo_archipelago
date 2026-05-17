@@ -1,0 +1,147 @@
+name: Release
+
+# Tag-triggered: pushing a `vMAJOR.MINOR.PATCH` tag cuts a release.
+# Also runnable via `workflow_dispatch` for dry-runs (uploads the artifact
+# but skips the publish-release job because there's no tag to attach it to).
+#
+# Pre-release detection: any tag containing `-` (e.g. `v1.0.0-rc1`,
+# `v0.2.0-alpha2`) is marked as a GitHub pre-release. Stable releases use
+# bare semver.
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+# Ensure only one release run at a time per tag.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false  # don't cancel: a released artifact is durable
+
+jobs:
+  build-apworld:
+    name: Build release apworld zip
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          # Bundling switch-mod sources needs both lunakit-vendor and
+          # exlaunch submodules materialized. Archipelago submodule is
+          # also needed because install_apworld.py writes into its
+          # custom_worlds/ before we copy out.
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: '3.12'
+
+      # capture_table.h must exist before install_apworld --bundle-mod
+      # tries to bundle the switch-mod source tree (CaptureGate.cpp
+      # includes it; without it the user's wizard-driven build will fail).
+      # The header is gitignored so we regenerate per-release from
+      # items.json.
+      - name: Sync capture table
+        run: python scripts/sync_capture_table.py
+
+      - name: Build apworld zip with bundled mod + scripts
+        run: python scripts/install_apworld.py --bundle-mod --bundle-scripts
+
+      - name: Stage release artifacts + checksum
+        run: |
+          mkdir release-artifacts
+          cp vendor/Archipelago/custom_worlds/smo.apworld release-artifacts/
+          cd release-artifacts
+          sha256sum smo.apworld > smo.apworld.sha256
+          ls -lah
+
+      # Audit: confirm we did NOT leak any of the Nintendo-IP files that
+      # extract_shine_map.py produces. CI catches this even if the local
+      # blocklist in install_apworld.py regresses.
+      - name: IP-discipline audit
+        run: |
+          set -e
+          if unzip -l release-artifacts/smo.apworld | grep -E '(shine|capture)_map(_review)?\.json'; then
+            echo "FAIL: Nintendo-content map file leaked into the release zip"
+            exit 1
+          fi
+          echo "OK: no Nintendo-content map files in zip"
+
+      - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808  # v4
+        with:
+          name: smo-apworld
+          path: release-artifacts/*
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: build-apworld
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # workflow_dispatch runs don't create a release — they only produce
+    # the build artifact (downloadable from the Actions UI for testing).
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
+        with:
+          name: smo-apworld
+          path: dist/
+
+      - name: Show artifacts to be published
+        run: ls -lah dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@de2c0eb89ae2a093876385947365aca7b0e5f844  # v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          draft: false
+          # Any tag containing `-` (e.g. v1.0.0-rc1) is marked as pre-release.
+          prerelease: ${{ contains(github.ref, '-') }}
+          body: |
+            ## SMO Archipelago ${{ github.ref_name }}
+
+            ### First-time users — start here
+
+            1. Download `smo.apworld` below.
+            2. Drop it into your Archipelago install's `custom_worlds/`
+               directory.
+            3. Double-click the `.smoap` file your AP generation produced
+               (one per player). The setup wizard walks you through the
+               rest — prereq checks, moon/capture extraction from your
+               own NSP, Switch-mod build, and deploy to SD card or
+               Ryujinx.
+
+            **📖 Full walkthrough with prerequisites:**
+            [docs/first-time-setup.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/first-time-setup.md)
+
+            **🔄 Changing AP server / slot / bridge PC after setup:**
+            [docs/changing-servers.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/changing-servers.md)
+
+            ### ⚠️ Compatibility requirements
+
+            SMO Archipelago targets **Super Mario Odyssey 1.0.0** on a
+            **modded Switch running Atmosphere CFW on firmware 21.x or
+            earlier**.
+
+            - **SMO version:** must be **1.0.0**. Versions 1.1.0, 1.2.0,
+              1.3.0 will not work. If you're on a newer version, use
+              [Istador/odyssey-downgrade](https://github.com/Istador/odyssey-downgrade)
+              to drop back to 1.0.0 first.
+            - **Switch firmware:** must be **FW 21.x or earlier**.
+              **FW 22+ is NOT supported** by this project — even though
+              Atmosphere 1.11+ technically boots on FW22, the homebrew
+              lifecycle changes Nintendo shipped in FW22 break the
+              subsdk9-style mods we rely on. Stay on FW 21.x if you want
+              to use SMO Archipelago.
+            - **Ryujinx:** supported as a dev / playtest target. Same
+              SMO 1.0.0 requirement; firmware in Ryujinx tracks whatever
+              you imported.
+
+            ### Verifying the download
+
+            ```
+            sha256sum -c smo.apworld.sha256
+            ```

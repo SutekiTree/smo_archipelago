@@ -28,7 +28,7 @@ Earlier revisions of this project shipped the client as a standalone `python -m 
 | --- | --- |
 | `apworld/smo_archipelago/` | Forked apworld + SMOClient. Generates seeds AND ships the Launcher button. |
 | `apworld/smo_archipelago/client/` | Python client. Subclasses CommonContext, hosts the SwitchServer. |
-| `apworld/smo_archipelago/tests/` | Unit + integration tests (120 pass, 11 skipped — live-AP / extraction gated). |
+| `apworld/smo_archipelago/tests/` | Unit + integration tests (227 pass, 41 skipped — live-AP / extraction / Windows-only-detect gated). |
 | `switch-mod/` | exlaunch C++ module. Hooks SMO; produces `subsdk9` ELF. |
 | `docs/` | Architecture, wire protocol, build, install, symbol catalog. |
 | `scripts/` | install_apworld, ap_generate, ap_server, switch_smoke_test, sync_capture_table, extract_shine_map. |
@@ -98,28 +98,39 @@ $env:SMOAP_LIVE_AP="1"
 .\.venv\Scripts\python -m pytest -v apworld\smo_archipelago\tests\test_ap_loopback.py
 ```
 
-## Quick start (typical user flow)
+## First-time setup (typical user flow)
 
-```pwsh
-# 1. Install your forked apworld into Archipelago
-.\.venv\Scripts\python scripts\install_apworld.py
+> ⚠️ **Requires SMO 1.0.0** on a modded Switch running **Atmosphere on
+> firmware 21.x or earlier**. SMO 1.1.0+ won't work; downgrade with
+> [Istador/odyssey-downgrade](https://github.com/Istador/odyssey-downgrade).
+> **FW22+ is NOT supported** (homebrew lifecycle changes break our
+> subsdk9 module). Ryujinx is supported as an alternative target.
 
-# 2. Edit per-user settings in ~/.archipelago/host.yaml (optional —
-#    defaults work for localhost AP)
-# smo_options:
-#   switch_listen_port: 17777
-#   deathlink_default: false
+The entire user-facing flow is three steps:
 
-# 3. Launch the client via the Archipelago Launcher
-.\.venv\Scripts\python vendor\Archipelago\Launcher.py
-# → click "SMO Client" in the GUI
+1. **Download `smo.apworld`** from the
+   [Releases page](../../releases).
+2. **Drop it into your Archipelago install's `custom_worlds/`** directory.
+3. **Double-click your `.smoap` file** (generated per-player when the
+   multiworld is created). The setup wizard opens and walks you through:
+   prereq checks → SMO NSP pick → moon/capture extraction → bridge PC IP →
+   Switch-mod compile → deploy to SD card or Ryujinx.
 
-# 4. On Switch:
-#    - Build switch-mod (see docs/build-windows.md)
-#    - Copy switch-mod/sd-overlay/ to SD card root
-#    - Edit sd:/atmosphere/contents/0100000000010000/romfs/ap_config.json with the SMOClient IP
-#    - Launch SMO
-```
+Detailed walkthrough including prerequisites:
+[`docs/first-time-setup.md`](docs/first-time-setup.md).
+
+### Changing AP server or slot after setup
+
+**Doesn't require a rebuild.** Just type `/connect <host>:<port> <slot>`
+in SMOClient's command bar, or double-click a different `.smoap` file.
+See [`docs/changing-servers.md`](docs/changing-servers.md) for the full
+rebuild-vs-no-rebuild matrix.
+
+### Changing bridge PC IP
+
+**Does require a rebuild** (the IP is baked into the Switch module at
+compile time — retail Switch firmware can't read runtime config from SD).
+Type `/setup` in SMOClient to re-run the wizard.
 
 ## Credits
 

@@ -3,6 +3,7 @@ import logging
 import os
 import json
 import typing
+from pathlib import Path
 from typing import Callable, Optional
 
 import webbrowser
@@ -373,10 +374,32 @@ class ManualWorld(World):
         return slot_data
 
     def generate_output(self, output_directory: str):
+        # 1) Legacy .apmanual — kept for backward-compat with users still on
+        #    the upstream Manual Client (the "Manual Client" Component button
+        #    in the Launcher). New SMOClient users open the .smoap file
+        #    written below instead.
         data = self.client_data()
-        filename = f"{self.multiworld.get_out_file_name_base(self.player)}.apmanual"
-        with open(os.path.join(output_directory, filename), 'wb') as f:
+        base = self.multiworld.get_out_file_name_base(self.player)
+        with open(os.path.join(output_directory, f"{base}.apmanual"), 'wb') as f:
             f.write(b64encode(bytes(json.dumps(data), 'utf-8')))
+
+        # 2) .smoap — the new entry point. Per-player metadata that the
+        #    Launcher routes to launch_smo_client when double-clicked,
+        #    triggering either the first-run wizard or a pre-filled
+        #    SMOClient launch. See _setup/smoap_file.py for the schema.
+        #
+        #    server_address is intentionally empty: the generator doesn't
+        #    know where the user will host (could be local, archipelago.gg,
+        #    a friend's box, ...). SMOClient prompts via the GUI Connect
+        #    bar when it's empty; the user can manually set it post-gen by
+        #    editing the file if they want a perpetual default.
+        from ._setup.smoap_file import SmoapFile
+        smoap = SmoapFile(
+            slot_name=self.multiworld.get_player_name(self.player),
+            seed_name=str(getattr(self.multiworld, "seed_name", "") or ""),
+            server_address="",
+        )
+        smoap.write(Path(output_directory) / f"{base}.smoap")
 
     def write_spoiler(self, spoiler_handle):
         before_write_spoiler(self, self.multiworld, spoiler_handle)
@@ -458,12 +481,80 @@ class ManualWorld(World):
 def launch_smo_client(*args):
     """Archipelago Launcher entry point for the SMO Client (real Switch).
 
-    Subprocesses into client/main.py — which imports CommonClient AND,
-    lazily, Kivy. Doing the import inside this function (rather than at
-    module top) keeps generation on headless hosts from pulling Kivy.
+    Triggered by double-clicking a `.smoap` file (the Component's
+    `SuffixIdentifier('.smoap')` registers the extension globally) or by
+    clicking the "SMO Client" button directly. In both cases the
+    decision tree is:
+
+      1. If first-time setup hasn't been completed yet
+         (`is_setup_complete()` returns False): spawn the setup wizard,
+         passing the .smoap path so it can hand off to SMOClient at the
+         end.
+      2. Otherwise: parse the .smoap (if any) for slot_name +
+         server_address + password, and launch SMOClient with those as
+         CLI overrides.
+
+    Kept lazy-importing CommonClient / Kivy so headless gen hosts that
+    never touch this function don't pay the import cost.
     """
+    from .client.setup_state import is_setup_complete
+    smoap_path = next((a for a in args if a.endswith(".smoap")), None)
+
+    if not is_setup_complete():
+        launch_subprocess(
+            _run_setup_wizard_with_smoap if smoap_path else _run_setup_wizard_no_smoap,
+            name="SMOSetup",
+            args=(smoap_path,) if smoap_path else (),
+        )
+        return
+
+    # Setup done — if a .smoap was passed, expand it into CLI args so
+    # SMOClient lands in the Connect bar with everything pre-filled.
+    final_args = list(args)
+    if smoap_path:
+        try:
+            from ._setup.smoap_file import parse_smoap, smoap_to_launch_args
+            s = parse_smoap(Path(smoap_path))
+            # Drop the .smoap arg itself (SMOClient's argparser doesn't
+            # know about it) and prepend the expanded credentials.
+            final_args = [a for a in final_args if not a.endswith(".smoap")]
+            final_args = smoap_to_launch_args(s) + final_args
+        except Exception as e:
+            # Don't block the launch — log and let SMOClient open with no
+            # pre-fill so the user can connect manually.
+            logging.getLogger(__name__).warning(
+                "could not parse %s: %s; launching SMOClient without pre-fill",
+                smoap_path, e,
+            )
+            final_args = [a for a in final_args if not a.endswith(".smoap")]
+
+    _run_smo_client_with_args(*final_args)
+
+
+def _run_smo_client_with_args(*args: str) -> None:
+    """Module-level subprocess entry: launch SMOClient with given args.
+
+    Top-level callable (not a closure) so `launch_subprocess`'s pickling
+    machinery can reach it by qualified name. Used by both
+    `launch_smo_client` (for the setup-done path) and by the wizard's
+    "Launch SMOClient now" button (for the setup-just-finished path)."""
     from .client.main import launch
     launch_subprocess(launch, name="SMOClient", args=args)
+
+
+def _run_setup_wizard_with_smoap(smoap_path: str) -> None:
+    """Module-level subprocess entry: open the wizard, remembering the
+    .smoap path for the post-completion hand-off to SMOClient."""
+    from ._setup.wizard import run_setup_wizard
+    run_setup_wizard(smoap_path)
+
+
+def _run_setup_wizard_no_smoap() -> None:
+    """Module-level subprocess entry: open the wizard standalone. Used
+    by the `/setup` slash command in SMOClient and by direct
+    "SMO Client" Launcher button clicks with no .smoap argument."""
+    from ._setup.wizard import run_setup_wizard
+    run_setup_wizard(None)
 
 
 def launch_manual_client(*args):
@@ -540,7 +631,11 @@ def add_client_to_launcher() -> None:
             "SMO Client",
             func=launch_smo_client,
             component_type=Type.CLIENT,
-            file_identifier=SuffixIdentifier('.apmanual'),
+            # `.smoap` is the new entry point: per-player metadata generated
+            # by ManualWorld.generate_output above. Double-clicking it routes
+            # here. `.apmanual` is the legacy upstream-Manual extension which
+            # the "Manual Client" Component below still owns.
+            file_identifier=SuffixIdentifier('.smoap'),
             game_name=game_name,
         ))
     if not manual_found:
