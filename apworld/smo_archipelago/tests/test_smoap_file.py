@@ -4,12 +4,14 @@ the first-run wizard or pre-fills SMOClient on subsequent runs."""
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
 
 from _setup.smoap_file import (
     GAME_NAME,
+    SMOAP_METADATA_ENTRY,
     SMOAP_SCHEMA_VERSION,
     SmoapFile,
     parse_smoap,
@@ -55,12 +57,60 @@ def test_human_readable_field_order(tmp_path: Path) -> None:
     p = tmp_path / "x.smoap"
     s.write(p)
 
-    text = p.read_text(encoding="utf-8")
+    with zipfile.ZipFile(p) as zf:
+        text = zf.read(SMOAP_METADATA_ENTRY).decode("utf-8")
     game_pos = text.index("game")
     version_pos = text.index("version")
     slot_pos = text.index("slot_name")
     assert game_pos < slot_pos
     assert version_pos < slot_pos
+
+
+def test_writes_zip_archive(tmp_path: Path) -> None:
+    """The on-disk format is a ZIP — renaming to .zip and extracting works
+    the same as for every other AP patch file."""
+    s = SmoapFile(slot_name="Mario")
+    p = tmp_path / "x.smoap"
+    s.write(p)
+
+    assert p.read_bytes()[:2] == b"PK"
+    with zipfile.ZipFile(p) as zf:
+        assert SMOAP_METADATA_ENTRY in zf.namelist()
+
+
+def test_reads_legacy_bare_json(tmp_path: Path) -> None:
+    """Back-compat: a .smoap from a pre-zip alpha build (raw JSON on disk)
+    still parses. Sniffs magic bytes, not extension."""
+    p = tmp_path / "legacy.smoap"
+    p.write_text(
+        json.dumps({"game": GAME_NAME, "version": 1, "slot_name": "Mario"}),
+        encoding="utf-8",
+    )
+    parsed = parse_smoap(p)
+    assert parsed.slot_name == "Mario"
+
+
+def test_zip_missing_metadata_entry_raises(tmp_path: Path) -> None:
+    """A ZIP that is missing the expected `metadata.json` entry must fail
+    loudly rather than silently producing an empty SmoapFile."""
+    p = tmp_path / "broken.smoap"
+    with zipfile.ZipFile(p, "w") as zf:
+        zf.writestr("something_else.json", "{}")
+    with pytest.raises(ValueError, match="metadata.json"):
+        parse_smoap(p)
+
+
+def test_zip_with_extra_entries_still_parses(tmp_path: Path) -> None:
+    """Forward-compat: future versions may add files (icon, scout cache,
+    ...) alongside metadata.json. The reader must ignore extras."""
+    s = SmoapFile(slot_name="Mario")
+    p = tmp_path / "future.smoap"
+    s.write(p)
+    with zipfile.ZipFile(p, "a") as zf:
+        zf.writestr("scout_cache.json", "{}")
+        zf.writestr("icon.png", b"\x89PNG\r\n\x1a\n")
+    parsed = parse_smoap(p)
+    assert parsed.slot_name == "Mario"
 
 
 def test_rejects_wrong_game() -> None:

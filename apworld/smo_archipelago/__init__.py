@@ -478,6 +478,10 @@ class ManualWorld(World):
 # Non-world client methods
 ###
 
+from ._setup.launcher_errors import visible_errors as _visible_errors
+
+
+@_visible_errors("SMO Client launcher")
 def launch_smo_client(*args):
     """Archipelago Launcher entry point for the SMO Client (real Switch).
 
@@ -531,6 +535,7 @@ def launch_smo_client(*args):
     _run_smo_client_with_args(*final_args)
 
 
+@_visible_errors("SMOClient subprocess bootstrap")
 def _run_smo_client_with_args(*args: str) -> None:
     """Module-level subprocess entry: launch SMOClient with given args.
 
@@ -542,6 +547,7 @@ def _run_smo_client_with_args(*args: str) -> None:
     launch_subprocess(launch, name="SMOClient", args=args)
 
 
+@_visible_errors("Setup wizard")
 def _run_setup_wizard_with_smoap(smoap_path: str) -> None:
     """Module-level subprocess entry: open the wizard, remembering the
     .smoap path for the post-completion hand-off to SMOClient."""
@@ -549,6 +555,7 @@ def _run_setup_wizard_with_smoap(smoap_path: str) -> None:
     run_setup_wizard(smoap_path)
 
 
+@_visible_errors("Setup wizard")
 def _run_setup_wizard_no_smoap() -> None:
     """Module-level subprocess entry: open the wizard standalone. Used
     by the `/setup` slash command in SMOClient and by direct
