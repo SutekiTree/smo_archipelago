@@ -43,10 +43,12 @@ GAME_NAME = "Spicy Meatball Overdrive"
 class SMOClientCommandProcessor(ClientCommandProcessor):
     """`/`-prefixed commands typed into the Kivy command bar.
 
-    The pure parsing for grant/capture/kingdom/label lives in
-    `commands.parse_command()` so the wire payload matches what a real
-    AP-issued item / Channel-A label would produce. Each `_cmd_*`
-    method delegates to it, then schedules the Switch send.
+    Item injection lives on the AP server console (`/send <slot> <item>`)
+    not here — the AP-received path in `_handle_ap_package` is the sole
+    producer of ItemMsgs. The commands surviving on this processor are
+    debug utilities only: `/label` (visual test of the Channel-A cutscene
+    hook), `/smo_status` (read-only tracker state), `/inject_deathlink`
+    (synthesize a KillMsg without a second slot).
     """
 
     def _result_to_output(self, result) -> None:
@@ -57,70 +59,6 @@ class SMOClientCommandProcessor(ClientCommandProcessor):
             for line in result.info.splitlines():
                 self.output(line)
 
-    def _send_item(self, msg: ItemMsg, sender: str = "command") -> None:
-        """Persist into BridgeState (so reconnect-replay survives) and ship
-        to the Switch. Mirrors what `_handle_ap_package` does on a real
-        ReceivedItems."""
-        ctx: SMOContext = self.ctx  # type: ignore[assignment]
-        from .protocol import ItemRef
-        ref = ItemRef(
-            kind=msg.kind,
-            kingdom=msg.kingdom,
-            shine_id=msg.shine_id,
-            cap=msg.cap,
-            name=msg.name,
-            hack_name=msg.hack_name,
-            # M-color: carry the wire classification onto the persisted
-            # ItemRef so HELLO replays restore the same palette routing the
-            # original send had.
-            classification=msg.classification,
-        )
-        ctx.state.add_received_item(ItemEvent(item=ref, sender=sender))
-        if ctx.switch is not None:
-            async_start(ctx.switch.send_item(msg), name="cmd send_item")
-            self.output(
-                f"sent {msg.kind} kingdom={msg.kingdom!r} "
-                f"shine_id={msg.shine_id!r} cap={msg.cap!r}"
-            )
-        else:
-            self.output("(no Switch connected — item recorded but not sent)")
-
-    def _cmd_grant(self, *args: str) -> bool:
-        """Inject a kingdom-specific moon item directly to the Switch.
-
-        Example: /grant Cascade Kingdom Power Moon
-        """
-        ctx: SMOContext = self.ctx  # type: ignore[assignment]
-        result = parse_command("grant " + " ".join(args), ctx.dp, ctx.state, ctx.capture_map)
-        self._result_to_output(result)
-        if result.item is not None:
-            self._send_item(result.item)
-        return True
-
-    def _cmd_capture(self, *args: str) -> bool:
-        """Inject a capture-unlock item directly to the Switch.
-
-        Example: /capture Goomba
-        """
-        ctx: SMOContext = self.ctx  # type: ignore[assignment]
-        result = parse_command("capture " + " ".join(args), ctx.dp, ctx.state, ctx.capture_map)
-        self._result_to_output(result)
-        if result.item is not None:
-            self._send_item(result.item)
-        return True
-
-    def _cmd_kingdom(self, *args: str) -> bool:
-        """Inject a kingdom-unlock item directly to the Switch.
-
-        Example: /kingdom Sand
-        """
-        ctx: SMOContext = self.ctx  # type: ignore[assignment]
-        result = parse_command("kingdom " + " ".join(args), ctx.dp, ctx.state, ctx.capture_map)
-        self._result_to_output(result)
-        if result.item is not None:
-            self._send_item(result.item)
-        return True
-
     def _cmd_label(self, *args: str) -> bool:
         """Push a Channel-A moon-label string straight to the Switch.
 
@@ -129,7 +67,7 @@ class SMOClientCommandProcessor(ClientCommandProcessor):
         Example: /label Sent Cap Power Moon -> P3
         """
         ctx: SMOContext = self.ctx  # type: ignore[assignment]
-        result = parse_command("label " + " ".join(args), ctx.dp, ctx.state, ctx.capture_map)
+        result = parse_command("label " + " ".join(args), ctx.state)
         self._result_to_output(result)
         if result.label is not None and ctx.switch is not None:
             async_start(ctx.switch.send_moon_label(result.label), name="cmd send_moon_label")
@@ -141,7 +79,7 @@ class SMOClientCommandProcessor(ClientCommandProcessor):
     def _cmd_smo_status(self) -> bool:
         """Show SMOClient tracker state (items received, checks, captures)."""
         ctx: SMOContext = self.ctx  # type: ignore[assignment]
-        result = parse_command("status", ctx.dp, ctx.state, ctx.capture_map)
+        result = parse_command("status", ctx.state)
         self._result_to_output(result)
         return True
 

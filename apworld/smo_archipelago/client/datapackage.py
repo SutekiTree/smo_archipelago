@@ -45,7 +45,7 @@ class ClassifiedItem:
             kingdom=self.kingdom,
             shine_id=self.shine_id,
             cap=self.cap,
-            name=self.name if self.kind == ItemKind.OTHER else None,
+            name=self.name,
         )
 
 

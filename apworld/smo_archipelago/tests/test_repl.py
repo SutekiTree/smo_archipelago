@@ -1,29 +1,18 @@
-"""Unit tests for the bridge REPL command parser.
+"""Unit tests for the SMOClient command parser.
 
-These cover the pure `parse_command` function — no asyncio, no stdin.
-The I/O loop is exercised end-to-end via Ryujinx playtest, not unit tests.
+Covers the pure `parse_command` function — no asyncio, no GUI. Item
+injection commands (`/grant`, `/capture`, `/kingdom`) were removed
+once the AP-received path was fixed to carry `name` over the wire;
+use `/send <slot> <item>` on the AP server console instead. The
+surviving commands here are debug utilities.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
-from client.datapackage import DataPackage
-from client.protocol import ItemKind
 from client.commands import parse_command
 from client.state import BridgeState
-
-
-# Resolve the in-repo apworld data dir so tests use the real categories.
-_APWORLD = Path(__file__).resolve().parents[1] / "data"
-
-
-@pytest.fixture
-def dp() -> DataPackage:
-    assert _APWORLD.exists(), f"apworld data missing: {_APWORLD}"
-    return DataPackage(apworld_data_dir=_APWORLD)
 
 
 @pytest.fixture
@@ -31,186 +20,89 @@ def state() -> BridgeState:
     return BridgeState()
 
 
-def test_empty_line_is_noop(dp, state):
-    r = parse_command("", dp, state)
-    assert r.item is None and r.error is None and r.info is None and not r.quit
+def test_empty_line_is_noop(state):
+    r = parse_command("", state)
+    assert r.label is None and r.error is None and r.info is None and not r.quit
 
 
-def test_whitespace_only_is_noop(dp, state):
-    r = parse_command("   \t  ", dp, state)
-    assert r.item is None and r.error is None
+def test_whitespace_only_is_noop(state):
+    r = parse_command("   \t  ", state)
+    assert r.label is None and r.error is None
 
 
-def test_help_command(dp, state):
-    r = parse_command("help", dp, state)
-    assert r.info is not None and "grant" in r.info and "capture" in r.info
-    assert r.item is None
+def test_help_command(state):
+    r = parse_command("help", state)
+    assert r.info is not None
+    assert "label" in r.info
+    assert "smo_status" in r.info
+    assert "/send" in r.info  # points users at the AP-server console
+    assert r.label is None
 
 
-def test_help_alias_h(dp, state):
-    r = parse_command("h", dp, state)
-    assert r.info is not None and "grant" in r.info
+def test_help_alias_h(state):
+    r = parse_command("h", state)
+    assert r.info is not None and "label" in r.info
 
 
-def test_quit(dp, state):
-    assert parse_command("quit", dp, state).quit
-    assert parse_command("exit", dp, state).quit
-    assert parse_command("q", dp, state).quit
-    assert parse_command("QUIT", dp, state).quit  # case-insensitive command
+def test_quit(state):
+    assert parse_command("quit", state).quit
+    assert parse_command("exit", state).quit
+    assert parse_command("q", state).quit
+    assert parse_command("QUIT", state).quit  # case-insensitive command
 
 
-def test_unknown_command(dp, state):
-    r = parse_command("foobar arg", dp, state)
+def test_unknown_command(state):
+    r = parse_command("foobar arg", state)
     assert r.error is not None and "foobar" in r.error
-    assert r.item is None
+    assert r.label is None
 
 
-def test_grant_kingdom_specific_power_moon(dp, state):
-    r = parse_command("grant Cascade Kingdom Power Moon", dp, state)
-    assert r.error is None, r.error
-    assert r.item is not None
-    assert r.item.kind == "moon"
-    assert r.item.kingdom == "Cascade"
-    assert r.item.shine_id == "Power Moon"
-    assert r.item.from_ == "repl"
+def test_removed_grant_command_is_unknown(state):
+    """`/grant` is gone — use `/send <slot> <item>` on the AP server console."""
+    r = parse_command("grant Cascade Kingdom Power Moon", state)
+    assert r.error is not None and "grant" in r.error
 
 
-def test_grant_kingdom_multi_moon(dp, state):
-    r = parse_command("grant Cascade Kingdom Multi-Moon", dp, state)
+def test_removed_capture_command_is_unknown(state):
+    r = parse_command("capture Goomba", state)
+    assert r.error is not None and "capture" in r.error
+
+
+def test_removed_kingdom_command_is_unknown(state):
+    r = parse_command("kingdom Sand", state)
+    assert r.error is not None and "kingdom" in r.error
+
+
+def test_label_command(state):
+    r = parse_command("label Sent Cap Power Moon -> P3", state)
     assert r.error is None
-    assert r.item is not None
-    assert r.item.kingdom == "Cascade"
-    assert r.item.shine_id == "Multi-Moon"
+    assert r.label is not None
+    assert r.label.text == "Sent Cap Power Moon -> P3"
+    assert r.label.seq == 999999
 
 
-def test_grant_no_arg(dp, state):
-    r = parse_command("grant", dp, state)
+def test_label_no_arg(state):
+    r = parse_command("label", state)
     assert r.error is not None and "usage" in r.error
 
 
-def test_grant_non_moon_item_rejected(dp, state):
-    """`grant` is moon-only; use `capture`/`kingdom` for those."""
-    r = parse_command("grant Goomba", dp, state)
-    # "Goomba" classifies as CAPTURE (it's in items.json with the Capture category),
-    # so grant rejects it with a hint.
-    assert r.error is not None and "moon" in r.error
-
-
-def test_capture_command(dp, state):
-    r = parse_command("capture Goomba", dp, state)
-    assert r.error is None
-    assert r.item is not None
-    assert r.item.kind == "capture"
-    assert r.item.cap == "Goomba"
-    assert r.item.from_ == "repl"
-    # Without a CaptureMap argument hack_name stays None.
-    assert r.item.hack_name is None
-
-
-def test_capture_command_with_capture_map_populates_hack_name(dp, state, tmp_path):
-    """REPL `capture <cap>` populates hack_name via the reverse CaptureMap."""
-    from client.maps import CaptureMap
-    import json
-    cm_path = tmp_path / "capture_map.json"
-    cm_path.write_text(json.dumps([
-        {"hack_name": "Kuribo", "cap": "Goomba"},
-    ]), encoding="utf-8")
-    cm = CaptureMap(cm_path)
-
-    r = parse_command("capture Goomba", dp, state, capture_map=cm)
-    assert r.item is not None
-    assert r.item.kind == "capture"
-    assert r.item.cap == "Goomba"
-    assert r.item.hack_name == "Kuribo"
-
-
-def test_capture_command_with_capture_map_identity_passthrough(dp, state, tmp_path):
-    """1:1 cap names without a map entry pass through identically."""
-    from client.maps import CaptureMap
-    import json
-    cm_path = tmp_path / "capture_map.json"
-    cm_path.write_text(json.dumps([]), encoding="utf-8")  # empty
-    cm = CaptureMap(cm_path)
-
-    r = parse_command("capture Frog", dp, state, capture_map=cm)
-    assert r.item is not None
-    assert r.item.hack_name == "Frog"  # identity passthrough
-
-
-def test_capture_no_arg(dp, state):
-    r = parse_command("capture", dp, state)
-    assert r.error is not None and "usage" in r.error
-
-
-def test_kingdom_command(dp, state):
-    r = parse_command("kingdom Sand", dp, state)
-    assert r.error is None
-    assert r.item is not None
-    assert r.item.kind == "kingdom"
-    assert r.item.kingdom == "Sand"
-    assert r.item.from_ == "repl"
-
-
-def test_kingdom_no_arg(dp, state):
-    r = parse_command("kingdom", dp, state)
-    assert r.error is not None and "usage" in r.error
-
-
-def test_status_empty_state(dp, state):
-    r = parse_command("status", dp, state)
+def test_status_empty_state(state):
+    r = parse_command("status", state)
     assert r.info is not None
     assert "received_items=0" in r.info
     assert "checked_locations=0" in r.info
 
 
-def test_grant_default_classification_is_filler(dp, state):
-    """Without --class, REPL grants default to filler so the on-wire
-    classification field is always present and unambiguous."""
-    r = parse_command("grant Cascade Kingdom Power Moon", dp, state)
-    assert r.error is None
-    assert r.item is not None and r.item.classification == "filler"
-
-
-def test_grant_with_class_flag_progression(dp, state):
-    r = parse_command("grant Cascade Kingdom Power Moon --class=progression", dp, state)
-    assert r.error is None, r.error
-    assert r.item is not None
-    assert r.item.classification == "progression"
-    # Flag must be stripped from the item name.
-    assert r.item.kingdom == "Cascade"
-    assert r.item.shine_id == "Power Moon"
-
-
-def test_grant_with_class_flag_at_arbitrary_position(dp, state):
-    r = parse_command("grant Cascade --class=trap Kingdom Power Moon", dp, state)
-    assert r.error is None
-    assert r.item is not None
-    assert r.item.classification == "trap"
-    assert r.item.shine_id == "Power Moon"
-
-
-def test_grant_with_invalid_class_flag(dp, state):
-    r = parse_command("grant Cap Kingdom Power Moon --class=junk", dp, state)
-    assert r.error is not None and "junk" in r.error
-
-
-def test_capture_with_class_flag(dp, state):
-    r = parse_command("capture Goomba --class=useful", dp, state)
-    assert r.error is None
-    assert r.item.classification == "useful"
-    assert r.item.cap == "Goomba"
-
-
-def test_status_after_received_item(dp, state):
-    # Inject a moon item directly into state to simulate prior REPL activity.
+def test_status_after_received_item(state):
+    # Inject a moon item directly into state to simulate prior activity.
     from client.protocol import ItemRef
     from client.state import ItemEvent
 
     state.add_received_item(ItemEvent(
         item=ItemRef(kind="moon", kingdom="Cap", shine_id="Power Moon"),
-        sender="repl",
+        sender="P2",
     ))
-    r = parse_command("status", dp, state)
+    r = parse_command("status", state)
     assert "received_items=1" in r.info
     assert "Cap=1" in r.info
     assert "Power Moon" in r.info

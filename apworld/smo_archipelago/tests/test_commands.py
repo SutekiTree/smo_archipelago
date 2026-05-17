@@ -1,11 +1,8 @@
-"""Smoke test that SMOClientCommandProcessor's `_cmd_grant` produces the
-same wire payload as `parse_command()` on the equivalent line.
+"""Tests for SMOClientCommandProcessor — the `/`-command surface in
+`context.py` — plus a regression test for the AP-server-issued ItemMsg
+name-resolution path.
 
-The pure parser is exercised exhaustively in test_repl.py. This test
-covers the `/`-command surface in context.py — verifying that the
-Phase 5 GUI command bar → ClientCommandProcessor → Switch send path
-goes through the same `commands.parse_command` and produces an
-identical `ItemMsg`.
+The pure parser is exercised in test_repl.py.
 
 Gated on Archipelago availability (subclassing CommonContext requires
 CommonClient on sys.path) — same pattern as test_deathlink.py.
@@ -59,38 +56,6 @@ class _StubSwitch:
 
 
 @pytest.mark.asyncio
-async def test_cmd_grant_produces_same_wire_payload_as_parse_command():
-    import asyncio
-    state = BridgeState()
-    ctx = SMOContext(
-        server_address=None, password=None,
-        state=state,
-        datapackage=DataPackage(apworld_data_dir=_APWORLD_DATA),
-        shine_map=ShineMap(),
-        capture_map=CaptureMap(),
-    )
-    ctx.auth = "Mario"
-    sw = _StubSwitch()
-    ctx.switch = sw  # type: ignore[assignment]
-
-    proc = SMOClientCommandProcessor(ctx)
-    proc._cmd_grant("Cascade", "Kingdom", "Power", "Moon")
-    # _cmd_grant schedules async_start(send_item); yield once so it runs.
-    await asyncio.sleep(0)
-
-    assert len(sw.items) == 1
-    item = sw.items[0]
-    assert item.kind == "moon"
-    assert item.kingdom == "Cascade"
-    assert item.shine_id == "Power Moon"
-    assert item.from_ == "repl"
-
-    # State mirror updated too — reconnect-replay must see this.
-    assert len(state.received_items) == 1
-    assert state.received_items[0].item.kingdom == "Cascade"
-
-
-@pytest.mark.asyncio
 async def test_cmd_inject_deathlink_routes_killmsg_to_switch():
     import asyncio
     ctx = SMOContext(
@@ -111,3 +76,65 @@ async def test_cmd_inject_deathlink_routes_killmsg_to_switch():
     assert len(sw.kills) == 1
     assert sw.kills[0].source == "Tester"
     assert sw.kills[0].cause == "for science"
+
+
+@pytest.mark.asyncio
+async def test_ap_received_item_carries_name_for_moon():
+    """Regression: AP-issued moons must reach the Switch with their name.
+
+    The bug: `ClassifiedItem.to_ref()` used to zero `name` for non-OTHER
+    kinds, so MOON/CAPTURE/KINGDOM items arrived on the Switch with no
+    `name` field (stripped by `_strip_none`) and rendered as `?` in-game.
+    """
+    import asyncio
+    state = BridgeState()
+    ctx = SMOContext(
+        server_address=None, password=None,
+        state=state,
+        datapackage=DataPackage(apworld_data_dir=_APWORLD_DATA),
+        shine_map=ShineMap(),
+        capture_map=CaptureMap(),
+    )
+    ctx.auth = "Mario"
+    sw = _StubSwitch()
+    ctx.switch = sw  # type: ignore[assignment]
+
+    # Pretend the AP DataPackage handshake completed.
+    ctx.dp.item_id_to_name[42] = "Cascade Kingdom Power Moon"
+    ctx.dp.item_name_to_id["Cascade Kingdom Power Moon"] = 42
+
+    await ctx._handle_ap_package("ReceivedItems", {
+        "items": [{"item": 42, "player": 0, "flags": 0}],
+    })
+    await asyncio.sleep(0)
+
+    assert len(sw.items) == 1
+    msg = sw.items[0]
+    assert msg.kind == "moon"
+    assert msg.kingdom == "Cascade"
+    assert msg.shine_id == "Power Moon"
+    assert msg.name == "Cascade Kingdom Power Moon"
+
+    # Wire payload must include the name (not stripped as None).
+    from client.protocol import encode
+    wire = encode(msg).decode("utf-8")
+    assert '"name":"Cascade Kingdom Power Moon"' in wire
+
+
+def test_to_ref_preserves_name_for_all_kinds():
+    """Pure unit-level guard against re-introducing the OTHER-only conditional."""
+    from client.datapackage import ClassifiedItem
+    from client.protocol import ItemKind
+
+    for kind, kwargs in [
+        (ItemKind.MOON, {"kingdom": "Cascade", "shine_id": "Power Moon"}),
+        (ItemKind.CAPTURE, {"cap": "Goomba"}),
+        (ItemKind.KINGDOM, {"kingdom": "Sand"}),
+        (ItemKind.OTHER, {}),
+    ]:
+        ci = ClassifiedItem(kind=kind, name=f"test-{kind.value}", **kwargs)
+        ref = ci.to_ref()
+        assert ref.name == f"test-{kind.value}", (
+            f"to_ref() dropped name for kind={kind.value!r}; "
+            f"this is the AP-server `?`-display regression."
+        )
