@@ -35,4 +35,22 @@ std::uint8_t kingdomBitForWorldId(int world_id);
 // resolve "which kingdom is Mario in" inside its hot path.
 void installDepositKingdomLookupSymbol();
 
+// Map a SMO HomeStage name (e.g. "ForestWorldHomeStage") to the apworld
+// kingdom short name ("Wooded"). Returns nullptr for unknown stages.
+// Source of truth is the same KINGDOM_FOR_HOMESTAGE table in
+// scripts/extract_shine_map.py.
+const char* kingdomShortFromHomeStage(const char* home_stage);
+
+// Map a SMO internal worldId (0..16) to the apworld kingdom short name.
+// Composes kingdomBitForWorldId + kingdomForBit so the 4 SMO/apworld order
+// mismatches documented on kingdomBitForWorldId are honored — direct
+// indexing into kKingdoms[] would mis-route Sea↔Snow and Boss↔Sky for the
+// M7 Path A Seaside/Snow gate. Returns nullptr for unknown ids.
+const char* kingdomShortFromWorldId(int world_id);
+
+// Inverse of kingdomShortFromWorldId. Returns -1 for unknown short names.
+// Composes kingdomBitFor + scan over kingdomBitForWorldId so the inverse
+// also honors the 4 SMO/apworld swaps.
+int worldIdFromKingdomShort(const char* kingdom_short);
+
 }  // namespace smoap::game

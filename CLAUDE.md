@@ -123,7 +123,23 @@ port **17777**. Full wire format: `docs/wire-protocol.md`.
   Validated in Ryujinx (2026-05-16): six successive save loads, each triggering re-HELLO → `hello_ack` → `checked_replay: 2 entries` → heartbeats resume; session ended on clean shutdown, no `PrintGuestStackTrace`. Host tests: 27 in `test_json` (encoder/LineBuffer/overflow/round-trip) + all `test_protocol` including new `decode_checked_replay_truncates_past_cap` and `decode_field_overlong_string_truncates`. Outbound `StateChunk::shines` / `StateChunk::captures` are still `std::vector` but populated by stub enumerate functions; convert when M5/M6 enumerate bodies land.
 - **M6 phase C** (deferred): kingdom unlocks via `unlockWorld` (the user's "less ideal" fallback should it turn out the AP-credit moon counter doesn't fully gate kingdom progression in every case), plus M4.5 snapshot enumerate bodies (`enumerateOwnedShines` / `enumerateOwnedCaptures`). Symbols already in `scripts/check_nso_symbols.py`. Phase A's REPL-injection flow + the new phase B grant path are the test infrastructure. **NB**: when enumerate bodies land, the StateChunk vector fields will need the same treatment described in M6.1, or the worker-thread allocator NULL-deref will re-emerge on first snapshot send.
 - **M6 phase D** — moon-deposit debit (HUD ticks DOWN on Odyssey hand-toss) — **DONE 2026-05-17 (Ryujinx-verified).** Was a real bug: M6-A's HUD was AP-credit-only but had no debit path, so Mario could re-spend the same AP-credit moons forever at the Odyssey ship. Fix is a hook on `GameDataFunction::addPayShine(GameDataHolderWriter, s32)` — the public wrapper for the per-toss spend (the `GameDataFile::addPayShine(s32)` member is inlined into all callers in 1.0.0 main.nso and not present in dynsym; the `GameDataFunction::` wrapper IS, same hookable-wrapper-over-inlined-member pattern as `addHackDictionary`). Hook also covers `GameDataFunction::addPayShineCurrentAll(GameDataHolderWriter)` (rare "pay everything in current kingdom" path). Both clamp at 0 to enforce per-kingdom isolation: a Cap-Odyssey toss can NEVER decrement Wooded credit, even when Cap balance is 0. Also new: `ShineNumGetHook` now returns `ap_moons_kingdom[currentKingdom_bit]` (per-kingdom, not the sum-across-all from M6-A) so the HUD shows exactly what Mario can spend HERE, matching vanilla post-clear `getCurrentShineNum` semantics. Current kingdom resolved via `GameDataFunction::getCurrentWorldIdNoDevelop` (third new symbol; the `NoDevelop` variant clamps the develop-state `-1` to 0). World-id ordering verified against OdysseyDecomp — **NB**: it does NOT match our `kKingdoms[]`; SMO's id 8/9 are Sea/Snow but our bits 8/9 are Snow/Seaside, and SMO id 11/12 are Boss/Sky but our bits 11/12 are Bowser/Ruined. `kingdomBitForWorldId(int)` in [KingdomUnlock.cpp](switch-mod/src/game/KingdomUnlock.cpp) encodes the four-swap translation. Wire-protocol additions: `DepositMsg` (Switch→Bridge, with monotonic per-session `seq`), `DepositAckMsg` (Bridge→Switch, idempotent re-ack of repeated seqs), `OutstandingMsg` (Bridge→Switch, authoritative per-kingdom balance from the AP data store). Per-kingdom outstanding persisted in AP data store under key `smo_outstanding_<team>_<slot>` via `set_notify` + `Set` with `replace` op (single bridge, AP server linearizes back-to-back `Set`s in a single coroutine so no read-modify-write race). Switch keeps unacked deposits in a 32-entry ring; replays on reconnect; `ApClient::threadMain` clears it on save-load-driven re-HELLO (NOT on ordinary disconnects, so a network blip doesn't lose pending deposits). `bridge_connected` atomic gates both hooks: offline → `ShineNumGetHook` returns 0 (Odyssey UI refuses fuel) AND `AddPayShineHook` skips Orig (vanilla PayShine can't drift from AP credit). **Critical wire-protocol invariant in `switch_server.py::_on_hello`**: when sending the post-HELLO item replay, **skip Moon items** — `OutstandingMsg` already carries the authoritative per-kingdom balance, and re-sending Moon items would double-count via the mod's `applyOnFrame` fetch_add. Captures + kingdoms still replay through the existing loop. Tests: 12 new in `test_outstanding.py` + 5 new in `test_protocol.py` + 5 new in `test_switch_server.py` + 7 new in `test_protocol.cpp`. Playtest 2026-05-17: HUD per-kingdom decrement on hand-toss confirmed end-to-end. Latent bug found + fixed during playtest: `install_apworld.py` writes to its OWN checkout's `vendor/Archipelago/custom_worlds/`, not the main checkout's — when working in a worktree you must copy the worktree's `smo.apworld` to the main checkout's `vendor/Archipelago/custom_worlds/` if the user launches SMOClient from the main checkout's Launcher (which they typically do). Symptom is `unknown message type from Switch: deposit` in the bridge log even though `AddPayShineHook` fired on the Switch. See [Working from a worktree section](#working-from-a-worktree--install_apworldpy-gotcha) below.
-- **M7**: capture lock + goal detection
+- **M7 Path A — kingdom-order gate** (2026-05-17): **DONE.** Ryujinx-verified end-to-end on a fresh save with the post-Sand fork: picked the "bottom slot" (which displays as Lake post-substitution, where Wooded would have been), arrived in Lake with full normal visuals. Enforces linear progression at SMO's two world-map bifurcations — post-Sand the player must clear Lake (≥8 AP-credit Lake moons) before Wooded, post-Metro must clear Snow (≥10 AP-credit Snow moons) before Seaside. Pairs with the apworld linear-chain `regions.json` already on main (`24a86dc apworld: linear kingdom chain + drop master Peace toggle`) so AP doesn't pre-grant Lake/Snow moons that would trivially satisfy the gate.
+  - **Three-layer substitution architecture** (8 hooks, all in [WorldMapSelectHook.cpp](switch-mod/src/hooks/WorldMapSelectHook.cpp)):
+    1. **Layer 1 — regular world-map UI** (4 hooks on `GameDataFunction::getUnlockWorldIdForWorldMap` by ptr-type overload). Catches Odyssey world-map opens AFTER the fork has been resolved. Verified firing as LiveActor + Scene overloads.
+    2. **Layer 2 — post-Multi-Moon FORK cinematic** (2 hooks on `GameDataFunction::calcNextLockedWorldIdForWorldMap` by ptr-type overload). Catches the one-time "newly unlocked" presentation that plays right after collecting a kingdom's Multi-Moon. Verified firing as the Scene overload on slot 0 in the fresh-save fork playtest — this is what made the fork case work cleanly.
+    3. **Layer 3 — stage-commit BACKSTOP** (2 hooks on `GameDataFunction::tryChangeNextStageWith{DemoWorldWarp,WorldWarpHole}`). Substitutes the `stage` arg if Layers 1+2 both miss. Substitution at this layer can produce broken cutscene visuals (Mario in destination kingdom without the Odyssey, frozen camera — see prior-iteration failure log below). Logs at WARN level so any backstop fire is a loud signal that an upstream catch needs adding.
+  - **All substitutions go through the same helper** (`substituteSlotWorldId` in WorldMapSelectHook.cpp): if Orig returns a worldId for a gated kingdom whose prereq isn't met, substitute the prereq's worldId; otherwise pass Orig's value through. Log is throttled on (origin, index, orig_id) so per-frame UI re-queries don't flood.
+  - **Gate policy lives in [KingdomOrderGate.{hpp,cpp}](switch-mod/src/game/KingdomOrderGate.cpp)** as a pure module — reads `ApState::ap_moons_kingdom[]` (populated by M6 phase A's ItemMsg handler) against thresholds `kLakeRequiredForWooded=8` and `kSnowRequiredForSeaside=10`. Supporting helpers in [KingdomUnlock.{hpp,cpp}](switch-mod/src/game/KingdomUnlock.cpp): `kingdomShortFromHomeStage` (stage-name routing), `kingdomShortFromWorldId` + `worldIdFromKingdomShort` (worldId↔kingdom mapping). The worldId helpers compose through M6 phase D's `kingdomBitForWorldId` so the four SMO/apworld order swaps (Sea/Snow, Boss/Sky) are honored — direct indexing into kKingdoms[] would mis-route the Seaside/Snow gate.
+  - **UX side effect**: when both Lake and Wooded would appear in the same menu (post-Sand fork), both slots show "Lake" until the gate is satisfied — one natural, one substituted. Picking either flies to Lake. Cleaner than missing the fork entirely; could be polished by hooking `getUnlockWorldNumForWorldMap` to suppress the duplicate, but that requires careful index-mapping and isn't required for the gate to function.
+  - **All 8 active symbols verified** in `scripts/check_nso_symbols.py` (HIT against SMO 1.0.0 main.nso). All symbol constants live in [HookSymbols.hpp](switch-mod/src/hooks/HookSymbols.hpp) under the "M7 Path A" section.
+  - **Iteration history (for future debugging — five attempts before landing on the working design)**:
+    1. **Skip Orig in `ChangeStageHook`** when destination is gated → world-map UI committed to the gated kingdom anyway; only that kingdom showed on next takeoff → soft-lock.
+    2. **Skip Orig in `DemoWorldWarpHook`** (post-Sand cutscene auto-flight) → cutscene played, Mario returned to Sand, same UI soft-lock.
+    3. **Substitute destination in `DemoWorldWarpHook`** (Wooded → Lake) → Mario landed in Lake but **no Odyssey ship, camera didn't follow Mario** — gated-kingdom cutscene assets were pre-loaded by earlier state-machine steps and stayed referenced after the destination flipped. Even nested-sanitizing the constructed `ChangeStageInfo` in a downstream `ChangeStageHook` didn't fix the visuals because the info object was already clean — the bug lives in the cutscene state, not the ChangeStageInfo.
+    4. **Hook `StageSceneStateWorldMap::exeDemoWorldSelect`** thinking it was the post-A-press confirmation handler → log proved it ONLY fires once per world-map open for the *opening animation* on the currently-highlighted (current) kingdom. The actual confirmation goes through `exeDemoWorldComment` → `exeExit` and on inspection neither of those receives the chosen kingdom in `mNextStageName` either: the world-map state machine carries the cursor position in a state-machine-local field and only writes to `mNextStageName` at the moment of commit via `tryChangeNextStageWithDemoWorldWarp`.
+    5. **Hook `isUnlockedWorld` to lie 'locked'** for gated kingdoms → the cursor could still land on Wooded; isUnlockedWorld isn't the cursor-selectability filter the world-map UI uses. Same playtest, **refuse `tryChange`** (return false without Orig) instead of substitute → SOFT-LOCKED the menu, only the previously-attempted gated kingdom showed next time (SMO's branch-selection state had registered "player picked Wooded" before tryChange was called).
+  - **Why Layer 1 alone wasn't enough**: the post-Multi-Moon fork is a one-time cinematic that bypasses the regular world-map UI's per-slot query. On a clean save with the fork visible, `getUnlockWorldIdForWorldMap` never fired — `calcNextLockedWorldIdForWorldMap` is the fork-specific equivalent. Layer 2 catches it.
+  - **Why Layer 3 exists despite the visual cost**: the playtest where Layer 2 wasn't yet wired showed `tryChange.Demo` firing with `stage='ForestWorldHomeStage'` for the fork — without an upstream catch, Mario would land in Wooded. Layer 3 ensures the gate is enforced as a last resort even if a future SMO update routes through a code path neither Layer 1 nor Layer 2 catches; the WARN log makes the visual cost visible as a signal to add the missing upstream catch.
 - **M8**: apworld extensions + in-game ImGui + polish (incl. dedicated AP-credit HUD overlay — see "What's definitely NOT done")
 
 ## Repository layout
@@ -589,3 +605,68 @@ appears in the moon-get cutscene). Real bridge↔AP Channel A use needs a
 live AP server so the `LocationScouts` warmup populates the
 `scout_cache` from which `_dispatch_check` synthesizes labels
 on-the-fly.
+
+## M7 Path A playtest loop
+
+After a build in this worktree (`cmake --build switch-mod/build`), deploy to
+Ryujinx. If the build was configured without `-DRYU_PATH` the post-build hook
+doesn't auto-deploy — either reconfigure with
+`-DRYU_PATH=C:/Users/maxwe/AppData/Roaming/Ryujinx` and rebuild, or copy
+manually:
+
+```pwsh
+$RYU = "$env:APPDATA\Ryujinx\mods\contents\0100000000010000\smo-archipelago"
+Copy-Item C:\Users\maxwe\Documents\smo_archipelago\.claude\worktrees\kind-matsumoto-562d93\switch-mod\build\subsdk9  $RYU\exefs\subsdk9
+Copy-Item C:\Users\maxwe\Documents\smo_archipelago\.claude\worktrees\kind-matsumoto-562d93\switch-mod\build\main.npdm $RYU\exefs\main.npdm
+```
+
+Tail the mod log in another pane:
+
+```pwsh
+Get-Content "$env:APPDATA\Ryujinx\sdcard\atmosphere\contents\0100000000010000\smoap.log" -Wait -Tail 80
+```
+
+**Validation cases**:
+
+1. **Fresh save, post-Sand Multi-Moon fork**: the "newly unlocked" cinematic
+   should present Lake at both slots (where Wooded would have been is now
+   Lake — duplicate is the documented UX cost). Picking the bottom slot
+   should fly to Lake with full normal visuals. Expected log:
+   ```
+   [wmap.menu.NextLocked.Scene] SUB slot=0 origId=3 (Wooded) -> prereqId=4 (Lake) have=0 need=8
+   [wmap.tryChange.Demo] FIRE stage='LakeWorldHomeStage' kingdom=Lake gated=0
+   ```
+   (No `BACKSTOP` line — Layer 2 caught it upstream of tryChange.)
+
+2. **Regular world-map open** (post-fork, any later save): same Wooded→Lake
+   substitution but via Layer 1:
+   ```
+   [wmap.menu.Id.Scene] SUB slot=3 origId=3 (Wooded) -> prereqId=4 (Lake) ...
+   ```
+
+3. **Allow path**: pick Lake (not gated) → no SUB line, no log noise, normal
+   flight.
+
+4. **Prereq satisfied**: grant 8 Lake moons via the AP server console
+   (`/send Mario Lake Kingdom Multi-Moon` ×3 = 9 ≥ 8), re-open world map →
+   Wooded appears as Wooded (no SUB), picking it flies cleanly.
+
+5. **Same flow for Snow/Seaside post-Metro fork** — symmetric, threshold
+   `kSnowRequiredForSeaside = 10`.
+
+**If you ever see a `BACKSTOP substituting` WARN** in the log: a code path
+neither Layer 1 nor Layer 2 caught reached tryChange. Mario will still go to
+the prereq kingdom but with potentially broken cutscene visuals (Odyssey
+missing, frozen camera). Add a new hook for the missing upstream entry point;
+the BACKSTOP guarantees functional gating in the meantime.
+
+**Kill switch**: flip `kGateEnabled = false` in
+[WorldMapSelectHook.cpp](switch-mod/src/hooks/WorldMapSelectHook.cpp) to
+disable all substitution while keeping the throttled "SUB" log lines that
+show what WOULD have been substituted — useful for debugging without
+modifying game behavior.
+
+**REPL commands referenced above (`/grant ...`)** were removed in M6 phase D's
+playtest cleanup — see the renamed commands section above. To grant Lake
+moons for case 4, use the AP server console:
+`/send Mario Lake Kingdom Multi-Moon` (×3 = 9 moons, satisfies threshold 8).

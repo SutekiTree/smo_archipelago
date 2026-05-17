@@ -63,6 +63,8 @@ void installCappyMessageTextHooks();
 void installCappyMessengerSymbols();
 // M-color: per-shine palette override (AP classification -> moon color).
 void installShineAppearanceHook();
+// M7 Path A: world-map kingdom-select intercept + AP-moon-count gate.
+void installWorldMapSelectHook();
 }  // namespace smoap::hooks
 
 namespace smoap::game {
@@ -215,6 +217,9 @@ extern "C" void exl_main(void* /*x0*/, void* /*x1*/) {
 
     SMOAP_LOG_INFO("installing ShineAppearanceHook (AP-classification moon color)");
     smoap::hooks::installShineAppearanceHook();
+
+    SMOAP_LOG_INFO("installing WorldMapSelectHook (M7 Path A kingdom-order gate)");
+    smoap::hooks::installWorldMapSelectHook();
 
     SMOAP_LOG_INFO("=== exl_main END (waiting for GameSystem::init to fire) ===");
 }

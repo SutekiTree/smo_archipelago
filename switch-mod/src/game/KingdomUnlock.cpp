@@ -72,4 +72,65 @@ std::uint8_t kingdomBitForWorldId(int world_id) {
     return kWorldIdToBit[world_id];
 }
 
+namespace {
+
+// Mirror of KINGDOM_FOR_HOMESTAGE in scripts/extract_shine_map.py — keep in
+// sync. Names match kKingdoms above (so chained lookups
+// homeStage→short→bit→worldId all resolve cleanly via kingdomBitFor +
+// kingdomBitForWorldId).
+struct HomeStageRow {
+    const char* home_stage;
+    const char* kingdom_short;
+};
+constexpr HomeStageRow kHomeStageToKingdom[] = {
+    {"CapWorldHomeStage",        "Cap"},
+    {"WaterfallWorldHomeStage",  "Cascade"},
+    {"SandWorldHomeStage",       "Sand"},
+    {"LakeWorldHomeStage",       "Lake"},
+    {"ForestWorldHomeStage",     "Wooded"},
+    {"CloudWorldHomeStage",      "Cloud"},
+    {"ClashWorldHomeStage",      "Lost"},
+    {"CityWorldHomeStage",       "Metro"},
+    {"SnowWorldHomeStage",       "Snow"},
+    {"SeaWorldHomeStage",        "Seaside"},
+    {"LavaWorldHomeStage",       "Luncheon"},
+    {"AttackWorldHomeStage",     "Ruined"},
+    {"SkyWorldHomeStage",        "Bowser"},
+    {"MoonWorldHomeStage",       "Moon"},
+    {"PeachWorldHomeStage",      "Mushroom"},
+    {"Special1WorldHomeStage",   "Dark Side"},
+    {"Special2WorldHomeStage",   "Darker Side"},
+};
+
+}  // namespace
+
+const char* kingdomShortFromHomeStage(const char* home_stage) {
+    if (!home_stage || !*home_stage) return nullptr;
+    for (const auto& row : kHomeStageToKingdom) {
+        if (std::strcmp(home_stage, row.home_stage) == 0) return row.kingdom_short;
+    }
+    return nullptr;
+}
+
+const char* kingdomShortFromWorldId(int world_id) {
+    // Route via kingdomBitForWorldId so the SMO↔apworld order swaps
+    // (Sea/Snow, Boss/Sky — see hpp comment) are honored. Direct
+    // kKingdoms[world_id] would mis-route the Seaside/Snow M7 gate.
+    const std::uint8_t bit = kingdomBitForWorldId(world_id);
+    if (bit == 0xff) return nullptr;
+    const char* short_name = kingdomForBit(bit);
+    return (short_name && *short_name) ? short_name : nullptr;
+}
+
+int worldIdFromKingdomShort(const char* kingdom_short) {
+    const std::uint8_t bit = kingdomBitFor(kingdom_short);
+    if (bit == 0xff) return -1;
+    // Scan the SMO worldId -> bit table for the worldId that maps to this
+    // bit. 17 entries, cheap, runs at most twice per gated kingdom-pick.
+    for (int wid = 0; wid < 17; ++wid) {
+        if (kingdomBitForWorldId(wid) == bit) return wid;
+    }
+    return -1;
+}
+
 }  // namespace smoap::game

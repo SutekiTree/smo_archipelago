@@ -303,6 +303,59 @@ inline constexpr const char* kRsIsActiveCapMessage =
 // (and other non-Shine actors) where Shine-class field offsets aren't valid.
 
 // =============================================================================
+// M7 Path A — world-map kingdom-order gate (three-layer architecture).
+// =============================================================================
+//
+// Forces linear progression at SMO's two world-map bifurcations by substituting
+// gated worldIds with their prerequisite kingdom's worldId at every layer the
+// world-map UI / fork cinematic can ask "what kingdom is at this slot?". From
+// SMO's perspective the gated kingdom is never offered.
+//
+// Eight symbols total, organized in three layers:
+//
+//   Layer 1 — regular world-map UI per-slot query (4 overloads by ptr-type):
+//     The Odyssey's world map, opened any time after the post-Sand /
+//     post-Metro fork has been resolved, calls these to populate slot N with
+//     a worldId. Verified firing on LiveActor + Scene overloads in playtest.
+//
+//   Layer 2 — post-Multi-Moon FORK cinematic per-slot query (2 overloads):
+//     The one-time "newly unlocked" presentation that plays right after
+//     collecting a kingdom's Multi-Moon uses these instead of Layer 1.
+//     Verified firing as the Scene overload in the 2026-05-17 fork playtest.
+//
+//   Layer 3 — actual stage-commit chokepoint (BACKSTOP, 2 functions):
+//     Substitutes the `stage` arg if neither Layer 1 nor Layer 2 caught the
+//     destination. Substitution at this layer can produce broken cutscene
+//     visuals (Mario in destination kingdom without the Odyssey, frozen
+//     camera — per CLAUDE.md M7 section's prior-iteration failure log), so
+//     the WARN log on a fired backstop is a signal that an upstream catch
+//     needs adding.
+//
+// All 8 verified against SMO 1.0.0 main.nso via scripts/check_nso_symbols.py.
+
+// ---- Layer 1: regular world-map UI ----
+inline constexpr const char* kGameDataFunctionGetUnlockWorldIdForWorldMap_Holder =
+    "_ZN16GameDataFunction27getUnlockWorldIdForWorldMapEPK14GameDataHolderi";
+inline constexpr const char* kGameDataFunctionGetUnlockWorldIdForWorldMap_LayoutActor =
+    "_ZN16GameDataFunction27getUnlockWorldIdForWorldMapEPKN2al11LayoutActorEi";
+inline constexpr const char* kGameDataFunctionGetUnlockWorldIdForWorldMap_Scene =
+    "_ZN16GameDataFunction27getUnlockWorldIdForWorldMapEPKN2al5SceneEi";
+inline constexpr const char* kGameDataFunctionGetUnlockWorldIdForWorldMap_LiveActor =
+    "_ZN16GameDataFunction27getUnlockWorldIdForWorldMapEPKN2al9LiveActorEi";
+
+// ---- Layer 2: post-Multi-Moon FORK cinematic ----
+inline constexpr const char* kGameDataFunctionCalcNextLockedWorldIdForWorldMap_LayoutActor =
+    "_ZN16GameDataFunction32calcNextLockedWorldIdForWorldMapEPKN2al11LayoutActorEi";
+inline constexpr const char* kGameDataFunctionCalcNextLockedWorldIdForWorldMap_Scene =
+    "_ZN16GameDataFunction32calcNextLockedWorldIdForWorldMapEPKN2al5SceneEi";
+
+// ---- Layer 3: stage-commit BACKSTOP ----
+inline constexpr const char* kGameDataFunctionTryChangeNextStageWithDemoWorldWarp =
+    "_ZN16GameDataFunction35tryChangeNextStageWithDemoWorldWarpE20GameDataHolderWriterPKc";
+inline constexpr const char* kGameDataFunctionTryChangeNextStageWithWorldWarpHole =
+    "_ZN16GameDataFunction35tryChangeNextStageWithWorldWarpHoleE20GameDataHolderWriterPKc";
+
+// =============================================================================
 // Legacy / aliasing — kept so existing call sites don't break.
 // =============================================================================
 inline constexpr const char* kSeadGameSystemCtor       = kGameSystemInit;

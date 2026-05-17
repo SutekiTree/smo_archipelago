@@ -57,8 +57,17 @@ public:
     // before attempting any rs:: dispatch. Gives the StageScene time to
     // finish endInit + register its SceneObjHolder children (CapMessage
     // Director among them). Otherwise rs::isActiveCapMessage NULL-derefs
-    // on the un-registered director. ~2s @ 60fps.
-    static constexpr std::uint32_t kSceneSettleFrames = 120;
+    // on the un-registered director.
+    //
+    // Was 120 (~2s). Crashed in Ryujinx 2026-05-17 on the first non-null
+    // scene at the title→save-load boundary: 120 frames after the scene
+    // pointer appeared, isActiveCapMessage still NULL-deref'd inside
+    // CapMessageLayout::isShow because the director sub-object wasn't yet
+    // registered with the scene's SceneObjHolder. 600 frames (~10s) is the
+    // new floor — generous, but the worst-case visible cost is a 10s delay
+    // before the first balloon shows after a scene transition, and items
+    // queue cleanly in the meantime.
+    static constexpr std::uint32_t kSceneSettleFrames = 600;
 
     // On-screen duration. Passed as the THIRD positional arg to
     // rs::tryShowCapMessagePriorityLow (which the decompiler signature

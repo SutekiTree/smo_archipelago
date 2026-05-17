@@ -64,6 +64,19 @@ SYMBOLS = [
     "_ZN16GameDataFunction11addPayShineE20GameDataHolderWriteri",
     "_ZN16GameDataFunction21addPayShineCurrentAllE20GameDataHolderWriter",
     "_ZN16GameDataFunction26getCurrentWorldIdNoDevelopE22GameDataHolderAccessor",
+    # M7 Path A — world-map kingdom-order gate (three-layer architecture; see
+    # switch-mod/src/hooks/WorldMapSelectHook.cpp).
+    # Layer 1: regular world-map UI per-slot query (4 ptr-type overloads).
+    "_ZN16GameDataFunction27getUnlockWorldIdForWorldMapEPK14GameDataHolderi",
+    "_ZN16GameDataFunction27getUnlockWorldIdForWorldMapEPKN2al11LayoutActorEi",
+    "_ZN16GameDataFunction27getUnlockWorldIdForWorldMapEPKN2al5SceneEi",
+    "_ZN16GameDataFunction27getUnlockWorldIdForWorldMapEPKN2al9LiveActorEi",
+    # Layer 2: post-Multi-Moon FORK cinematic per-slot query.
+    "_ZN16GameDataFunction32calcNextLockedWorldIdForWorldMapEPKN2al11LayoutActorEi",
+    "_ZN16GameDataFunction32calcNextLockedWorldIdForWorldMapEPKN2al5SceneEi",
+    # Layer 3: stage-commit chokepoint (BACKSTOP).
+    "_ZN16GameDataFunction35tryChangeNextStageWithDemoWorldWarpE20GameDataHolderWriterPKc",
+    "_ZN16GameDataFunction35tryChangeNextStageWithWorldWarpHoleE20GameDataHolderWriterPKc",
 ]
 
 

@@ -89,6 +89,19 @@ void CappyMessenger::tryPump(const void* scene) {
         }
         last_scene_ = scene;
         settle_frames_ = 0;
+        // If a balloon was active on the previous scene, force-release the
+        // buffer. Two reasons: (1) CapMessage state is per-scene, so SMO has
+        // already discarded the balloon — keeping buffer_in_use_=true would
+        // strand the next dispatch waiting for an isActive that will never
+        // flip; (2) the buffer-in-use probe below would otherwise call
+        // s_isActive(new_scene) before the new scene's CapMessageDirector
+        // finishes registering with its SceneObjHolder, which NULL-derefs.
+        // Releasing here is safe — SMO can no longer read the old buffer.
+        if (buffer_in_use_) {
+            SMOAP_LOG_INFO("[cappy] scene change while buffer in-use — "
+                           "force-releasing");
+            buffer_in_use_ = false;
+        }
     } else if (scene != nullptr) {
         ++settle_frames_;
     }
