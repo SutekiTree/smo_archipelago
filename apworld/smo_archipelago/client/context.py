@@ -802,10 +802,11 @@ class SMOContext(CommonContext):
                 # next Switch HELLO will use it to decide whether to
                 # synthesize all-captures-unlocked ItemMsgs (default for
                 # capturesanity OFF; otherwise AP-granted captures only).
-                # slot_data is populated by CommonContext's default
-                # handler before our on_package runs, same as stored_data
-                # below.
-                capturesanity = bool((self.slot_data or {}).get("capturesanity", 0))
+                # slot_data isn't auto-stashed by CommonContext (unlike
+                # stored_data, which is); read it straight off the
+                # Connected args dict.
+                slot_data = args.get("slot_data") or {}
+                capturesanity = bool(slot_data.get("capturesanity", 0))
                 self.switch.set_capturesanity_enabled(capturesanity)
                 # Flush synthetic unlocks NOW for an already-running
                 # Switch — the SNI-style two-stage gate means the Switch
