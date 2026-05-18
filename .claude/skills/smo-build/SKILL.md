@@ -7,9 +7,7 @@ description: Build the SMO Switch mod (subsdk9 / switch-mod/) and deploy to Ryuj
 
 ## Golden rule
 
-**Ryujinx FIRST, real Switch never as the first test.** A failed Switch launch increments HOS's "title failed to launch" counter for SMO; enough failures shows "Corrupted data detected" prompts (recoverable in ~1 min via Settings → Data Management → Check for Corrupted Data, but a poor experience). Every subsdk build boots clean in Ryujinx before deploying to D:\.
-
-Memory: `feedback_no_blind_switch_deploys.md`.
+**Ryujinx FIRST, real Switch never as the first test.** A failed Switch launch increments HOS's "title failed to launch" counter for SMO; enough failures shows "Corrupted data detected" prompts (recoverable in ~1 min via Settings → Data Management → Check for Corrupted Data, but a poor experience). Every subsdk build boots clean in Ryujinx before being copied to the SD card.
 
 ## Step 0 (one-time after fresh clone or items.json change)
 
@@ -36,7 +34,7 @@ Defaults:
 - `-DBRIDGE_HOST=192.168.1.187` — user's LAN IP. For Ryujinx-on-same-host runs, use `127.0.0.1` instead.
 - Bridge port baked at compile time; the runtime `romfs/ap_config.json` SD-read path was abandoned (MountSdCardForDebug fails on retail/newer FW). Edit-and-rebuild is the only way.
 
-**Do NOT add `-DRYU_PATH=...` unless the user explicitly asks.** The post-build hook auto-deploys subsdk9+npdm+ap_config.json into Ryujinx mods/, which clobbers parallel agents' state in another worktree. Memory: `feedback_no_auto_ryujinx_deploy.md`. Manual copy steps below.
+**Do NOT add `-DRYU_PATH=...` unless the user explicitly asks.** The post-build hook auto-deploys subsdk9+npdm+ap_config.json into Ryujinx mods/, which clobbers parallel agents' state in another worktree. For build-verification ("does it compile?"), omit it. If a deploy IS needed for this turn, ask first. Manual copy steps below.
 
 If Ninja isn't installed, swap `-G Ninja` for:
 ```
@@ -74,10 +72,18 @@ Ryujinx's log is gold — `[rtld]` unresolved-symbol lines, guest stack traces w
 
 ```pwsh
 & "C:/Program Files/CMake/bin/cmake.exe" --install build  # populates sd-overlay/
-xcopy /E /I /Y C:\Users\maxwe\Documents\smo_archipelago\switch-mod\sd-overlay\atmosphere D:\atmosphere
+# Replace <SD>: with whatever drive letter the SD card mounts as on this machine.
+xcopy /E /I /Y C:\Users\maxwe\Documents\smo_archipelago\switch-mod\sd-overlay\atmosphere <SD>:\atmosphere
 ```
 
-After deploy, eject the SD card programmatically (user prefers not to do it manually). Memory: `feedback_eject_sd_after_deploy.md`.
+Confirm the drive letter with the user before copying — it varies per machine (the maintainer's is `D:`, others may differ). Don't guess. After the copy, optionally eject the same drive so the user can pull it without remembering:
+
+```pwsh
+# Only run with a drive letter the user has confirmed is the SD card.
+(New-Object -comObject Shell.Application).Namespace(17).ParseName("<SD>:").InvokeVerb("Eject")
+```
+
+**Never run `Eject` against a drive letter you didn't confirm with the user this turn** — the wrong letter ejects whatever is there (external HDD, thumb drive, ...).
 
 If a Switch deploy ever causes the corruption icon: Settings → Data Management → Software → Super Mario Odyssey → Check for Corrupted Data. NOT a reinstall.
 
@@ -107,12 +113,27 @@ Including them direct gives C++ mangling at call sites (e.g. `_Z20svcOutputDebug
 
 ## Fresh worktree setup (additional steps)
 
-Fresh worktrees need three steps before cmake will succeed (memory: `project_fresh_worktree_setup.md`):
+A fresh `.claude/worktrees/<name>/` (or `git worktree add`) is missing three pieces the build needs. Do all three up-front, in this order — each fails differently and step 3 reads files written by step 2:
 
-1. Init lunakit-vendor + exlaunch submodules: `git submodule update --init --recursive`
-2. Copy `apworld/smo_archipelago/client/data/{shine_map,capture_map}.json` from main checkout (gitignored; per-machine generated).
-3. Run `python scripts/sync_capture_table.py` (Step 0 above).
+1. **Init `lunakit-vendor` + `exlaunch` submodules**:
+   ```pwsh
+   git -C <worktree> submodule update --init switch-mod/lunakit-vendor switch-mod/exlaunch
+   ```
+   Skipping → `cmake configure: Could not find toolchain file: lunakit-vendor/cmake/toolchain.cmake`.
+
+2. **Copy generated data files** (gitignored, per-machine — extracted from a Nintendo NSP via the `smo-extract-data` skill; copy from main checkout is faster):
+   ```pwsh
+   Copy-Item C:/Users/maxwe/Documents/smo_archipelago/apworld/smo_archipelago/client/data/*.json `
+             <worktree>/apworld/smo_archipelago/client/data/
+   ```
+   Skipping is **silent at build time** but corrupts runtime: `sync_capture_table.py` (step 3) falls back to identity-only `kCaptureHackNames` (every entry equals `kCaptureNames`), so M7 hack-name lookups for SMO-internal names like `Kuribo` / `TRex` fail-open and the capture-lock gate doesn't deny.
+
+3. **Run `sync_capture_table.py`** (Step 0 above; reads `capture_map.json` from step 2 to populate the diverged hack-name array):
+   ```pwsh
+   python <worktree>/scripts/sync_capture_table.py
+   ```
+   Skipping → first compile of `CaptureGate.cpp` fails with `../ap/capture_table.h: No such file or directory`.
 
 ## SMO already inits nn::socket
 
-Never call `nn::socket::Initialize` from subsdk9 — SMO did it first and a second call aborts. Memory: `project_smo_socket_already_inited.md`.
+Never call `nn::socket::Initialize` from subsdk9. SMO 1.0.0 calls it itself during process startup (before `GameSystem::init` returns); a second call hits an "already initialized" assertion inside `nn::socket::detail::InitializeCommon + 0x28c` and aborts the process. Confirmed by an Atmosphere crash report 2026-05-15 showing `ApClient::initNetworking` → `nn::socket::Initialize` → `InitializeCommon` → `OnAssertionFailure` → `nn::svc::Break`. Lunakit independently confirms by installing `DisableSocketInit::InstallAtSymbol("_ZN2nn6socket10InitializeEPvmmi")` as a no-op replace-hook — they suppress SMO's call so they can run their own pool. We take the opposite approach: keep SMO's init, skip ours. `Socket()`/`Connect()`/`Send()`/`Recv()`/`Select()` all work against the library SMO already brought up; no pool of our own needed. `nn::nifm::Initialize` and `SubmitNetworkRequestAndWait` are still safe (idempotent). If a larger socket pool is ever needed, mirror lunakit's pattern: replace-hook SMO's `Initialize` with a no-op, then call our own — don't double-init.

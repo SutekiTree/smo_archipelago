@@ -7,8 +7,6 @@ description: Build and run the SMO switch-mod C++ host tests (test_json, test_pr
 
 The Switch mod ships small host-runnable tests for the JSON encoder + wire protocol. They run on the host (Windows) compiled with standalone msys2 mingw64 g++ — devkitPro doesn't ship a host compiler (devkitA64 is AArch64-only).
 
-Memory: `project_host_test_compiler.md`.
-
 ## Compiler location
 
 `C:\msys64\mingw64\bin\g++.exe`. The produced `.exe` needs the mingw runtime DLLs (`libstdc++-6.dll`, etc.) on PATH or it won't run.
@@ -44,7 +42,7 @@ Remove-Item -Force test_json.exe, test_protocol.exe
 - New wire-protocol message type or field → add to `test_protocol.cpp`.
 - New JSON encoder feature → add to `test_json.cpp`.
 
-Pattern from M6.1: any field that holds a string in the Switch wire-protocol must be a fixed `char[N]` (worker thread can NOT use std::string — libstdc++ allocator NULL-derefs). Memory: `project_libstdcpp_allocator_broken_in_subsdk9.md`. Tests should cover the truncation behavior at the N boundary.
+Pattern from M6.1: any field that holds a string in the Switch wire-protocol must be a fixed `char[N]` — the worker thread can NOT use `std::string` (libstdc++ allocator NULL-derefs in subsdk9; see the M6.1 invariant in CLAUDE.md for the full list of don't-use / use-instead patterns). Tests should cover the truncation behavior at the N boundary.
 
 ## Why not CTest?
 

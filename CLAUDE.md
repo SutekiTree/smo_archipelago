@@ -65,6 +65,7 @@ The client owns AP-protocol complexity (websocket + deflate + TLS + reconnect, a
 | **Target SMO 1.0.0** | Canonical version every public mod (lunakit, smo-online, smo-practice, OdysseyDecomp) targets. User has a native 1.0.0 install on a downgraded FW 21.2 Switch |
 | **Bit-index capture table generated from apworld** | `scripts/sync_capture_table.py` regenerates `switch-mod/src/ap/capture_table.h` from `data/items.json` so Switch and bridge can't drift on cap-name → bit-index assignment |
 | **Game name `Spicy Meatball Overdrive`, zip `smo.apworld`** | Renamed 2026-05-16. AP-protocol name dropped the Manual-framework `Manual_SMO_archipelago` prefix (we ship a real client now, not a Manual world). Deployed zip shortened from `smo_archipelago.apworld` to `smo.apworld` — Archipelago derives the module name from the zip stem, so the world imports as `worlds.smo` and the host.yaml settings key is `smo_options`. The in-repo source folder stayed `apworld/smo_archipelago/` to avoid churning every dev-workflow path reference; see the identifier table in the preamble |
+| **Two-stage connect gate (SNI-style)** | SMOClient never auto-dials AP on launch. Clicking Connect (or `/connect` / `--connect`) parks the request until the Switch HELLOs; `SMOContext.connect()` overrides `CommonContext.connect` to dial AP from the Switch-ready callback. State tracked as `disconnected → waiting_for_switch → connected`. Mirrors SNIClient (user-cited gold standard); pre-fix, the default `archipelago.gg` host produced "Connection refused" the moment the user opened the Launcher button. Any new AP-dial path (auto-reconnect, scripted launch) must route through `SMOContext.connect()` — never `asyncio.create_task(server_loop(ctx))` directly. `disconnect()` clears the pending state so a stale dial doesn't fire on the next Switch reconnect. Tests: `apworld/smo_archipelago/tests/test_connect_gate.py` |
 
 ## Current status — track by track
 
@@ -109,7 +110,7 @@ The client owns AP-protocol complexity (websocket + deflate + TLS + reconnect, a
 
 Pattern invariants worth knowing even without reading the milestone narratives:
 
-- **M6.1**: any code path on the Switch worker thread MUST use fixed-buffer patterns (LineBuffer, char[N] fields, FlatHashSet). Memory: `project_libstdcpp_allocator_broken_in_subsdk9.md`.
+- **M6.1 — libstdc++ allocator NULL-derefs in subsdk9** (worker thread is NOT a safe haven — proven 2026-05-16). Any thread that hits `std::set`, `std::vector<T>::push_back` (incl. `<bool>`), `std::string` growth past SSO (~15 chars), `std::to_string`, or `std::mutex` construction NULL-derefs inside `nn::os::GetTlsValue` reading slot 0. Cause: most likely libstdc++'s allocator reaches for a `nn::os::TlsSlot` our init never `AllocateTlsSlot`'d. Use instead: `FlatHashSet<N>` (open-addressing, `uint64_t[N]`) for dedupe, `char[N]` + `copyFixedFieldN` / `readIntoField<N>` for variable strings, `LineBuffer` (caller-owned `char[8 KiB]`) for encode output, `snprintf` to stack `char[24]` for int→string, fixed `T[N]` + count for vectors, release-store-publish atomics (the `pending_moon_label` pattern) for cross-thread handoff instead of mutexes. Strings ≤ 15 chars (SSO, no heap) are OK on any thread. Long-term fix would be an early `nn::os::AllocateTlsSlot` + libnx heap-init in `exl_main`; not investigated.
 - **M6 phase D**: when sending the post-HELLO item replay, **skip Moon items** — `OutstandingMsg` carries authoritative per-kingdom balance, re-sending Moons double-counts. See [docs/milestones.md#m6-phase-d](docs/milestones.md#m6-phase-d).
 - **M7 Path A**: future "lie to the game" hooks need the three-layer pattern (UI query → cinematic state → stage commit) — catch upstream of the visible state change, not just at commit. See [docs/milestones.md#m7-path-a--kingdom-order-gate](docs/milestones.md#m7-path-a--kingdom-order-gate).
 
@@ -201,18 +202,18 @@ C:\Users\maxwe\Documents\smo_archipelago\
 | `C:\Users\maxwe\.claude\plans\after-much-work-i-tender-thompson.md` | The authoritative plan (FW 21.2 + 1.0.0 simplification) |
 | `C:\Users\maxwe\.claude\projects\C--Users-maxwe-Documents-smo-archipelago\memory\` | Auto-memory directory |
 
-## Skills + memory pointers
+## Skills
 
 Project skills live in `.claude/skills/`. They auto-load when triggered by their description keywords:
 
-- **smo-build** — build switch-mod, deploy to Ryujinx/Switch, capture_table sync, libnx + worktree gotchas.
+- **smo-build** — build switch-mod, deploy to Ryujinx/Switch, capture_table sync, libnx + worktree gotchas, fresh-worktree setup, the SMO-already-inits-socket rule.
 - **smo-loopback-test** — AP loopback E2E without booting SMO (3-pane setup + scripted pytest path).
 - **smo-host-tests** — C++ host tests (test_json, test_protocol) via msys2 mingw64 g++.
 - **smo-symbol-discovery** — add new hook targets; OdysseyDecomp forward-decls + aarch64 mangling + check_nso_symbols.py verification.
 - **smo-extract-data** — regenerate `shine_map.json` + `capture_map.json` from a 1.0.0 NSP.
 - **smo-poptracker** — build / iterate / debug the PopTracker pack.
 
-See auto-memory for cross-session gotchas (libstdc++ allocator, SMO socket init, ShineInfo offsets, host-test compiler, SD card etiquette, fresh-worktree setup, no-blind-Switch-deploy, two-stage connect gate, AP-only moon counter, Atmosphere log-manager broken on 1.11.1).
+For anything not covered by a skill, [docs/milestones.md](docs/milestones.md) is the deep-dive: it captures pattern decisions (Channel-A scout pre-warm, the three-layer hook pattern from M7 Path A, the worker-thread allocator hardening from M6.1) that successor work tends to need.
 
 ## Known unknowns / risks
 

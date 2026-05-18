@@ -72,7 +72,7 @@ Run with SMOClient already up (no AP needed; the Client's SwitchServer accepts t
 
 ## Two-stage connect gate
 
-SMOClient does NOT auto-dial AP on launch. Clicking Connect parks the request until the Switch HELLOs (SNI-style). All AP dials route through `SMOContext.connect()`. Memory: `feedback_two_stage_connect_gate.md`.
+SMOClient does NOT auto-dial AP on launch. Clicking Connect parks the request until the Switch HELLOs (SNI-style). All AP dials route through `SMOContext.connect()` — see the "Two-stage connect gate" row in CLAUDE.md's decisions table for the full architecture + test coverage.
 
 For the loopback flow above, the fake-Switch driver (`switch_smoke_test.py`) sends HELLO immediately, so AP connection proceeds normally. For real Switch testing, boot SMO first — Connect won't complete until then.
 
