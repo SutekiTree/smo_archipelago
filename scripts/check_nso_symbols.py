@@ -40,6 +40,10 @@ SYMBOLS = [
     # M6: snapshot enumerate support.
     "_ZN16GameDataFunction10isGotShineE22GameDataHolderAccessorPK9ShineInfo",
     "_ZN16GameDataFunction15getGameDataFileE20GameDataHolderWriter",
+    # M6 phase C — snapshot enumeration uses GameDataFile::isGotShine(int)
+    # directly. mShineHintList is walked and each HintInfo's mUniqueID is
+    # passed straight to this overload. See switch-mod/src/game/MoonApply.cpp.
+    "_ZNK12GameDataFile10isGotShineEi",
     # M6 phase A.5 — moon-get cutscene label substitution (Channel A).
     # All four verified against SMO 1.0.0 main.nso 2026-05-16.
     "_ZN23StageSceneStateGetShine10exeDemoGetEv",

@@ -410,7 +410,8 @@ namespace {
 // Per-stage shine accumulator used by sendSnapshot's enumeration callback.
 // We bucket shines by stage_name so each kingdom emits one StateChunk message
 // (instead of one chunk per shine), keeping wire chatter low and respecting
-// the 8 KiB per-line cap.
+// the 8 KiB per-line cap. Fixed buffers throughout (M6.1: worker thread can
+// never grow a std::string past SSO or push_back into a std::vector).
 struct SnapshotBuilder {
     int sock_fd = -1;
     StateChunk current;
@@ -418,7 +419,7 @@ struct SnapshotBuilder {
     smoap::util::json::LineBuffer line;  // reused across chunks
 
     void flushIfNeeded(const char* stage) {
-        if (current_active && current.stage_name != stage) {
+        if (current_active && std::strcmp(current.stage_name, stage) != 0) {
             encodeStateChunk(line, current);
             nn::socket::Send(sock_fd, line.data(), line.size(), 0);
             current = StateChunk{};
@@ -429,13 +430,18 @@ struct SnapshotBuilder {
         if (!stage || !*stage) return;
         flushIfNeeded(stage);
         if (!current_active) {
-            current.stage_name = stage;
+            copyFixedFieldN(current.stage_name, stage, std::strlen(stage));
             current_active = true;
         }
-        ShineEntry s;
-        if (obj) s.object_id = obj;
+        if (current.shine_count >= static_cast<int>(kSnapshotMaxShinesPerStage)) {
+            SMOAP_LOG_WARN("[snapshot] shines/stage cap (%d) hit for '%s' — dropping",
+                           static_cast<int>(kSnapshotMaxShinesPerStage),
+                           current.stage_name);
+            return;
+        }
+        ShineEntry& s = current.shines[current.shine_count++];
+        if (obj) copyFixedFieldN(s.object_id, obj, std::strlen(obj));
         s.shine_uid = uid;
-        current.shines.push_back(std::move(s));
     }
     void finalize() {
         if (current_active) {
@@ -482,11 +488,17 @@ void ApClient::sendSnapshot() {
     //    the goal flag (and so we have a "snapshot is complete" canary).
     {
         StateChunk meta;
-        meta.stage_name = "_meta";
+        copyFixedFieldN(meta.stage_name, "_meta", 5);
         smoap::game::enumerateOwnedCaptures(
             [](void* ctx, const char* hack) {
                 auto* m = static_cast<StateChunk*>(ctx);
-                if (hack && *hack) m->captures.emplace_back(hack);
+                if (!hack || !*hack) return;
+                if (m->capture_count >= static_cast<int>(kSnapshotMaxCaptures)) {
+                    SMOAP_LOG_WARN("[snapshot] captures cap (%d) hit — dropping '%s'",
+                                   static_cast<int>(kSnapshotMaxCaptures), hack);
+                    return;
+                }
+                copyFixedFieldN(m->captures[m->capture_count++], hack, std::strlen(hack));
             },
             &meta);
         meta.include_goal_reached = true;

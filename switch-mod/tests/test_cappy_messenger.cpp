@@ -144,6 +144,37 @@ TEST(format_truncation_safe) {
     EXPECT(std::strlen(buf) < sizeof(buf));
 }
 
+// M6 phase C reconcile — bridge-sentinel from drops the "from <sender>"
+// suffix so the bubble shows a clean "Got X!" for offline-collected moons
+// instead of "Got X from (offline)!". Sender sentinel is the public
+// kReconcileFromSentinel constant the bridge mirrors on its side.
+
+TEST(format_reconcile_sentinel_drops_from_clause) {
+    Item item = makeItem(ItemKind::Moon, kReconcileFromSentinel,
+                         "Cascade Kingdom Power Moon");
+    char buf[96];
+    formatCappyMsg(buf, sizeof(buf), item);
+    EXPECT_EQ_S(std::string(buf), "Got Cascade Moon!");
+}
+
+TEST(format_reconcile_sentinel_short_capture_name) {
+    // Capture short-name path — shortener no-ops on raw cap names, so the
+    // bubble is literally "Got <cap>!".
+    Item item = makeItem(ItemKind::Capture, kReconcileFromSentinel, "Frog");
+    char buf[96];
+    formatCappyMsg(buf, sizeof(buf), item);
+    EXPECT_EQ_S(std::string(buf), "Got Frog!");
+}
+
+TEST(format_reconcile_sentinel_filter_passes) {
+    // Belt-and-braces: the filter must pass for the sentinel (it's a
+    // non-empty value that's distinct from any real slot name). Without
+    // this the formatter would never run for a reconcile item.
+    EXPECT(shouldShowCappyMsg(ItemKind::Moon, kReconcileFromSentinel, "Mario", false));
+    // And it's still suppressed for the legitimate self-find case:
+    EXPECT(!shouldShowCappyMsg(ItemKind::Moon, "Mario", "Mario", false));
+}
+
 // --------------------------------------------------------------------------
 // shortenItemNameForBubble — cosmetic suffix rewrites
 // --------------------------------------------------------------------------

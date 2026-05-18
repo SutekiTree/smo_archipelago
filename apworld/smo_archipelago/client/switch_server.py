@@ -52,6 +52,14 @@ _SWITCH_LEVEL_MAP = {
 }
 
 
+# M6 phase C reconcile — when a single drain produces more freshly-checked
+# loc_ids than this, suppress all Cappy bubbles for that drain. Protects
+# against the first-connect / "fresh AP slot" case where the snapshot enumerates
+# every owned moon + capture as new — a 41-bubble flood is worse than silence.
+# Real "I missed a few while offline" sessions sit comfortably under this cap.
+# CappyMessenger queues at most 8 anyway; this threshold trips first.
+RECONCILE_CAPPY_BURST_THRESHOLD = 5
+
 CheckHandler = Callable[[dict], Awaitable["int | None"]]  # returns AP loc_id or None
 GoalHandler = Callable[[], Awaitable[None]]
 DeathHandler = Callable[[int], Awaitable[None]]
@@ -70,6 +78,22 @@ OutstandingProvider = Callable[[], "list"]
 # Switch's captures_unlocked bitset. Without this, CaptureStartHook would
 # block every capture for the entire seed (no AP Capture items will arrive).
 AllCapturesProvider = Callable[[], list]
+# M6 phase C reconcile — `() -> bool` predicate: is AP fully ready (datapackage
+# loaded so report_check can resolve loc_ids)? Used to gate the snapshot drain
+# when the Switch HELLO arrives before the AP dial has handshaked.
+ApReadyProbe = Callable[[], bool]
+# M6 phase C reconcile — `(loc_id) -> ItemMsg | None`: builds a Cappy-bubble
+# ItemMsg for a moon reconciled from a snapshot. Returns None when scouts
+# aren't loaded yet, when the item isn't for our slot, or when the loc isn't
+# a moon. SwitchServer keeps a pending-set of loc_ids and re-tries on every
+# LocationInfo absorption until the cache catches up.
+ReconcileItemBuilder = Callable[[int], "ItemMsg | None"]
+# M6 phase C reconcile — `() -> set[int]`: snapshot of currently-checked AP
+# location ids. Captured once before drain so we can distinguish "newly
+# checked from reconcile" (fire Cappy) vs "already known" (skip Cappy — the
+# player either checked it live or saw it announced on a previous reconnect).
+# Implemented in SMOContext as `lambda: set(self.locations_checked)`.
+AlreadyCheckedProvider = Callable[[], "set[int]"]
 
 
 class SwitchServer:
@@ -88,6 +112,9 @@ class SwitchServer:
         get_outstanding_entries: OutstandingProvider | None = None,
         capturesanity_enabled: bool = True,
         get_all_captures: AllCapturesProvider | None = None,
+        is_ap_ready: ApReadyProbe | None = None,
+        build_reconcile_cappy_item: ReconcileItemBuilder | None = None,
+        get_already_checked_loc_ids: AlreadyCheckedProvider | None = None,
     ):
         self._host = host
         self._port = port
@@ -104,9 +131,31 @@ class SwitchServer:
         # only). SMOContext flips this from slot_data on AP Connected.
         self._capturesanity_enabled = capturesanity_enabled
         self._get_all_captures = get_all_captures
+        self._is_ap_ready = is_ap_ready
+        self._build_reconcile_cappy_item = build_reconcile_cappy_item
+        self._get_already_checked = get_already_checked_loc_ids
         self._writer: asyncio.StreamWriter | None = None
         self._writer_lock = asyncio.Lock()
         self._server: asyncio.AbstractServer | None = None
+        # M6 phase C reconcile — entries buffered when state_end arrived but
+        # AP wasn't ready yet (datapackage not loaded → report_check can't
+        # resolve loc_ids). Drained by drain_pending_snapshot() once AP is
+        # ready. None means "no buffered snapshot" (distinct from [] which
+        # would be a valid empty snapshot we already drained).
+        self._pending_snapshot_entries: list[dict] | None = None
+        self._pending_snapshot_goal: bool = False
+        # M6 phase C reconcile — live `check` messages buffered when they
+        # arrived during the AP-handshake window. The Switch's outbound
+        # check ring drains queued offline collects on reconnect; without
+        # buffering they hit the same "no AP id" race as the snapshot.
+        # Drained by drain_pending_snapshot() alongside the snapshot.
+        self._pending_live_checks: list[dict] = []
+        # M6 phase C reconcile — loc_ids freshly dispatched from a snapshot
+        # drain (i.e. NOT already in locations_checked when drain began).
+        # Each waits for its scout to land via LocationInfo absorption; when
+        # the scout shows the item is for our slot, we synthesize a Cappy
+        # ItemMsg so the player learns what they got offline.
+        self._reconcile_cappy_pending: set[int] = set()
 
     def set_capturesanity_enabled(self, enabled: bool) -> None:
         """Update the capturesanity gate. Called by SMOContext after AP
@@ -286,6 +335,21 @@ class SwitchServer:
         if t == "hello":
             await self._on_hello(msg)
         elif t == "check":
+            # M6 phase C reconcile — live `check` messages also race AP
+            # connect: the Switch's outbound-check ring drains queued offline
+            # collects the moment the bridge accepts the TCP socket, which
+            # is ~1.4s before SMOContext finishes the AP handshake. Without
+            # buffering, report_check sees an empty dp.location_name_to_id
+            # and drops the entry with "no AP id for location ...". Same
+            # gate as the snapshot path: defer when AP isn't ready, then
+            # drain on Connected.
+            if self._is_ap_ready is not None and not self._is_ap_ready():
+                self._pending_live_checks.append(msg)
+                log.info(
+                    "live check buffered (kind=%s stage=%s obj=%s) — AP not ready",
+                    msg.get("kind"), msg.get("stage_name"), msg.get("object_id"),
+                )
+                return
             await self._dispatch_check(msg)
         elif t == "goal":
             log.info("switch reported goal completion")
@@ -371,7 +435,7 @@ class SwitchServer:
 
         await self._send(DepositAckMsg(seq=seq))
 
-    async def _dispatch_check(self, msg: dict) -> None:
+    async def _dispatch_check(self, msg: dict) -> "int | None":
         """Forward a check (live or snapshot-derived) to AP and record locally.
 
         BridgeState.add_checked_location dedupes via the full ItemRef identity,
@@ -382,6 +446,10 @@ class SwitchServer:
         resolved location_id and Channel A is wired, synthesize a
         MoonLabelMsg in the same TCP push (Nagle-batched) so it arrives
         before the cutscene fires.
+
+        Returns the resolved AP `loc_id` (or None when unresolvable) so the
+        snapshot drain can distinguish fresh vs already-known checks for the
+        reconcile-Cappy path.
         """
         loc_id = await self._on_check(msg)
         seq = msg.get("seq") or 0
@@ -405,16 +473,164 @@ class SwitchServer:
                 hack_name=msg.get("hack_name"),
             ))
         )
+        return loc_id
 
     async def _on_state_end(self) -> None:
         entries, goal_reached = self._state.end_snapshot()
         log.info("snapshot end: %d entries goal=%s", len(entries), goal_reached)
+        # M6 phase C — dispatch races AP connect. The Switch HELLO can arrive
+        # before SMOContext.connect() has finished the AP handshake (≈ 1.4s
+        # gap observed in real-world tests). If we dispatched now, report_check
+        # would see an empty `dp.location_name_to_id` and log every entry as
+        # "no AP id for location ..." — the snapshot would be silently lost.
+        # Buffer instead; SMOContext.drain_pending_snapshot() runs the loop
+        # below from the Connected handler once dp is loaded.
+        if self._is_ap_ready is not None and not self._is_ap_ready():
+            self._pending_snapshot_entries = list(entries)
+            self._pending_snapshot_goal = bool(goal_reached)
+            log.info(
+                "snapshot buffered (%d entries) — AP not ready; will drain on Connected",
+                len(entries),
+            )
+            return
+        await self._dispatch_snapshot_entries(entries, goal_reached, from_reconcile=False)
+
+    async def _dispatch_snapshot_entries(
+        self,
+        entries: list[dict],
+        goal_reached: bool,
+        from_reconcile: bool,
+    ) -> None:
+        """Common dispatch path for snapshot entries (immediate or deferred).
+
+        When `from_reconcile=True`, freshly-checked loc_ids are queued on
+        `_reconcile_cappy_pending` so try_fire_reconcile_cappy() can pop a
+        Cappy speech bubble for each one whose scout has landed. We compute
+        "freshly checked" against the set captured BEFORE the dispatch loop
+        starts — using `self._on_check`'s post-call state would race against
+        the dispatch itself when AP echoes ReceivedItems back in the same
+        burst.
+        """
+        # Capture the pre-drain "already-checked" set. report_check adds to
+        # ctx.locations_checked when it successfully sends a LocationCheck.
+        # We snapshot the set before drain so post-drain
+        # `loc_id NOT in pre_set` is the right freshness check.
+        # Without the callback, every dispatched entry counts as "fresh" —
+        # matches the legacy behavior for callers that don't care about Cappy.
+        pre_checked: set[int] = set()
+        if from_reconcile and self._get_already_checked is not None:
+            try:
+                pre_checked = set(self._get_already_checked())
+            except Exception:
+                log.exception("get_already_checked_loc_ids failed; assuming empty")
+        # Per-drain queue of fresh loc_ids destined for Cappy. Held separately
+        # from `_reconcile_cappy_pending` so we can apply the burst threshold
+        # below without affecting any entries already pending from a previous
+        # drain.
+        fresh_this_drain: set[int] = set()
         for entry in entries:
             synthetic = {"t": "check", **entry}
-            await self._dispatch_check(synthetic)
+            loc_id = await self._dispatch_check(synthetic)
+            if (
+                from_reconcile
+                and loc_id is not None
+                and entry.get("kind") in ("moon", "capture")
+                and loc_id not in pre_checked
+            ):
+                fresh_this_drain.add(loc_id)
         if goal_reached:
             log.info("snapshot reports goal already reached; forwarding")
             await self._on_goal()
+        if from_reconcile and fresh_this_drain:
+            if len(fresh_this_drain) > RECONCILE_CAPPY_BURST_THRESHOLD:
+                # Bulk reconcile (first connect / fresh AP slot / long offline
+                # binge): suppress Cappy for the whole drain rather than queue
+                # a flood the CappyMessenger ring can only partially deliver.
+                # Counts still went through dispatch — AP knows about every
+                # check; the player just doesn't get a per-item bubble.
+                log.info(
+                    "[reconcile] %d fresh entries exceeds Cappy burst threshold (%d) — "
+                    "suppressing bubbles for this drain",
+                    len(fresh_this_drain), RECONCILE_CAPPY_BURST_THRESHOLD,
+                )
+            else:
+                self._reconcile_cappy_pending |= fresh_this_drain
+                # Best-effort first pass: scouts may already be loaded for some
+                # entries (warmup scout is racing the drain itself); fire what
+                # we can immediately, leave the rest for LocationInfo
+                # absorption.
+                await self.try_fire_reconcile_cappy()
+
+    async def drain_pending_snapshot(self) -> None:
+        """Drain anything buffered by `_dispatch` / `_on_state_end` because
+        AP wasn't ready: the state snapshot AND any live `check` messages
+        that arrived during the same handshake window.
+
+        Called by SMOContext from the `Connected` handler once the datapackage
+        is loaded. Both buffers route through the reconcile-Cappy queue so
+        an offline-collected moon shows its bubble whether it arrived via
+        the snapshot enumerate path or the Switch's outbound check ring
+        drain. Idempotent — no-op when both buffers are empty.
+        """
+        # Drain live checks first so they get the same "from_reconcile"
+        # treatment as snapshot entries. Live checks may also include moons
+        # the player just collected mid-handshake; treating them identically
+        # is what makes the Cappy bubble fire regardless of which channel
+        # carried the report.
+        live_checks = self._pending_live_checks
+        self._pending_live_checks = []
+        if live_checks:
+            log.info("draining %d buffered live checks", len(live_checks))
+            await self._dispatch_snapshot_entries(
+                live_checks, goal_reached=False, from_reconcile=True,
+            )
+        if self._pending_snapshot_entries is None:
+            return
+        entries = self._pending_snapshot_entries
+        goal_reached = self._pending_snapshot_goal
+        self._pending_snapshot_entries = None
+        self._pending_snapshot_goal = False
+        log.info("draining %d buffered snapshot entries", len(entries))
+        await self._dispatch_snapshot_entries(entries, goal_reached, from_reconcile=True)
+
+    async def try_fire_reconcile_cappy(self) -> None:
+        """Pump pending reconciled loc_ids through the Cappy speech bubble.
+
+        For each loc_id where the scout cache now resolves to an item routed
+        to our slot, synthesize an ItemMsg with `from_="(offline)"` so the
+        Switch's `shouldShowCappyMsg` filter passes (it suppresses on
+        `from == local_slot`; "(offline)" is a sentinel that never matches a
+        real player name) and the speech bubble fires.
+
+        Called from SMOContext on every LocationInfo absorption so late-
+        arriving scouts get retried until the cache catches up.
+        """
+        if not self._reconcile_cappy_pending or self._build_reconcile_cappy_item is None:
+            return
+        fired: list[int] = []
+        for loc_id in list(self._reconcile_cappy_pending):
+            try:
+                item = self._build_reconcile_cappy_item(loc_id)
+            except Exception:
+                log.exception("build_reconcile_cappy_item failed for loc_id=%s", loc_id)
+                # Drop on hard error — don't retry-loop forever on a bad item.
+                fired.append(loc_id)
+                continue
+            if item is None:
+                # Scout not loaded yet, or item isn't a moon, or not for self.
+                # Leave pending; the next LocationInfo absorption will retry.
+                continue
+            log.info(
+                "[reconcile] firing Cappy for loc_id=%d name=%r kingdom=%r",
+                loc_id, item.name, item.kingdom,
+            )
+            try:
+                await self.send_item(item)
+            except Exception:
+                log.exception("send_item failed for reconcile loc_id=%s", loc_id)
+            fired.append(loc_id)
+        for loc_id in fired:
+            self._reconcile_cappy_pending.discard(loc_id)
 
     async def _on_hello(self, msg: dict) -> None:
         log.info("switch HELLO: mod=%s smo=%s", msg.get("mod_ver"), msg.get("smo_ver"))

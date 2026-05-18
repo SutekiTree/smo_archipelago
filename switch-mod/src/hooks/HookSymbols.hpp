@@ -50,6 +50,17 @@ inline constexpr const char* kAlSceneEndInit =
 inline constexpr const char* kGameDataFileSetGotShine =
     "_ZN12GameDataFile11setGotShineEPK9ShineInfo";
 
+// --- Moon flag read (M6 phase C — reconciliation snapshot) ---
+// GameDataFile::isGotShine(int unique_id) const
+// Source: lunakit-vendor/src/game/GameData/GameDataFile.h:310 (const member,
+// int parameter, returns bool). One of three isGotShine overloads on
+// GameDataFile; the (int) variant takes the unique shine id we read out of
+// each HintInfo entry while walking mShineHintList.
+// Verify offline with scripts/check_nso_symbols.py against the real 1.0.0
+// main.nso before depending on it (same procedure as the rest of M6).
+inline constexpr const char* kGameDataFileIsGotShineByUid =
+    "_ZNK12GameDataFile10isGotShineEi";
+
 // --- Capture acquired (gates + check) ---
 // PlayerHackKeeper::startHack(al::HitSensor*, al::HitSensor*, al::LiveActor*)
 // Source: MonsterDruide1/OdysseyDecomp src/Player/PlayerHackKeeper.h:47

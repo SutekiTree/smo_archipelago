@@ -364,6 +364,20 @@ int formatCappyMsg(char* buf, std::size_t cap, const smoap::ap::Item& item) {
     const char* name = short_name;
     const char* sender = item.from[0] == '\0' ? "?" : item.from;
 
+    // M6 phase C reconcile — when the bridge sends the offline-sentinel
+    // from, drop the "from <sender>" suffix entirely: the message reads
+    // "Got X!" instead of "Got X from (offline)!". The sentinel value is
+    // never a real player name (parens aren't legal in slot names) so this
+    // is unambiguous and short-circuits the whole truncation branch below.
+    if (std::strcmp(sender, kReconcileFromSentinel) == 0) {
+        int n = std::snprintf(buf, cap, "Got %s!", name);
+        if (n < 0) {
+            buf[0] = '\0';
+            return 0;
+        }
+        return n;
+    }
+
     // Preferred form: full name + full sender. Fit-test against kSoftMaxChars
     // before settling — the buffer cap is much larger but the speech bubble
     // wraps awkwardly past ~60 visible chars.

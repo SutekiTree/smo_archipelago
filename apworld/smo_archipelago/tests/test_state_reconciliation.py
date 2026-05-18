@@ -326,6 +326,679 @@ def test_checked_replay_msg_to_wire_uses_replay_dict():
 
 # ----- helpers -----
 
+# ----- M6 phase C reconcile: deferred dispatch when AP not yet ready -----
+
+@pytest.mark.asyncio
+async def test_snapshot_buffers_when_ap_not_ready_then_drains():
+    """Snapshot landing during the AP-handshake window must be buffered, not
+    dispatched. This is the exact race we hit live: the Switch's HELLO arrived
+    ~1.4s before AP's `Connected` packet, and every synthetic check dropped
+    with "no AP id for location" because dp.location_name_to_id was empty."""
+    state = BridgeState()
+    forwarded: list[dict] = []
+    ready = [False]  # mutable so we can flip mid-test
+
+    async def on_check(msg: dict) -> int | None:
+        forwarded.append(msg)
+        return None
+
+    async def on_goal() -> None:
+        pass
+
+    sw = SwitchServer(
+        "127.0.0.1", 0, state, on_check, on_goal,
+        is_ap_ready=lambda: ready[0],
+    )
+    server = await asyncio.start_server(sw._handle_client, "127.0.0.1", 0)
+    sw._server = server
+    port = server.sockets[0].getsockname()[1]
+
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        writer.write(protocol.encode(HelloMsg(mod_ver="0.1.0", smo_ver="1.0.0")))
+        await _drain_messages(reader, n=3, timeout=2.0)
+
+        # AP still handshaking. Send snapshot.
+        for m in [
+            StateBeginMsg(mod_ver="0.1.0", save_slot=0),
+            StateChunkMsg(stage_name="WaterfallWorldHomeStage", shines=[
+                {"object_id": "obj124", "shine_uid": 100},
+            ]),
+            StateEndMsg(),
+        ]:
+            writer.write(protocol.encode(m))
+        await writer.drain()
+        await asyncio.sleep(0.1)
+
+        # Snapshot was buffered, NOT dispatched yet.
+        assert forwarded == []
+        assert sw._pending_snapshot_entries is not None
+        assert len(sw._pending_snapshot_entries) == 1
+
+        # AP comes ready; SMOContext._handle_ap_package(cmd="Connected")
+        # calls drain_pending_snapshot.
+        ready[0] = True
+        await sw.drain_pending_snapshot()
+
+        # Now the buffered entry is forwarded.
+        assert len(forwarded) == 1
+        assert forwarded[0]["stage_name"] == "WaterfallWorldHomeStage"
+        assert forwarded[0]["object_id"] == "obj124"
+        # Buffer was emptied — second drain is a no-op.
+        assert sw._pending_snapshot_entries is None
+        await sw.drain_pending_snapshot()
+        assert len(forwarded) == 1  # unchanged
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        await sw.stop()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_dispatches_immediately_when_ap_already_ready():
+    """If the Switch reconnects while AP is already live (the normal case
+    once the session is established), no buffering should happen — the
+    snapshot must dispatch as it always did pre-M6-phase-C."""
+    state = BridgeState()
+    forwarded: list[dict] = []
+
+    async def on_check(msg: dict) -> int | None:
+        forwarded.append(msg)
+        return None
+
+    async def on_goal() -> None:
+        pass
+
+    sw = SwitchServer(
+        "127.0.0.1", 0, state, on_check, on_goal,
+        is_ap_ready=lambda: True,  # AP already up
+    )
+    server = await asyncio.start_server(sw._handle_client, "127.0.0.1", 0)
+    sw._server = server
+    port = server.sockets[0].getsockname()[1]
+
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        writer.write(protocol.encode(HelloMsg(mod_ver="0.1.0", smo_ver="1.0.0")))
+        await _drain_messages(reader, n=3, timeout=2.0)
+
+        for m in [
+            StateBeginMsg(mod_ver="0.1.0", save_slot=0),
+            StateChunkMsg(stage_name="CapWorldHomeStage", shines=[
+                {"object_id": "MoonA", "shine_uid": 1},
+            ]),
+            StateEndMsg(),
+        ]:
+            writer.write(protocol.encode(m))
+        await writer.drain()
+        await asyncio.sleep(0.1)
+
+        # Forwarded immediately, no buffering.
+        assert len(forwarded) == 1
+        assert sw._pending_snapshot_entries is None
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        await sw.stop()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_back_compat_no_is_ap_ready_callback():
+    """Wiring without `is_ap_ready` (legacy/test contexts) must keep the
+    pre-M6-phase-C behavior: dispatch immediately, no buffer. Important so
+    every existing test in this file (constructed without the new kwarg)
+    still exercises the synchronous path."""
+    state = BridgeState()
+    forwarded: list[dict] = []
+
+    async def on_check(msg: dict) -> int | None:
+        forwarded.append(msg)
+        return None
+
+    async def on_goal() -> None:
+        pass
+
+    # No is_ap_ready kwarg.
+    sw = SwitchServer("127.0.0.1", 0, state, on_check, on_goal)
+    server = await asyncio.start_server(sw._handle_client, "127.0.0.1", 0)
+    sw._server = server
+    port = server.sockets[0].getsockname()[1]
+
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        writer.write(protocol.encode(HelloMsg()))
+        await _drain_messages(reader, n=3, timeout=2.0)
+
+        for m in [
+            StateBeginMsg(mod_ver="0.1.0", save_slot=0),
+            StateChunkMsg(stage_name="X", shines=[{"object_id": "o", "shine_uid": 1}]),
+            StateEndMsg(),
+        ]:
+            writer.write(protocol.encode(m))
+        await writer.drain()
+        await asyncio.sleep(0.1)
+
+        assert len(forwarded) == 1
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        await sw.stop()
+
+
+# ----- M6 phase C reconcile: live `check` messages also buffered -----
+
+@pytest.mark.asyncio
+async def test_live_check_buffers_when_ap_not_ready_then_drains():
+    """The Switch's outbound check ring drains queued offline collects on
+    every reconnect — a moon collected during the previous session that
+    couldn't reach the bridge gets re-sent as a `check` message the moment
+    the TCP socket is up. That race-loses to AP connect identically to
+    the snapshot: bridge dispatches before dp is hot → "no AP id" drop.
+    Both buffers drain together on `Connected`."""
+    from client.protocol import CheckMsg
+    state = BridgeState()
+    forwarded: list[dict] = []
+    ready = [False]
+
+    async def on_check(msg: dict) -> int | None:
+        forwarded.append(msg)
+        return 1234  # fake loc_id resolved
+
+    async def on_goal() -> None:
+        pass
+
+    sw = SwitchServer(
+        "127.0.0.1", 0, state, on_check, on_goal,
+        is_ap_ready=lambda: ready[0],
+    )
+    server = await asyncio.start_server(sw._handle_client, "127.0.0.1", 0)
+    sw._server = server
+    port = server.sockets[0].getsockname()[1]
+
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        writer.write(protocol.encode(HelloMsg(mod_ver="0.1.0", smo_ver="1.0.0")))
+        await _drain_messages(reader, n=3, timeout=2.0)
+
+        # Switch's pump drains a previously-queued offline collect as a
+        # CheckMsg the moment the socket is up. AP isn't ready yet.
+        writer.write(protocol.encode(CheckMsg(
+            kind="moon", stage_name="WaterfallWorldHomeStage",
+            object_id="obj124", shine_uid=0,
+        )))
+        await writer.drain()
+        await asyncio.sleep(0.1)
+
+        # Live check was buffered, not dispatched.
+        assert forwarded == []
+        assert len(sw._pending_live_checks) == 1
+
+        # AP comes ready → drain.
+        ready[0] = True
+        await sw.drain_pending_snapshot()
+
+        # Live check forwarded.
+        assert len(forwarded) == 1
+        assert forwarded[0]["stage_name"] == "WaterfallWorldHomeStage"
+        assert forwarded[0]["object_id"] == "obj124"
+        assert sw._pending_live_checks == []
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        await sw.stop()
+
+
+@pytest.mark.asyncio
+async def test_live_check_dispatches_immediately_when_ap_ready():
+    """Confirm the live-check fast path is unchanged when AP is up."""
+    from client.protocol import CheckMsg
+    state = BridgeState()
+    forwarded: list[dict] = []
+
+    async def on_check(msg: dict) -> int | None:
+        forwarded.append(msg)
+        return None
+
+    async def on_goal() -> None:
+        pass
+
+    sw = SwitchServer(
+        "127.0.0.1", 0, state, on_check, on_goal,
+        is_ap_ready=lambda: True,
+    )
+    server = await asyncio.start_server(sw._handle_client, "127.0.0.1", 0)
+    sw._server = server
+    port = server.sockets[0].getsockname()[1]
+
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        writer.write(protocol.encode(HelloMsg()))
+        await _drain_messages(reader, n=3, timeout=2.0)
+        writer.write(protocol.encode(CheckMsg(
+            kind="moon", stage_name="X", object_id="o", shine_uid=1,
+        )))
+        await writer.drain()
+        await asyncio.sleep(0.1)
+        assert len(forwarded) == 1
+        assert sw._pending_live_checks == []
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        await sw.stop()
+
+
+# ----- M6 phase C reconcile: Cappy bubble synthesis -----
+
+@pytest.mark.asyncio
+async def test_reconcile_fires_cappy_for_self_moon():
+    """End-to-end: deferred dispatch + try_fire_reconcile_cappy. Snapshot
+    arrives pre-AP-ready, drain fires after, scout is available, builder
+    returns a self-routed moon ItemMsg → SwitchServer enqueues it via
+    `send_item`, which surfaces as a Cappy bubble on the Switch."""
+    state = BridgeState()
+    ready = [False]
+    items_sent: list[Any] = []  # ItemMsg objects
+
+    async def on_check(msg: dict) -> int | None:
+        # Pretend report_check resolved this entry to loc_id=4242.
+        return 4242
+
+    async def on_goal() -> None:
+        pass
+
+    # Builder mimics SMOContext.build_reconcile_cappy_item — keyed on loc_id.
+    scouts_ready = [False]
+    def builder(loc_id: int):
+        if not scouts_ready[0]:
+            return None  # scout not yet absorbed
+        from client.protocol import ItemMsg
+        return ItemMsg(
+            kind="moon", kingdom="Cascade", shine_id="Behind the Waterfall",
+            name="Cascade Power Moon", from_="(offline)",
+        )
+
+    sw = SwitchServer(
+        "127.0.0.1", 0, state, on_check, on_goal,
+        is_ap_ready=lambda: ready[0],
+        build_reconcile_cappy_item=builder,
+    )
+    # Capture send_item calls without standing up a TCP server.
+    async def fake_send_item(item):
+        items_sent.append(item)
+    sw.send_item = fake_send_item  # type: ignore[assignment]
+
+    server = await asyncio.start_server(sw._handle_client, "127.0.0.1", 0)
+    sw._server = server
+    port = server.sockets[0].getsockname()[1]
+
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        writer.write(protocol.encode(HelloMsg()))
+        await _drain_messages(reader, n=3, timeout=2.0)
+
+        for m in [
+            StateBeginMsg(mod_ver="0.1.0", save_slot=0),
+            StateChunkMsg(stage_name="WaterfallWorldHomeStage", shines=[
+                {"object_id": "obj124", "shine_uid": 100},
+            ]),
+            StateEndMsg(),
+        ]:
+            writer.write(protocol.encode(m))
+        await writer.drain()
+        await asyncio.sleep(0.1)
+
+        # AP comes ready; drain.
+        ready[0] = True
+        await sw.drain_pending_snapshot()
+
+        # Scouts not loaded yet → Cappy still pending.
+        assert items_sent == []
+        assert 4242 in sw._reconcile_cappy_pending
+
+        # Scouts land via LocationInfo absorption (SMOContext calls
+        # try_fire_reconcile_cappy after each absorb).
+        scouts_ready[0] = True
+        await sw.try_fire_reconcile_cappy()
+
+        assert len(items_sent) == 1
+        msg = items_sent[0]
+        assert msg.kind == "moon"
+        assert msg.kingdom == "Cascade"
+        assert msg.name == "Cascade Power Moon"
+        assert msg.from_ == "(offline)"  # sentinel — passes self-suppress filter
+        # Set cleared after fire.
+        assert sw._reconcile_cappy_pending == set()
+
+        # Idempotent — second fire is a no-op.
+        await sw.try_fire_reconcile_cappy()
+        assert len(items_sent) == 1
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        await sw.stop()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_fires_cappy_for_self_capture():
+    """Captures collected during the offline window also missed their
+    natural in-game Capture-List notification, so reconcile-Cappy fires
+    for them too. Builder returns ItemMsg(kind=capture, cap=..., from_=sentinel)
+    and SwitchServer pushes it to the Switch via send_item."""
+    state = BridgeState()
+    items_sent: list[Any] = []
+
+    async def on_check(msg: dict) -> int | None:
+        return 9999  # fake loc_id for the synthetic capture entry
+
+    async def on_goal() -> None:
+        pass
+
+    def builder(loc_id: int):
+        from client.protocol import ItemMsg
+        return ItemMsg(
+            kind="capture", cap="Goomba", name="Goomba",
+            from_="(offline)", hack_name="Kuribo",
+        )
+
+    sw = SwitchServer(
+        "127.0.0.1", 0, state, on_check, on_goal,
+        is_ap_ready=lambda: False,
+        build_reconcile_cappy_item=builder,
+    )
+    async def fake_send_item(item):
+        items_sent.append(item)
+    sw.send_item = fake_send_item  # type: ignore[assignment]
+
+    server = await asyncio.start_server(sw._handle_client, "127.0.0.1", 0)
+    sw._server = server
+    port = server.sockets[0].getsockname()[1]
+
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        writer.write(protocol.encode(HelloMsg()))
+        await _drain_messages(reader, n=3, timeout=2.0)
+        for m in [
+            StateBeginMsg(mod_ver="0.1.0", save_slot=0),
+            StateChunkMsg(stage_name="_meta", captures=["Kuribo"], goal_reached=False),
+            StateEndMsg(),
+        ]:
+            writer.write(protocol.encode(m))
+        await writer.drain()
+        await asyncio.sleep(0.1)
+        await sw.drain_pending_snapshot()
+
+        # Capture Cappy fired with the (offline) sentinel and resolved hack_name.
+        assert len(items_sent) == 1
+        msg = items_sent[0]
+        assert msg.kind == "capture"
+        assert msg.cap == "Goomba"
+        assert msg.hack_name == "Kuribo"
+        assert msg.from_ == "(offline)"
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        await sw.stop()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_suppresses_cappy_on_burst_threshold():
+    """Fresh-AP-slot guard: when a single drain produces >5 freshly-checked
+    entries, suppress the WHOLE drain's Cappy bubbles. Bridge has still
+    forwarded each LocationCheck to AP — only the per-item bubble is
+    skipped. Matches the user's 12:48 log scenario: 41 captures enumerated
+    on first connect would otherwise flood the CappyMessenger ring."""
+    from client.switch_server import RECONCILE_CAPPY_BURST_THRESHOLD
+    state = BridgeState()
+    items_sent: list[Any] = []
+    # Each capture resolves to a distinct loc_id so all count as "fresh".
+    next_id = [10_000]
+    async def on_check(msg: dict) -> int | None:
+        next_id[0] += 1
+        return next_id[0]
+    async def on_goal() -> None:
+        pass
+    def builder(loc_id: int):
+        from client.protocol import ItemMsg
+        return ItemMsg(kind="capture", cap="X", from_="(offline)")
+    sw = SwitchServer(
+        "127.0.0.1", 0, state, on_check, on_goal,
+        is_ap_ready=lambda: False,
+        build_reconcile_cappy_item=builder,
+    )
+    async def fake_send_item(item):
+        items_sent.append(item)
+    sw.send_item = fake_send_item  # type: ignore[assignment]
+    server = await asyncio.start_server(sw._handle_client, "127.0.0.1", 0)
+    sw._server = server
+    port = server.sockets[0].getsockname()[1]
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        writer.write(protocol.encode(HelloMsg()))
+        await _drain_messages(reader, n=3, timeout=2.0)
+        burst = RECONCILE_CAPPY_BURST_THRESHOLD + 3  # >threshold
+        captures = [f"Cap{i}" for i in range(burst)]
+        for m in [
+            StateBeginMsg(mod_ver="0.1.0", save_slot=0),
+            StateChunkMsg(stage_name="_meta", captures=captures, goal_reached=False),
+            StateEndMsg(),
+        ]:
+            writer.write(protocol.encode(m))
+        await writer.drain()
+        await asyncio.sleep(0.1)
+        await sw.drain_pending_snapshot()
+        # All `burst` checks dispatched to AP (per on_check call count).
+        assert next_id[0] - 10_000 == burst
+        # But no Cappy bubbles fired — burst threshold tripped.
+        assert items_sent == []
+        assert sw._reconcile_cappy_pending == set()
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        await sw.stop()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_fires_cappy_at_burst_boundary():
+    """Exactly at the threshold (5 in current config), bubbles still fire.
+    Locks the >-vs->= boundary so a refactor doesn't silently change it."""
+    from client.switch_server import RECONCILE_CAPPY_BURST_THRESHOLD
+    state = BridgeState()
+    items_sent: list[Any] = []
+    next_id = [20_000]
+    async def on_check(msg: dict) -> int | None:
+        next_id[0] += 1
+        return next_id[0]
+    async def on_goal() -> None:
+        pass
+    def builder(loc_id: int):
+        from client.protocol import ItemMsg
+        return ItemMsg(kind="capture", cap="X", from_="(offline)")
+    sw = SwitchServer(
+        "127.0.0.1", 0, state, on_check, on_goal,
+        is_ap_ready=lambda: False,
+        build_reconcile_cappy_item=builder,
+    )
+    async def fake_send_item(item):
+        items_sent.append(item)
+    sw.send_item = fake_send_item  # type: ignore[assignment]
+    server = await asyncio.start_server(sw._handle_client, "127.0.0.1", 0)
+    sw._server = server
+    port = server.sockets[0].getsockname()[1]
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        writer.write(protocol.encode(HelloMsg()))
+        await _drain_messages(reader, n=3, timeout=2.0)
+        at_threshold = [f"Cap{i}" for i in range(RECONCILE_CAPPY_BURST_THRESHOLD)]
+        for m in [
+            StateBeginMsg(mod_ver="0.1.0", save_slot=0),
+            StateChunkMsg(stage_name="_meta", captures=at_threshold, goal_reached=False),
+            StateEndMsg(),
+        ]:
+            writer.write(protocol.encode(m))
+        await writer.drain()
+        await asyncio.sleep(0.1)
+        await sw.drain_pending_snapshot()
+        # All exactly-threshold entries fire Cappy.
+        assert len(items_sent) == RECONCILE_CAPPY_BURST_THRESHOLD
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        await sw.stop()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_does_not_fire_cappy_for_other_player_moon():
+    """Builder returning None for non-self items — those go through AP's
+    PrintMsg path, the bridge shouldn't double-announce them."""
+    state = BridgeState()
+    items_sent: list[Any] = []
+
+    async def on_check(msg: dict) -> int | None:
+        return 7777
+
+    async def on_goal() -> None:
+        pass
+
+    # Builder always returns None (simulates "scout says recipient != self").
+    def builder(loc_id: int):
+        return None
+
+    sw = SwitchServer(
+        "127.0.0.1", 0, state, on_check, on_goal,
+        is_ap_ready=lambda: False,
+        build_reconcile_cappy_item=builder,
+    )
+    async def fake_send_item(item):
+        items_sent.append(item)
+    sw.send_item = fake_send_item  # type: ignore[assignment]
+
+    server = await asyncio.start_server(sw._handle_client, "127.0.0.1", 0)
+    sw._server = server
+    port = server.sockets[0].getsockname()[1]
+
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        writer.write(protocol.encode(HelloMsg()))
+        await _drain_messages(reader, n=3, timeout=2.0)
+        for m in [
+            StateBeginMsg(mod_ver="0.1.0", save_slot=0),
+            StateChunkMsg(stage_name="X", shines=[{"object_id": "o", "shine_uid": 1}]),
+            StateEndMsg(),
+        ]:
+            writer.write(protocol.encode(m))
+        await writer.drain()
+        await asyncio.sleep(0.1)
+        await sw.drain_pending_snapshot()
+        # Multiple retries still produce no Cappy bubble (builder always None).
+        await sw.try_fire_reconcile_cappy()
+        await sw.try_fire_reconcile_cappy()
+        assert items_sent == []
+        # But the loc_id stays pending — a future scout absorption could
+        # still resolve. (Test harness never flips builder, so it stays.)
+        assert 7777 in sw._reconcile_cappy_pending
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        await sw.stop()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_skips_cappy_for_already_checked_locations():
+    """The user's request: "if it wasn't there already". An entry whose
+    loc_id was ALREADY in locations_checked before drain shouldn't fire
+    Cappy — it's a re-replay, not a new offline collect."""
+    state = BridgeState()
+
+    async def on_check(msg: dict) -> int | None:
+        # report_check resolves the snapshot entry to loc_id=4242, which
+        # the get_already_checked snapshot already contains.
+        return 4242
+
+    async def on_goal() -> None:
+        pass
+
+    builder_called: list[int] = []
+    def builder(loc_id: int):
+        builder_called.append(loc_id)
+        from client.protocol import ItemMsg
+        return ItemMsg(kind="moon", name="X", from_="(offline)")
+
+    sw = SwitchServer(
+        "127.0.0.1", 0, state, on_check, on_goal,
+        is_ap_ready=lambda: False,
+        build_reconcile_cappy_item=builder,
+        # The callback returns the pre-drain snapshot of checked loc_ids.
+        # 4242 is already known → drain should skip Cappy for it.
+        get_already_checked_loc_ids=lambda: {4242},
+    )
+    items_sent: list[Any] = []
+    async def fake_send_item(item):
+        items_sent.append(item)
+    sw.send_item = fake_send_item  # type: ignore[assignment]
+
+    server = await asyncio.start_server(sw._handle_client, "127.0.0.1", 0)
+    sw._server = server
+    port = server.sockets[0].getsockname()[1]
+
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        writer.write(protocol.encode(HelloMsg()))
+        await _drain_messages(reader, n=3, timeout=2.0)
+        for m in [
+            StateBeginMsg(mod_ver="0.1.0", save_slot=0),
+            StateChunkMsg(stage_name="W", shines=[{"object_id": "obj124", "shine_uid": 100}]),
+            StateEndMsg(),
+        ]:
+            writer.write(protocol.encode(m))
+        await writer.drain()
+        await asyncio.sleep(0.1)
+        await sw.drain_pending_snapshot()
+        # Builder never called — loc_id 4242 was already in the pre-drain
+        # snapshot, so it wasn't queued for reconcile-Cappy.
+        assert builder_called == []
+        assert items_sent == []
+        assert sw._reconcile_cappy_pending == set()
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        await sw.stop()
+
+
+# ----- helpers -----
+
 async def _drain_messages(reader: asyncio.StreamReader, n: int, timeout: float) -> list[dict]:
     buf = bytearray()
     out: list[dict] = []

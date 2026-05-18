@@ -211,11 +211,32 @@ TEST(encode_state_begin_omits_save_slot_when_negative) {
         R"({"t":"state_begin","mod_ver":"0.1.0"})" "\n");
 }
 
+// Small helper: copy a literal into a StateChunk's stage_name without
+// requiring the test to remember the M6-phase-C buffer cap.
+inline void setStage(StateChunk& c, const char* s) {
+    copyFixedField(c.stage_name, s);
+}
+
+// Append a shine entry into a StateChunk using the fixed-buffer API.
+// Mirrors the runtime SnapshotBuilder::addShine path (sans the per-stage flush
+// + Send), keeping test setup symmetrical with production code.
+inline void addShine(StateChunk& c, const char* obj, int uid) {
+    if (c.shine_count >= static_cast<int>(kSnapshotMaxShinesPerStage)) return;
+    ShineEntry& s = c.shines[c.shine_count++];
+    copyFixedField(s.object_id, obj);
+    s.shine_uid = uid;
+}
+
+inline void addCapture(StateChunk& c, const char* hack) {
+    if (c.capture_count >= static_cast<int>(kSnapshotMaxCaptures)) return;
+    copyFixedField(c.captures[c.capture_count++], hack);
+}
+
 TEST(encode_state_chunk_per_stage) {
     StateChunk c;
-    c.stage_name = "CapWorldHomeStage";
-    c.shines.push_back({"MoonOurFirst", 100});
-    c.shines.push_back({"MoonHatTrampoline", 101});
+    setStage(c, "CapWorldHomeStage");
+    addShine(c, "MoonOurFirst", 100);
+    addShine(c, "MoonHatTrampoline", 101);
     EXPECT_EQ_S(wire([&](auto& buf){ encodeStateChunk(buf, c); }),
         R"({"t":"state_chunk","stage_name":"CapWorldHomeStage",)"
         R"("shines":[{"object_id":"MoonOurFirst","shine_uid":100},)"
@@ -224,8 +245,9 @@ TEST(encode_state_chunk_per_stage) {
 
 TEST(encode_state_chunk_meta_carries_captures_and_goal) {
     StateChunk c;
-    c.stage_name = "_meta";
-    c.captures = {"Kuribo", "Frog"};
+    setStage(c, "_meta");
+    addCapture(c, "Kuribo");
+    addCapture(c, "Frog");
     c.include_goal_reached = true;
     c.goal_reached = false;
     EXPECT_EQ_S(wire([&](auto& buf){ encodeStateChunk(buf, c); }),
@@ -235,7 +257,7 @@ TEST(encode_state_chunk_meta_carries_captures_and_goal) {
 
 TEST(encode_state_chunk_skips_empty_arrays) {
     StateChunk c;
-    c.stage_name = "_meta";
+    setStage(c, "_meta");
     // No captures, no goal_reached_included.
     EXPECT_EQ_S(wire([&](auto& buf){ encodeStateChunk(buf, c); }),
         R"({"t":"state_chunk","stage_name":"_meta"})" "\n");
@@ -249,15 +271,74 @@ TEST(encode_state_end) {
 // an array. Pre-fix, "[{...}{...}" would slip through.
 TEST(encode_state_chunk_multi_shine_has_comma_between_objects) {
     StateChunk c;
-    c.stage_name = "X";
-    c.shines.push_back({"A", 1});
-    c.shines.push_back({"B", 2});
-    c.shines.push_back({"C", 3});
+    setStage(c, "X");
+    addShine(c, "A", 1);
+    addShine(c, "B", 2);
+    addShine(c, "C", 3);
     const std::string w = wire([&](auto& buf){ encodeStateChunk(buf, c); });
     // Spot-check: must contain "},{" as the separator between adjacent objects.
     EXPECT(w.find("},{") != std::string::npos);
     // And the array must close properly.
     EXPECT(w.find("}]}") != std::string::npos);
+}
+
+// M6 phase C: long stage_name (exceeds SSO=15) must encode losslessly under
+// the fixed-buffer regime. WaterfallWorldHomeStage = 23 chars is the exact
+// scenario that would have crashed the worker thread pre-hardening.
+TEST(encode_state_chunk_long_stage_name) {
+    StateChunk c;
+    setStage(c, "WaterfallWorldHomeStage");
+    addShine(c, "obj214", 1);
+    EXPECT_EQ_S(wire([&](auto& buf){ encodeStateChunk(buf, c); }),
+        R"({"t":"state_chunk","stage_name":"WaterfallWorldHomeStage",)"
+        R"("shines":[{"object_id":"obj214","shine_uid":1}]})" "\n");
+}
+
+// M6 phase C: at-capacity shines array must encode every entry — no buffer
+// overrun, no off-by-one truncation.
+TEST(encode_state_chunk_shines_at_capacity) {
+    StateChunk c;
+    setStage(c, "Bulk");
+    for (int i = 0; i < static_cast<int>(kSnapshotMaxShinesPerStage); ++i) {
+        char obj[16];
+        std::snprintf(obj, sizeof(obj), "o%d", i);
+        addShine(c, obj, i);
+    }
+    EXPECT_EQ_I(c.shine_count, static_cast<int>(kSnapshotMaxShinesPerStage));
+    const std::string w = wire([&](auto& buf){ encodeStateChunk(buf, c); });
+    // First and last entries both present in the output.
+    EXPECT(w.find(R"({"object_id":"o0","shine_uid":0})") != std::string::npos);
+    char last[64];
+    std::snprintf(last, sizeof(last), R"({"object_id":"o%zu","shine_uid":%zu})",
+                  kSnapshotMaxShinesPerStage - 1, kSnapshotMaxShinesPerStage - 1);
+    EXPECT(w.find(last) != std::string::npos);
+}
+
+// M6 phase C: SnapshotBuilder's overflow guard maps to the helper's bounds
+// check — extra addShine calls beyond capacity must silently no-op so the
+// runtime path can log+drop without corrupting the buffer.
+TEST(state_chunk_addshine_helper_clamps_at_capacity) {
+    StateChunk c;
+    setStage(c, "Bulk");
+    for (int i = 0; i < static_cast<int>(kSnapshotMaxShinesPerStage) + 5; ++i) {
+        addShine(c, "x", i);
+    }
+    EXPECT_EQ_I(c.shine_count, static_cast<int>(kSnapshotMaxShinesPerStage));
+}
+
+// M6 phase C: stage_name overrun truncates rather than overflowing. Bridge
+// would log a "no shine_map entry" warning on a truncated key; the local
+// contract here is just "encode + NUL-terminate within the buffer".
+TEST(encode_state_chunk_stage_name_truncates_at_cap) {
+    StateChunk c;
+    std::string huge(kCheckFieldCap + 20, 'S');  // 84 'S's
+    copyFixedField(c.stage_name, huge.c_str());
+    EXPECT_EQ_I(std::strlen(c.stage_name), kCheckFieldCap - 1);
+    // Encoder should still produce well-formed JSON — no array sections.
+    const std::string w = wire([&](auto& buf){ encodeStateChunk(buf, c); });
+    EXPECT(w.find(R"("t":"state_chunk")") != std::string::npos);
+    EXPECT(w.find(R"("stage_name":")") != std::string::npos);
+    EXPECT(w.back() == '\n');
 }
 
 // --------------------------------------------------------------------------

@@ -253,6 +253,19 @@ async def main(args: argparse.Namespace) -> None:
         # capturesanity_enabled=True keeps current behavior until
         # SMOContext flips it via set_capturesanity_enabled() on Connected.
         get_all_captures=capture_map.iter_all,
+        # M6 phase C reconcile — gate snapshot dispatch on AP datapackage
+        # availability so a Switch HELLO that races the AP handshake doesn't
+        # drop every snapshot entry as "no AP id for location".
+        is_ap_ready=ctx.is_ap_ready,
+        # M6 phase C reconcile — synthesize a Cappy bubble for each moon
+        # collected during the bridge-offline window so the player learns
+        # what AP credited them with (normal cutscene-label substitution
+        # missed its window while disconnected).
+        build_reconcile_cappy_item=ctx.build_reconcile_cappy_item,
+        # M6 phase C reconcile — snapshot of currently-checked AP loc_ids,
+        # captured once before each drain to gate Cappy-bubble synthesis on
+        # "wasn't there already". Re-replays of known checks skip Cappy.
+        get_already_checked_loc_ids=lambda: set(ctx.locations_checked),
     )
     ctx.switch = sw
     # M-color: ApClient → SwitchServer palette callback. Wired post-

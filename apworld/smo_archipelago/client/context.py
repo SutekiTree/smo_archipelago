@@ -833,6 +833,15 @@ class SMOContext(CommonContext):
                 # connected.
                 await self.switch.push_capturesanity_replay()
                 await self.switch.send_ap_state("ready")
+                # M6 phase C — datapackage is now hot. If the Switch's
+                # state-snapshot landed during the AP handshake window, its
+                # entries were buffered (report_check couldn't resolve loc_ids
+                # without dp.location_name_to_id). Drain now so AP learns
+                # about anything collected during the disconnect.
+                try:
+                    await self.switch.drain_pending_snapshot()
+                except Exception:
+                    log.exception("drain_pending_snapshot failed")
             # M6 phase D — subscribe to the outstanding-moon-balance key in
             # the AP data store. `set_notify` sends Get + SetNotify in one
             # batch; the Retrieved reply lands in `ctx.stored_data` BEFORE
@@ -905,6 +914,14 @@ class SMOContext(CommonContext):
             # flags and push to the Switch (idempotent merge on the mod side).
             if self.colors.enabled and self.send_shine_scouts is not None:
                 await self._push_palette_for_scout_batch(args)
+            # M6 phase C reconcile — snapshot drain queues loc_ids for Cappy
+            # bubbles; scouts arrive piecemeal so retry on every batch until
+            # the cache catches up (no-op when the pending set is empty).
+            if self.switch is not None:
+                try:
+                    await self.switch.try_fire_reconcile_cappy()
+                except Exception:
+                    log.exception("try_fire_reconcile_cappy failed")
         # Bounced/DeathLink is handled via on_deathlink (CommonContext routes
         # for us; on_package needn't double-handle).
 
@@ -1046,6 +1063,71 @@ class SMOContext(CommonContext):
         except Exception:
             log.exception("format_moon_label failed for loc_id=%d", loc_id)
             return None
+
+    def is_ap_ready(self) -> bool:
+        """True iff the AP datapackage has been loaded — the only state
+        report_check needs to resolve loc_ids. Mirrors `state.ap_conn=='ready'`
+        which is set in `_handle_ap_package(cmd='Connected')` right after the
+        datapackage is hydrated from self.
+        """
+        return self.state.ap_conn == "ready"
+
+    def build_reconcile_cappy_item(self, loc_id: int) -> "ItemMsg | None":
+        """M6 phase C reconcile — build a Cappy-bubble ItemMsg for a moon or
+        capture that was collected during a Switch-online / bridge-offline
+        window.
+
+        Returns None when:
+          * scout for this loc_id hasn't been absorbed yet (caller retries
+            via SwitchServer.try_fire_reconcile_cappy on each LocationInfo)
+          * the item at this location is Kingdom/Other (no useful surface)
+          * the item is routed to another player (their bridge will print
+            its own notification; we'd be double-announcing)
+
+        Both moons and captures route to the speech bubble because the
+        in-game cutscene-label / Capture-List notification missed its
+        window while the bridge was offline. The Switch-side formatter
+        treats `from_ == "(offline)"` as a sentinel and produces
+        "Got <name>!" with no "from <sender>" clause — same form for both
+        item kinds.
+
+        For captures we also populate hack_name (via the reverse CaptureMap)
+        — matches the live ReceivedItems path so the Switch can re-apply
+        idempotently if needed. Synthetic Item-apply is harmless: moons are
+        observation-only (OutstandingMsg is authoritative for balance),
+        captures probe isExistInHackDictionary — so the duplicate vs the
+        natural ReceivedItems-driven ItemMsg cannot double-count.
+        """
+        scout = self.scout_cache.lookup(loc_id)
+        if scout is None:
+            return None
+        # Self-routed only: another player's bridge already prints/announces
+        # the item for them; firing a Cappy bubble for us would be confusing.
+        if self.slot is None or scout.recipient != self.slot:
+            return None
+        item_name = self.dp.item_id_to_name.get(scout.item_id)
+        if not item_name:
+            return None
+        ci = self.dp.classify_item(item_name)
+        if ci.kind not in (ItemKind.MOON, ItemKind.CAPTURE):
+            return None
+        ref = ci.to_ref()
+        # Mirror _parse_received_item: for captures, resolve the SMO-internal
+        # hack_name from the apworld cap name so the Switch's existing
+        # add-to-hack-dictionary path can run without a separate lookup.
+        hack_name: str | None = None
+        if ref.kind == "capture" and ref.cap:
+            hack_name = self.capture_map.cap_to_hack(ref.cap)
+        return ItemMsg(
+            kind=ref.kind,
+            kingdom=ref.kingdom,
+            shine_id=ref.shine_id,
+            cap=ref.cap,
+            name=ref.name,
+            from_="(offline)",
+            hack_name=hack_name,
+            classification=ref.classification,
+        )
 
     async def report_goal(self) -> None:
         await self.send_msgs([

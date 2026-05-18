@@ -44,4 +44,10 @@ using ShineEnumerationCallback = void(*)(void* ctx,
                                           int shine_uid);
 void enumerateOwnedShines(ShineEnumerationCallback cb, void* ctx);
 
+// Resolve the GameDataFile::isGotShine(int) symbol once at module init.
+// Wired from main.cpp next to the other M6-phase resolver calls. If lookup
+// fails enumerateOwnedShines logs and emits nothing — the snapshot stays a
+// safe no-op rather than crashing.
+void installSnapshotSymbols();
+
 }  // namespace smoap::game

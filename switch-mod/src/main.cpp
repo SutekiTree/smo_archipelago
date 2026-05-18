@@ -79,6 +79,8 @@ void installAddHackDictionaryHook();
 namespace smoap::game {
 // M6 phase B: resolve addHackDictionary + isExistInHackDictionary once.
 void installCaptureGrantSymbols();
+// M6 phase C: resolve GameDataFile::isGotShine(int) for snapshot enumeration.
+void installSnapshotSymbols();
 // M6 phase D: resolve getCurrentWorldIdNoDevelop once (stored on ApState).
 void installDepositKingdomLookupSymbol();
 }  // namespace smoap::game
@@ -218,6 +220,9 @@ extern "C" void exl_main(void* /*x0*/, void* /*x1*/) {
 
     SMOAP_LOG_INFO("resolving M6-phase-B capture-grant symbols");
     smoap::game::installCaptureGrantSymbols();
+
+    SMOAP_LOG_INFO("resolving M6-phase-C snapshot enumeration symbols");
+    smoap::game::installSnapshotSymbols();
 
     SMOAP_LOG_INFO("installing AddHackDictionaryHook (Capture List AP gate)");
     smoap::hooks::installAddHackDictionaryHook();

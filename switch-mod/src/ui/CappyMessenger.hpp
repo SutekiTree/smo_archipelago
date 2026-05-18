@@ -41,6 +41,15 @@ namespace smoap::ui {
 // Cap is 64 bytes; the label itself is ASCII and unlikely to ever grow.
 inline constexpr const char* kArchipelagoLabel = "ArchipelagoCappyMsg";
 
+// M6 phase C reconcile sentinel — bridge sets `Item.from = "(offline)"`
+// when synthesizing an ItemMsg for a moon that was collected during a
+// bridge-offline window (no live cutscene-label was shown, so the player
+// has no AP context yet). The Cappy filter accepts it (any non-empty,
+// non-local-slot value passes), and the formatter strips the "from
+// <sentinel>" suffix to produce a clean "Got X!" — keeping the message
+// short and avoiding a confusing literal "(offline)" in the bubble.
+inline constexpr const char* kReconcileFromSentinel = "(offline)";
+
 class CappyMessenger {
 public:
     // Pending-message ring. Cap chosen empirically: a kingdom-unlock burst

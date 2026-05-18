@@ -80,11 +80,35 @@ void playSE_NG() {
 }
 
 void enumerateOwnedCaptures(CaptureEnumerationCallback cb, void* ctx) {
-    // M5/M6 will iterate the player's used-capture record from GameDataHolder
-    // and invoke cb with each raw hack_name. Stub for M4.5 — empty snapshot
-    // is harmless.
-    (void)cb;
-    (void)ctx;
+    // M6 phase C: walk kCaptureHackNames (the auto-generated authoritative
+    // list of every hack we care about) and probe isExistInHackDictionary for
+    // each. Reuses the M6-phase-B-resolved s_isExistInHackDictionary fn ptr.
+    // No allocation, no new symbols, no thread issues.
+    if (!cb || !s_isExistInHackDictionary) {
+        SMOAP_LOG_WARN("[snapshot] enumerateOwnedCaptures skipped: cb=%p sym=%p",
+                       reinterpret_cast<void*>(cb),
+                       reinterpret_cast<void*>(s_isExistInHackDictionary));
+        return;
+    }
+    void* gdh = smoap::ap::ApState::instance().game_data_holder_cache.load(
+        std::memory_order_relaxed);
+    if (!gdh) {
+        SMOAP_LOG_WARN("[snapshot] enumerateOwnedCaptures: GameDataHolder not cached yet");
+        return;
+    }
+    GameDataHolderAccessor acc{gdh};
+    int emitted = 0;
+    for (const auto& sv : kCaptureHackNames) {
+        if (sv.empty()) continue;
+        // kCaptureHackNames entries are constructed from string literals,
+        // which are NUL-terminated, so .data() is a safe const char*.
+        const char* name = sv.data();
+        if (s_isExistInHackDictionary(acc, name)) {
+            cb(ctx, name);
+            ++emitted;
+        }
+    }
+    SMOAP_LOG_INFO("[snapshot] enumerateOwnedCaptures emitted=%d", emitted);
 }
 
 void grantCapture(const char* cap_name, const char* hack_name) {

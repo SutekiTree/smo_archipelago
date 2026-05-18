@@ -145,13 +145,23 @@ struct Log {
 // capture_map.json. The bridge is the source of truth for what AP knows; the
 // snapshot lets AP learn about anything collected while disconnected.
 //
-// Outbound state-snapshot structs (Switch -> Bridge). std::string fields
-// here get assigned then immediately handed to encodeStateChunk for one-shot
-// serialization on the worker. Disproven assumption (2026-05-16): "std::string
-// is safe on the worker" — *outbound* assignment can still allocate. Most
-// values here are short (stage_name max ~24 chars, object_id ~8 chars) and
-// have not crashed in practice; converting them to char[] is M-future work.
-// The crash-driven fix-up has only addressed inbound DecodedMsg fields.
+// M6 phase C — fixed-buffer storage. The encoder runs on the worker thread,
+// and the M6.1 allocator hazard (libstdc++'s allocator NULL-derefs in
+// nn::os::GetTlsValue on any std::string growth past SSO ~15 chars and any
+// std::vector growth) makes every wide stage_name (e.g. "WaterfallWorldHomeStage"
+// = 23 chars) plus every per-stage shines accumulation a latent crash. Prior
+// to enumerateOwnedShines emitting real data, this stayed dormant because the
+// stub emitted nothing; landing M6 phase C without converting these would
+// trip the deref the first time a stage with > ~3 owned shines was traversed.
+// All snapshot string fields are now char[kCheckFieldCap]; arrays use
+// kSnapshotMax* caps with log-and-drop on overflow.
+
+inline constexpr std::size_t kSnapshotMaxShinesPerStage = 64;
+    // Worst observed real per-stage moon count is ~30 (Mushroom split across
+    // many stages keeps per-stage low); 64 is 2× headroom. Overflow logs+drops
+    // in SnapshotBuilder::addShine — next reconnect retries idempotently.
+inline constexpr std::size_t kSnapshotMaxCaptures = 64;
+    // 43 caps in capture_table.h today; 64 is comfortable headroom.
 
 struct StateBegin {
     std::string mod_ver;
@@ -159,18 +169,21 @@ struct StateBegin {
 };
 
 struct ShineEntry {
-    std::string object_id;
+    char object_id[kCheckFieldCap] = {};
     int shine_uid = -1;
 };
 
 struct StateChunk {
     // Per-stage chunk: stage_name = SMO stage key (e.g. "CapWorldHomeStage"),
-    //   shines = list of {object_id, shine_uid}.
-    // Cross-stage "_meta" chunk: stage_name = "_meta", captures = list of raw
-    //   hack_names, include_goal_reached/goal_reached for the goal flag.
-    std::string stage_name;
-    std::vector<ShineEntry> shines;
-    std::vector<std::string> captures;
+    //   shines[0..shine_count] = list of {object_id, shine_uid}.
+    // Cross-stage "_meta" chunk: stage_name = "_meta",
+    //   captures[0..capture_count] = list of raw hack_names,
+    //   include_goal_reached/goal_reached for the goal flag.
+    char stage_name[kCheckFieldCap] = {};
+    ShineEntry shines[kSnapshotMaxShinesPerStage] = {};
+    int shine_count = 0;
+    char captures[kSnapshotMaxCaptures][kCheckFieldCap] = {};
+    int capture_count = 0;
     bool include_goal_reached = false;
     bool goal_reached = false;
 };

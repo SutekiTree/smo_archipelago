@@ -161,19 +161,20 @@ void encodeStateChunk(LineBuffer& line, const StateChunk& s) {
     e.beginObject()
         .key("t").value("state_chunk")
         .key("stage_name").value(s.stage_name);
-    if (!s.shines.empty()) {
+    if (s.shine_count > 0) {
         e.key("shines").beginArray();
-        for (const auto& sh : s.shines) {
+        for (int i = 0; i < s.shine_count; ++i) {
+            const auto& sh = s.shines[i];
             e.beginObject();
-            if (!sh.object_id.empty()) e.key("object_id").value(sh.object_id);
-            if (sh.shine_uid >= 0)     e.key("shine_uid").value(sh.shine_uid);
+            if (sh.object_id[0])   e.key("object_id").value(sh.object_id);
+            if (sh.shine_uid >= 0) e.key("shine_uid").value(sh.shine_uid);
             e.endObject();
         }
         e.endArray();
     }
-    if (!s.captures.empty()) {
+    if (s.capture_count > 0) {
         e.key("captures").beginArray();
-        for (const auto& c : s.captures) e.value(c);
+        for (int i = 0; i < s.capture_count; ++i) e.value(s.captures[i]);
         e.endArray();
     }
     if (s.include_goal_reached) e.key("goal_reached").value(s.goal_reached);
