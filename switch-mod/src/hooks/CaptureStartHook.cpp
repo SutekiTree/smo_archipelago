@@ -41,18 +41,13 @@ GetCurrentHackNameFn s_getCurrentHackName = nullptr;
 //  release Mario when called from inside the startHack callback. See
 //  HookSymbols.hpp comment for forceKillHack rationale.)
 //
-// Phase 2 (2026-05-17) explored swapping this for PlayerHackKeeper::endHack
-// — the canonical voluntary-release path — but T-Rex CRASHED ~530ms after
-// endHack returned cleanly: PlayerHackKeeper::endHackStartDemo called from
-// TRex::exeHackStart null-deref'd on the cleared keeper. forceKillHack does
-// additional synchronous teardown that prevents the actor from continuing
-// its intro state machine after release, so the actor can't race.
-//
-// Rollback decision: use forceKillHack everywhere (known-good pre-Phase-2
-// behavior). Accepted visual cost: captured actor despawns on release.
-// The Phase-2 endHack symbol stays resolved-but-unused (probed by
-// EndHackProbeHook for cinematic timing telemetry); see HackEndParam.hpp
-// for the layout findings in case a future agent revisits.
+// Considered alternative: PlayerHackKeeper::endHack (SMO's canonical
+// voluntary-release path used for Y-press). Prototyped 2026-05-17; T-Rex
+// CRASHED ~530ms after endHack returned cleanly when its exeHackStart state
+// machine null-deref'd on the cleared keeper. forceKillHack does additional
+// synchronous teardown that prevents the actor from continuing its intro
+// state machine after release, so the actor can't race. Visual cost of
+// forceKillHack: captured enemy despawns on release.
 using ForceKillHackFn = void (*)(PlayerHackKeeper*);
 ForceKillHackFn s_forceKillHack = nullptr;
 
@@ -102,22 +97,6 @@ HOOK_DEFINE_TRAMPOLINE(CaptureStartHook) {
         if (!name || !*name) return;
 
         SMOAP_LOG_INFO("CaptureStartHook: hack_name=%s", name);
-
-        // M7-A follow-up (Phase 1 probe) — stamp start time + name for the
-        // EndHackProbeHook timing delta. Single-thread (frame thread) writes,
-        // single-thread reads on the next endHack; relaxed is enough but match
-        // the surrounding pattern with release for the timestamp.
-        {
-            auto& st = smoap::ap::ApState::instance();
-            std::size_t name_len = 0;
-            for (; name_len < sizeof(st.last_capture_hack_name) - 1
-                    && name[name_len]; ++name_len) {
-                st.last_capture_hack_name[name_len] = name[name_len];
-            }
-            st.last_capture_hack_name[name_len] = '\0';
-            st.last_capture_start_ms.store(
-                smoap::ap::ApState::nowMs(), std::memory_order_release);
-        }
 
         // Report unconditionally — the AP location check fires whether or not
         // the player owns the capture item yet. First touch sends the check,
