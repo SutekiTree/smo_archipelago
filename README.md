@@ -20,7 +20,7 @@ Today the SMO Archipelago experience is a *Manual* client ([empathy-mp3/SMO-manu
 
 The SMOClient is registered as the "SMO Client" component in Archipelago's Launcher; click it from the Launcher GUI and you get one process that simultaneously connects to the AP server (via the inherited `CommonContext` websocket plumbing) AND runs the LAN TCP server the Switch mod connects to. Wire format: [`docs/wire-protocol.md`](docs/wire-protocol.md).
 
-Earlier revisions of this project shipped the client as a standalone `python -m smo_ap_bridge` process plus a Flask web tracker on :8000; both were merged into the in-apworld client (see the Phase 1-7 reshape plan at `~/.claude/plans/please-put-together-a-playful-thacker.md`).
+Earlier revisions of this project shipped the client as a standalone `python -m smo_ap_bridge` process; the Phase 1-7 reshape merged it into the in-apworld client (plan: `~/.claude/plans/please-put-together-a-playful-thacker.md`).
 
 ## Project layout
 

@@ -34,13 +34,13 @@ State reconciliation across disconnects — **CODE COMPLETE.** Bridge accepts ne
 
 ## M4.6
 
-Inbound DeathLink (peeled out of original M6) — **DONE 2026-05-15.** Switch acts on inbound `kill` messages by invoking `DeathHook::Orig(cached_PlayerHitPointData*)` directly — the trampoline's Orig bypasses our own Callback so the synthetic death doesn't echo back out as a fresh DeathLink. `synthetic_death_this_frame` kept as defense-in-depth for any future hook downstream of `PlayerHitPointData::kill`. Single 15s debounce window (`kInboundKillDebounceMs`) covers both "Mario in death animation" and "two kills too close together" via one shared `last_observed_death_ms` timestamp updated on every observed death (organic or synthetic). Inbound queue collapsed to a single atomic bool (`inbound_kill_pending`) so closely-spaced bounces auto-debounce at the producer. DeathLink **toggle moved to bridge config**: bridge's `cfg.deathlink.enabled` is communicated to the Switch in `HelloAckMsg.deathlink_enabled`, parsed into `ApState::deathlink_enabled`, gates the inbound apply path. Outbound death reporting is NOT gated on this Switch-side flag — bridge already gates outbound, double-gating would break old-bridge/new-Switch combos. Chicken-and-egg: first inbound DeathLink before Mario has died once organically is dropped with a log line (`PlayerHitPointData::kill` is the only cache site today; closing this hole needs an earlier "any damage" hook). Debug-only `POST /api/test/inject-deathlink` on the web tracker writes `KillMsg` straight to the Switch socket (bypasses AP), so the apply path can be exercised without a second slot.
+Inbound DeathLink (peeled out of original M6) — **DONE 2026-05-15.** Switch acts on inbound `kill` messages by invoking `DeathHook::Orig(cached_PlayerHitPointData*)` directly — the trampoline's Orig bypasses our own Callback so the synthetic death doesn't echo back out as a fresh DeathLink. `synthetic_death_this_frame` kept as defense-in-depth for any future hook downstream of `PlayerHitPointData::kill`. Single 15s debounce window (`kInboundKillDebounceMs`) covers both "Mario in death animation" and "two kills too close together" via one shared `last_observed_death_ms` timestamp updated on every observed death (organic or synthetic). Inbound queue collapsed to a single atomic bool (`inbound_kill_pending`) so closely-spaced bounces auto-debounce at the producer. DeathLink **toggle moved to bridge config**: bridge's `cfg.deathlink.enabled` is communicated to the Switch in `HelloAckMsg.deathlink_enabled`, parsed into `ApState::deathlink_enabled`, gates the inbound apply path. Outbound death reporting is NOT gated on this Switch-side flag — bridge already gates outbound, double-gating would break old-bridge/new-Switch combos. Chicken-and-egg: first inbound DeathLink before Mario has died once organically is dropped with a log line (`PlayerHitPointData::kill` is the only cache site today; closing this hole needs an earlier "any damage" hook). Debug-only `/inject_deathlink` on the SMOClient command bar writes `KillMsg` straight to the Switch socket (bypasses AP), so the apply path can be exercised without a second slot.
 
 **Pre-existing recv-loop bug surfaced + fixed**: `ApClient::threadMain` processed at most one inbound line per Select-wake AND only entered the read branch when Select reported socket-readable. When the bridge sends N messages in a single TCP push (the very common handshake `hello_ack + checked_replay + ap_state` triple, or items + kill back-to-back), messages 2..N sat in `read_buf_` until the *next* socket event — sometimes minutes. Validated live: the M4.6 kill stayed buffered 90+ seconds behind a stale `checked_replay` and Mario never died. Fix splits `readOneLine` into `recvIntoBuf` + `popLine`; the loop drains `read_buf_` to completion every iteration, including Select-timeout iterations. This bug had been masking inbound-message issues in M5.7 as well — anyone testing M6 item delivery would have hit it.
 
 ## M5
 
-Web tracker — **CODE COMPLETE** (Flask + SSE, served on :8000; debug `POST /api/test/inject-deathlink` endpoint for DeathLink tests).
+Web tracker — **CODE COMPLETE**, then **SUPERSEDED** by the in-apworld Kivy SMOClient in the Phase 1-7 reshape. The standalone tracker process is gone; the Tracker/Connections tabs live inside SMOClient now. `/inject_deathlink` on the SMOClient command bar covers the inbound-DeathLink debug path that used to need a separate HTTP call.
 
 ## M5.5
 
@@ -232,13 +232,10 @@ Item injection runs through the AP server console, the same way every other apwo
 The surviving SMOClient `/`-commands are debug-only and run inside the Kivy command bar:
 
 ```
-/label Sent Cap Power Moon -> P3       (M6 phase A.5 — visual test of Channel A)
 /smo_status                            (read-only tracker state)
 /inject_deathlink TestRig manual       (synthesize an inbound DeathLink, no AP needed)
 /help
 ```
-
-`/label <text>` writes a `MoonLabelMsg` directly to the Switch's `pending_moon_label` slot — useful for visually testing the cutscene-label hook standalone (collect any moon in Ryujinx within ~4s and the text appears in the moon-get cutscene). Real bridge↔AP Channel A use needs a live AP server so the `LocationScouts` warmup populates the `scout_cache` from which `_dispatch_check` synthesizes labels on-the-fly.
 
 ## M6.6 (deferred, next milestone)
 

@@ -22,26 +22,25 @@ def state() -> BridgeState:
 
 def test_empty_line_is_noop(state):
     r = parse_command("", state)
-    assert r.label is None and r.error is None and r.info is None and not r.quit
+    assert r.error is None and r.info is None and not r.quit
 
 
 def test_whitespace_only_is_noop(state):
     r = parse_command("   \t  ", state)
-    assert r.label is None and r.error is None
+    assert r.error is None and r.info is None
 
 
 def test_help_command(state):
     r = parse_command("help", state)
     assert r.info is not None
-    assert "label" in r.info
     assert "smo_status" in r.info
+    assert "inject_deathlink" in r.info
     assert "/send" in r.info  # points users at the AP-server console
-    assert r.label is None
 
 
 def test_help_alias_h(state):
     r = parse_command("h", state)
-    assert r.info is not None and "label" in r.info
+    assert r.info is not None and "smo_status" in r.info
 
 
 def test_quit(state):
@@ -54,7 +53,6 @@ def test_quit(state):
 def test_unknown_command(state):
     r = parse_command("foobar arg", state)
     assert r.error is not None and "foobar" in r.error
-    assert r.label is None
 
 
 def test_removed_grant_command_is_unknown(state):
@@ -71,19 +69,6 @@ def test_removed_capture_command_is_unknown(state):
 def test_removed_kingdom_command_is_unknown(state):
     r = parse_command("kingdom Sand", state)
     assert r.error is not None and "kingdom" in r.error
-
-
-def test_label_command(state):
-    r = parse_command("label Sent Cap Power Moon -> P3", state)
-    assert r.error is None
-    assert r.label is not None
-    assert r.label.text == "Sent Cap Power Moon -> P3"
-    assert r.label.seq == 999999
-
-
-def test_label_no_arg(state):
-    r = parse_command("label", state)
-    assert r.error is not None and "usage" in r.error
 
 
 def test_status_empty_state(state):

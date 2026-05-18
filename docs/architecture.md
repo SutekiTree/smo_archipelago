@@ -13,7 +13,7 @@ Two tiers, each independently restartable:
 
 ## Why an in-apworld client (instead of a standalone bridge)
 
-Earlier revisions of this project shipped a standalone `python -m smo_ap_bridge` script plus a Flask web tracker on :8000, distributed separately from the apworld. The Phase 1-7 reshape (plan: `~/.claude/plans/please-put-together-a-playful-thacker.md`) collapsed those into a single Kivy-based `SMOClient` that lives inside the apworld at `apworld/smo_archipelago/client/`. Same wire protocol, same Python responsibilities — just one process, one Launcher button, one install artifact.
+Earlier revisions of this project shipped a standalone `python -m smo_ap_bridge` script, distributed separately from the apworld. The Phase 1-7 reshape (plan: `~/.claude/plans/please-put-together-a-playful-thacker.md`) collapsed it into a single Kivy-based `SMOClient` that lives inside the apworld at `apworld/smo_archipelago/client/`. Same wire protocol, same Python responsibilities — just one process, one Launcher button, one install artifact.
 
 The Archipelago wire format (websocket + per-message-deflate + TLS) is too heavy to ship on Switch directly. `CommonContext` solves it in a few hundred lines. By subclassing CommonContext we get:
 
