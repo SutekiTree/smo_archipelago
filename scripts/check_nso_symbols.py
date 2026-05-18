@@ -25,6 +25,12 @@ SYMBOLS = [
     # first but proved to be a no-op when called from within the startHack
     # callback — see HookSymbols.hpp for the rationale.)
     "_ZN16PlayerHackKeeper13forceKillHackEv",
+    # M7-A follow-up (Phase 1 probe): PlayerHackKeeper::endHack — SMO's
+    # canonical voluntary-release path (same one Y button triggers). Hooked
+    # read-only by EndHackProbeHook so we can observe the HackEndParam bytes
+    # SMO passes on each release + per-cap cinematic durations. Drives the
+    # Phase 2 swap from forceKillHack to endHack.
+    "_ZN16PlayerHackKeeper7endHackEPK12HackEndParam",
     "_ZN12GameDataFile17setMainScenarioNoEi",
     "_ZN12GameDataFile14initializeDataEv",
     "_ZN16DemoPeachWedding14makeActorAliveEv",

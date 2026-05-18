@@ -227,6 +227,37 @@ public:
     // release/acquire visibility guarantee.
     std::atomic<bool> save_load_passthrough{false};
 
+    // Cap name queued alongside the keeper. tickPendingUncapture re-reads
+    // PlayerHackKeeper::getCurrentHackName(keeper) at deadline and compares
+    // against this string. Mismatch (or empty) means SMO already released the
+    // capture for some reason — player pressed Y, captured enemy died to the
+    // environment (Bullet Bill against a wall, Goomba into lava), scene
+    // transitioned, save loaded. Without this guard, forceKillHack/endHack
+    // fires on a stale keeper bound to either nothing or a different cap.
+    //
+    // Frame-thread-only (CaptureStartHook deny writes, tickPendingUncapture
+    // reads, EndHackProbeHook clears alongside pending_kill_keeper) — no
+    // atomic required. char[64] not std::string for the usual subsdk9
+    // allocator-NULL-deref reason.
+    char pending_kill_hack_name[64] = {};
+
+    // M7-A follow-up (Phase 1 probe) — last-capture telemetry.
+    //
+    // CaptureStartHook stamps `last_capture_start_ms` + `last_capture_hack_name`
+    // right after its Orig returns. EndHackProbeHook (read-only trampoline on
+    // PlayerHackKeeper::endHack) reads them on every voluntary release to log
+    // `[capture-timing] hack=<name> intro_to_end_ms=N` — empirical data for
+    // the Phase 2 swap from forceKillHack to endHack. Both fields touched only
+    // from the frame thread (startHack + endHack are both player-driven inline
+    // calls during frame processing); atomic for cross-frame visibility and to
+    // match the surrounding pattern. last_capture_start_ms = 0 means "no
+    // capture recorded yet" — probe skips the delta log.
+    //
+    // Name is char[64] (not std::string) to stay clear of subsdk9's libstdc++
+    // allocator NULL-deref. SMO hack names are short (≤16 chars in practice).
+    std::atomic<std::int64_t> last_capture_start_ms{0};
+    char last_capture_hack_name[64] = {};
+
     // M6 phase A — AP-credit counters surfaced via shine-counter hooks.
     // These are NOT shine flag flips: collecting a moon locally still drives
     // SMO's own shine table; AP-granted moons accumulate here and the

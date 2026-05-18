@@ -76,6 +76,25 @@ inline constexpr const char* kPlayerHackKeeperStartHack =
 inline constexpr const char* kPlayerHackKeeperForceKillHack =
     "_ZN16PlayerHackKeeper13forceKillHackEv";
 
+// PlayerHackKeeper::endHack(HackEndParam const*)
+// Source: MonsterDruide1/OdysseyDecomp src/Player/PlayerHackKeeper.h
+// The canonical "voluntary release" path SMO uses when the player presses Y
+// to walk out of a capture. Same internal as rs::endHack → initHackEndParam.
+//
+// Hooked READ-ONLY by EndHackProbeHook for telemetry:
+//   (a) the bytes SMO itself passes in HackEndParam on every Y-press
+//   (b) elapsed time from CaptureStartHook's startHack to endHack — i.e.
+//       the actual cinematic-end signal for that cap
+//
+// Phase 2 explored calling endHack from our own deferred-kill path to avoid
+// forceKillHack's actor-despawn visual; it CRASHED for T-Rex (endHack
+// returns cleanly but T-Rex's exeHackStart later null-deref'd on the
+// cleared keeper). Rolled back — we use forceKillHack everywhere with a
+// per-cap timer override for T-Rex. See game/HackEndParam.hpp for the
+// layout findings if a future agent revisits.
+inline constexpr const char* kPlayerHackKeeperEndHack =
+    "_ZN16PlayerHackKeeper7endHackEPK12HackEndParam";
+
 // --- Scenario flag set ---
 // GameDataFile::setMainScenarioNo(s32)  (s32 = int on aarch64)
 // Source: MonsterDruide1/OdysseyDecomp src/System/GameDataFile.h:456

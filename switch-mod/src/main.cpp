@@ -68,6 +68,10 @@ void installWorldMapSelectHook();
 // M7 phase A (capture lock): drain ApState::pending_kill_keeper if its
 // deadline elapsed. Called once per frame from DrawMainHook.
 void tickPendingUncapture();
+// M7-A follow-up (Phase 1): read-only trampoline on PlayerHackKeeper::
+// endHack that logs HackEndParam bytes + per-cap intro durations so we can
+// derive the layout for Phase 2's endHack-direct switch.
+void installEndHackProbeHook();
 }  // namespace smoap::hooks
 
 namespace smoap::hooks {
@@ -233,6 +237,9 @@ extern "C" void exl_main(void* /*x0*/, void* /*x1*/) {
 
     SMOAP_LOG_INFO("installing WorldMapSelectHook (M7 Path A kingdom-order gate)");
     smoap::hooks::installWorldMapSelectHook();
+
+    SMOAP_LOG_INFO("installing EndHackProbeHook (M7-A follow-up Phase 1 — read-only)");
+    smoap::hooks::installEndHackProbeHook();
 
     SMOAP_LOG_INFO("=== exl_main END (waiting for GameSystem::init to fire) ===");
 }
