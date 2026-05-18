@@ -225,7 +225,7 @@
             "Capture"
         ],
         "count": 1,
-        "filler": true
+        "progression": true
     },
     {
         "name": "T-Rex",
@@ -249,7 +249,7 @@
             "Capture"
         ],
         "count": 1,
-        "useful": true
+        "progression": true
     },
     {
         "name": "Cactus",
@@ -329,7 +329,7 @@
             "Capture"
         ],
         "count": 1,
-        "filler": true
+        "progression": true
     },
     {
         "name": "Uproot",
@@ -452,7 +452,7 @@
             "post-metro"
         ],
         "count": 1,
-        "useful": true
+        "progression": true
     },
     {
         "name": "Gushen",
@@ -506,7 +506,7 @@
             "post-metro"
         ],
         "count": 1,
-        "useful": true
+        "progression": true
     },
     {
         "name": "Pokio",
@@ -560,7 +560,7 @@
             "post-metro"
         ],
         "count": 1,
-        "useful": true
+        "progression": true
     },
     {
         "name": "Bowser",

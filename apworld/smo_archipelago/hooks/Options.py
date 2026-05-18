@@ -133,7 +133,8 @@ class IncludePrecisionCaptureMoons(DefaultOnToggle):
 
 class Capturesanity(Toggle):
     """Shuffle all captures into the pool.
-    Captures found in Cap or Cascade on the first visit are considered to be given for free and will not grant checks."""
+    Each 'Capture: X' location only grants its check once you've received the matching X capture
+    item — capturing an enemy you haven't unlocked yanks Mario back out and grants no credit."""
     display_name = "Capturesanity"
 
 # This is called before any manual options are defined, in case you want to define your own with a clean slate or let Manual define over them

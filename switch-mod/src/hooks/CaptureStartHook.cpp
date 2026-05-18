@@ -98,17 +98,31 @@ HOOK_DEFINE_TRAMPOLINE(CaptureStartHook) {
 
         SMOAP_LOG_INFO("CaptureStartHook: hack_name=%s", name);
 
-        // Report unconditionally — the AP location check fires whether or not
-        // the player owns the capture item yet. First touch sends the check,
-        // AP replies with the item, second touch succeeds.
-        smoap::ap::reportCaptureChecked(name);
+        // Decide blocked-vs-allowed once: same answer drives BOTH whether we
+        // credit the AP check AND whether we queue the M7 forceKillHack.
+        // captureBlocked returns false for unknown caps (fail-open via
+        // captureBitFor==0xff), so non-tracked captures continue to behave
+        // as before.
+        const bool blocked = smoap::game::captureBlocked(name);
+
+        // Capturesanity: only credit the check when the player owns the
+        // unlock. A blocked capture is yanked back to Mario ~4s later
+        // (forceKillHack queued below) — sending the check before then would
+        // credit a "capture" the player never actually got to keep. When
+        // capturesanity is OFF, the bridge pushes synthetic unlocks for
+        // every cap at HELLO time, so `blocked` is false and behavior
+        // matches the pre-gate path. AP location checks are idempotent, so
+        // re-touching after the unlock arrives still credits cleanly.
+        if (!blocked) {
+            smoap::ap::reportCaptureChecked(name);
+        }
 
         // M7: deny captures the player hasn't unlocked via AP. The actual
         // forceKillHack call is deferred to tickPendingUncapture() running
         // from drawMain — both because firing it inline doesn't release
         // Mario (state machine isn't fully entered yet) and because a brief
         // "captured the enemy and then got yanked out" beat is funnier.
-        if (smoap::game::captureBlocked(name)) {
+        if (blocked) {
             if (s_forceKillHack) {
                 auto& st = smoap::ap::ApState::instance();
                 // Phase 1.5a: stash the cap name we're queuing for so
@@ -127,7 +141,8 @@ HOOK_DEFINE_TRAMPOLINE(CaptureStartHook) {
                     smoap::ap::ApState::nowMs() + delay_ms,
                     std::memory_order_release);
                 SMOAP_LOG_INFO(
-                    "CaptureStartHook: BLOCKED hack=%s — forceKillHack queued in %dms%s",
+                    "CaptureStartHook: BLOCKED hack=%s — check suppressed; "
+                    "forceKillHack queued in %dms%s",
                     name, delay_ms,
                     (delay_ms != kDeferredKillMs) ? " (per-cap override)" : "");
             } else {

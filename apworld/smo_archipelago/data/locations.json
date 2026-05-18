@@ -3873,7 +3873,7 @@
             "Capture"
         ],
         "region": "Cap Kingdom",
-        "requires": []
+        "requires": "|Paragoomba|"
     },
     {
         "name": "Capture: Binoculars",
@@ -3881,7 +3881,7 @@
             "Capture"
         ],
         "region": "Sand Kingdom",
-        "requires": []
+        "requires": "|Binoculars|"
     },
     {
         "name": "Capture: T-Rex",
@@ -3889,7 +3889,7 @@
             "Capture"
         ],
         "region": "Cascade Kingdom",
-        "requires": []
+        "requires": "|T-Rex|"
     },
     {
         "name": "Capture: Bullet Bill",
@@ -3897,7 +3897,7 @@
             "Capture"
         ],
         "region": "Sand Kingdom",
-        "requires": []
+        "requires": "|Bullet Bill|"
     },
     {
         "name": "Capture: Moe-Eye",
@@ -3905,7 +3905,7 @@
             "Capture"
         ],
         "region": "Sand Kingdom",
-        "requires": []
+        "requires": "|Moe-Eye|"
     },
     {
         "name": "Capture: Cactus",
@@ -3913,7 +3913,7 @@
             "Capture"
         ],
         "region": "Sand Kingdom",
-        "requires": []
+        "requires": "|Cactus|"
     },
     {
         "name": "Capture: Goomba",
@@ -3921,7 +3921,7 @@
             "Capture"
         ],
         "region": "Sand Kingdom",
-        "requires": []
+        "requires": "|Goomba|"
     },
     {
         "name": "Capture: Knucklotec's Fist",
@@ -3929,7 +3929,7 @@
             "Capture"
         ],
         "region": "Sand Kingdom",
-        "requires": "|Bullet Bill|"
+        "requires": "(|Bullet Bill|) AND |Knucklotec's Fist|"
     },
     {
         "name": "Capture: Mini Rocket",
@@ -3937,7 +3937,7 @@
             "Capture"
         ],
         "region": "Sand Kingdom",
-        "requires": "{OptAll(|Bullet Bill| AND |Knucklotec's Fist|)}"
+        "requires": "({OptAll(|Bullet Bill| AND |Knucklotec's Fist|)}) AND |Mini Rocket|"
     },
     {
         "name": "Capture: Glydon",
@@ -3945,7 +3945,7 @@
             "Capture"
         ],
         "region": "Sand Kingdom",
-        "requires": "{OptAll(|Bullet Bill| AND |Knucklotec's Fist|)}"
+        "requires": "({OptAll(|Bullet Bill| AND |Knucklotec's Fist|)}) AND |Glydon|"
     },
     {
         "name": "Capture: Lakitu",
@@ -3953,7 +3953,7 @@
             "Capture"
         ],
         "region": "Sand Kingdom",
-        "requires": "{OptAll(|Bullet Bill| AND |Knucklotec's Fist|)}"
+        "requires": "({OptAll(|Bullet Bill| AND |Knucklotec's Fist|)}) AND |Lakitu|"
     },
     {
         "name": "Capture: Zipper",
@@ -3961,7 +3961,7 @@
             "Capture"
         ],
         "region": "Lake Kingdom",
-        "requires": "{IntoTheLake()}"
+        "requires": "({IntoTheLake()}) AND |Zipper|"
     },
     {
         "name": "Capture: Cheep Cheep",
@@ -3969,7 +3969,7 @@
             "Capture"
         ],
         "region": "Lake Kingdom",
-        "requires": "{IntoTheLake()}"
+        "requires": "({IntoTheLake()}) AND |Cheep Cheep|"
     },
     {
         "name": "Capture: Puzzle Part",
@@ -3977,7 +3977,7 @@
             "Capture"
         ],
         "region": "Lake Kingdom",
-        "requires": "{IntoTheLake()}"
+        "requires": "({IntoTheLake()}) AND |Puzzle Part|"
     },
     {
         "name": "Capture: Poison Piranha Plant",
@@ -3985,7 +3985,7 @@
             "Capture"
         ],
         "region": "Wooded Kingdom",
-        "requires": "{MazeSkip()}"
+        "requires": "({MazeSkip()}) AND |Poison Piranha Plant|"
     },
     {
         "name": "Capture: Uproot",
@@ -3993,7 +3993,7 @@
             "Capture"
         ],
         "region": "Wooded Kingdom",
-        "requires": []
+        "requires": "|Uproot|"
     },
     {
         "name": "Capture: Fire Bro",
@@ -4001,7 +4001,7 @@
             "Capture"
         ],
         "region": "Wooded Kingdom",
-        "requires": "{MazeSkip()}"
+        "requires": "({MazeSkip()}) AND |Fire Bro|"
     },
     {
         "name": "Capture: Sherm",
@@ -4009,7 +4009,7 @@
             "Capture"
         ],
         "region": "Wooded Kingdom",
-        "requires": "{MazeSkip()}"
+        "requires": "({MazeSkip()}) AND |Sherm|"
     },
     {
         "name": "Capture: Coin Coffer",
@@ -4017,7 +4017,7 @@
             "Capture"
         ],
         "region": "Wooded Kingdom",
-        "requires": "{MazeSkip()} or {OptOne(Hold/Throw)}"
+        "requires": "({MazeSkip()} or {OptOne(Hold/Throw)}) AND |Coin Coffer|"
     },
     {
         "name": "Capture: Tree",
@@ -4025,7 +4025,7 @@
             "Capture"
         ],
         "region": "Wooded Kingdom",
-        "requires": "{OptOne(Hold/Throw)}"
+        "requires": "({OptOne(Hold/Throw)}) AND |Tree|"
     },
     {
         "name": "Capture: Boulder",
@@ -4033,7 +4033,7 @@
             "Capture"
         ],
         "region": "Wooded Kingdom",
-        "requires": "{OptOne(Hold/Throw)}"
+        "requires": "({OptOne(Hold/Throw)}) AND |Boulder|"
     },
     {
         "name": "Capture: Picture Match Part",
@@ -4041,7 +4041,7 @@
             "Capture"
         ],
         "region": "Cloud Kingdom",
-        "requires": []
+        "requires": "|Picture Match Part|"
     },
     {
         "name": "Capture: Tropical Wiggler",
@@ -4049,7 +4049,7 @@
             "Capture"
         ],
         "region": "Lost Kingdom",
-        "requires": []
+        "requires": "|Tropical Wiggler|"
     },
     {
         "name": "Capture: Pole",
@@ -4057,7 +4057,7 @@
             "Capture"
         ],
         "region": "Metro Kingdom",
-        "requires": []
+        "requires": "|Pole|"
     },
     {
         "name": "Capture: Manhole",
@@ -4065,7 +4065,7 @@
             "Capture"
         ],
         "region": "Metro Kingdom",
-        "requires": []
+        "requires": "|Manhole|"
     },
     {
         "name": "Capture: Taxi",
@@ -4073,7 +4073,7 @@
             "Capture"
         ],
         "region": "Metro Kingdom",
-        "requires": []
+        "requires": "|Taxi|"
     },
     {
         "name": "Capture: RC Car",
@@ -4081,7 +4081,7 @@
             "Capture"
         ],
         "region": "Metro Kingdom",
-        "requires": []
+        "requires": "|RC Car|"
     },
     {
         "name": "Capture: Ty-foo",
@@ -4090,7 +4090,7 @@
             "Capture"
         ],
         "region": "Snow Kingdom",
-        "requires": []
+        "requires": "|Ty-foo|"
     },
     {
         "name": "Capture: Shiverian Racer",
@@ -4099,7 +4099,7 @@
             "Capture"
         ],
         "region": "Snow Kingdom",
-        "requires": "|Ty-foo|"
+        "requires": "(|Ty-foo|) AND |Shiverian Racer|"
     },
     {
         "name": "Capture: Snow Cheep Cheep",
@@ -4108,7 +4108,7 @@
             "Capture"
         ],
         "region": "Snow Kingdom",
-        "requires": []
+        "requires": "|Snow Cheep Cheep|"
     },
     {
         "name": "Capture: Gushen",
@@ -4117,7 +4117,7 @@
             "Capture"
         ],
         "region": "Seaside Kingdom",
-        "requires": []
+        "requires": "|Gushen|"
     },
     {
         "name": "Capture: Lava Bubble",
@@ -4126,7 +4126,7 @@
             "Capture"
         ],
         "region": "Very Early Luncheon",
-        "requires": []
+        "requires": "|Lava Bubble|"
     },
     {
         "name": "Capture: Volbonan",
@@ -4135,7 +4135,7 @@
             "Capture"
         ],
         "region": "Luncheon Kingdom",
-        "requires": []
+        "requires": "|Volbonan|"
     },
     {
         "name": "Capture: Hammer Bro",
@@ -4144,7 +4144,7 @@
             "Capture"
         ],
         "region": "Luncheon Kingdom",
-        "requires": []
+        "requires": "|Hammer Bro|"
     },
     {
         "name": "Capture: Meat",
@@ -4153,7 +4153,7 @@
             "Capture"
         ],
         "region": "Luncheon Kingdom",
-        "requires": "|Hammer Bro|"
+        "requires": "(|Hammer Bro|) AND |Meat|"
     },
     {
         "name": "Capture: Fire Piranha Plant",
@@ -4162,7 +4162,7 @@
             "Capture"
         ],
         "region": "Luncheon Kingdom",
-        "requires": "|Hammer Bro| AND |Meat| AND |Lava Bubble|"
+        "requires": "(|Hammer Bro| AND |Meat| AND |Lava Bubble|) AND |Fire Piranha Plant|"
     },
     {
         "name": "Capture: Pokio",
@@ -4171,7 +4171,7 @@
             "Capture"
         ],
         "region": "Pokino",
-        "requires": []
+        "requires": "|Pokio|"
     },
     {
         "name": "Capture: Jizo",
@@ -4180,7 +4180,7 @@
             "Capture"
         ],
         "region": "Bowser's Kingdom",
-        "requires": []
+        "requires": "|Jizo|"
     },
     {
         "name": "Capture: Bowser Statue",
@@ -4189,7 +4189,7 @@
             "Capture"
         ],
         "region": "Moon Kingdom",
-        "requires": []
+        "requires": "|Bowser Statue|"
     },
     {
         "name": "Capture: Parabones",
@@ -4198,7 +4198,7 @@
             "Capture"
         ],
         "region": "Moon Kingdom",
-        "requires": []
+        "requires": "|Parabones|"
     },
     {
         "name": "Capture: Banzai Bill",
@@ -4207,7 +4207,7 @@
             "Capture"
         ],
         "region": "Moon Kingdom",
-        "requires": "{ParabonesSkip()}"
+        "requires": "({ParabonesSkip()}) AND |Banzai Bill|"
     },
     {
         "name": "Capture: Chargin' Chuck",
@@ -4216,7 +4216,7 @@
             "Capture"
         ],
         "region": "Moon Kingdom",
-        "requires": "{ParabonesSkip()} and {OptOne(Banzai Bill)}"
+        "requires": "({ParabonesSkip()} and {OptOne(Banzai Bill)}) AND |Chargin' Chuck|"
     },
     {
         "name": "Capture: Bowser",
@@ -4225,6 +4225,6 @@
             "Capture"
         ],
         "region": "Moon Kingdom",
-        "requires": "{ParabonesSkip()} and {OptOne(Banzai Bill)}"
+        "requires": "({ParabonesSkip()} and {OptOne(Banzai Bill)}) AND |Bowser|"
     }
 ]
