@@ -673,6 +673,54 @@ async def test_deposit_msg_replay_is_idempotent():
 
 
 @pytest.mark.asyncio
+async def test_deposit_msg_translates_bowser_to_apostrophe_form():
+    """Switch sends bare 'Bowser'; bridge keys outstanding by AP form
+    ("Bowser's"). _on_deposit_msg must translate before handing the
+    kingdom to on_deposit, else the wrong bucket gets debited."""
+    state = BridgeState()
+    state.apply_grant("Bowser's", 4)
+    deposits_seen: list[dict] = []
+
+    async def on_check(_): return None
+    async def on_goal(): ...
+    async def on_deposit(*, seq: int, kingdom: str, amount: int) -> bool:
+        deposits_seen.append({"seq": seq, "kingdom": kingdom, "amount": amount})
+        if state.should_skip_deposit(seq):
+            return False
+        state.apply_deposit(kingdom, amount)
+        return True
+
+    sw = SwitchServer("127.0.0.1", 0, state, on_check, on_goal,
+                      on_deposit=on_deposit)
+    server = await asyncio.start_server(sw._handle_client, "127.0.0.1", 0)
+    sw._server = server
+    port = server.sockets[0].getsockname()[1]
+
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        writer.write(protocol.encode(HelloMsg()))
+        await writer.drain()
+        await _drain_messages(reader, n=3, timeout=2.0)
+
+        # Switch wire format: bare "Bowser" (no apostrophe).
+        writer.write(b'{"t":"deposit","seq":1,"kingdom":"Bowser","amount":2}\n')
+        await writer.drain()
+        acks = await _drain_messages(reader, n=1, timeout=2.0)
+        assert acks[0]["t"] == "deposit_ack" and acks[0]["seq"] == 1
+        # on_deposit saw the translated AP form.
+        assert deposits_seen == [{"seq": 1, "kingdom": "Bowser's", "amount": 2}]
+        # And the correct bucket was debited.
+        assert state.get_outstanding()["Bowser's"] == 2
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        await sw.stop()
+
+
+@pytest.mark.asyncio
 async def test_deposit_msg_invalid_yields_err():
     state = BridgeState()
     async def on_check(_): return None

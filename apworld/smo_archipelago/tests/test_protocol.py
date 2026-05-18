@@ -74,6 +74,38 @@ def test_item_msg_hack_name_omitted_when_none():
     assert "hack_name" not in parsed
 
 
+def test_kingdom_translation_bowsers_round_trip():
+    """AP item names use "Bowser's"; the Switch's kKingdoms[] table uses
+    "Bowser" (no apostrophe). The wire must translate at the boundary so
+    the Switch's kingdomBitFor() lookup resolves and we don't drop moons."""
+    # Sanity: helpers translate both directions.
+    assert protocol.kingdom_ap_to_switch("Bowser's") == "Bowser"
+    assert protocol.kingdom_switch_to_ap("Bowser") == "Bowser's"
+    # Pass-through for every other kingdom.
+    assert protocol.kingdom_ap_to_switch("Cap") == "Cap"
+    assert protocol.kingdom_switch_to_ap("Cascade") == "Cascade"
+    assert protocol.kingdom_ap_to_switch(None) is None
+    assert protocol.kingdom_switch_to_ap(None) is None
+
+    # ItemMsg.to_wire translates kingdom.
+    msg = ItemMsg(kind="moon", kingdom="Bowser's", shine_id="Smart Bombing")
+    parsed = protocol.decode(protocol.encode(msg))
+    assert parsed["kingdom"] == "Bowser"
+
+    # OutstandingEntry.to_dict translates kingdom.
+    out = OutstandingMsg(entries=[
+        OutstandingEntry(kingdom="Bowser's", count=3),
+        OutstandingEntry(kingdom="Cap", count=1),
+    ])
+    parsed = protocol.decode(protocol.encode(out))
+    by_k = {e["kingdom"]: e["count"] for e in parsed["entries"]}
+    assert by_k == {"Bowser": 3, "Cap": 1}
+
+    # ItemRef.to_replay_dict translates kingdom (CheckedReplayMsg path).
+    ref = ItemRef(kind="moon", kingdom="Bowser's", shine_id="Smart Bombing")
+    assert ref.to_replay_dict()["kingdom"] == "Bowser"
+
+
 def test_hello_ack_optional_fields():
     msg = HelloAckMsg(ok=True, seed="X4F2", slot="Mario")
     raw = protocol.encode(msg)

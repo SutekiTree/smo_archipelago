@@ -303,6 +303,11 @@ class SwitchServer:
             await self._send(ErrMsg(code="bad_deposit", ctx=str(msg)))
             return
 
+        # Switch sends the bare short kingdom name ("Bowser"); bridge keys
+        # outstanding_by_kingdom by the AP form ("Bowser's"). Translate so
+        # the apply_deposit lookup targets the correct bucket.
+        kingdom = protocol.kingdom_switch_to_ap(kingdom) or ""
+
         if seq <= 0 or not kingdom or amount < 0:
             log.warning("invalid DepositMsg seq=%d kingdom=%r amount=%d", seq, kingdom, amount)
             await self._send(ErrMsg(code="bad_deposit", ctx=str(msg)))

@@ -51,6 +51,27 @@ def classification_from_flags(flags: int) -> Classification:
     return Classification.FILLER
 
 
+# AP item/location names use "Bowser's Kingdom" (the only possessive form
+# in the apworld); the Switch's kKingdoms[] table uses bare short names
+# ("Bowser"). Translate at the wire boundary so the bridge's internal model
+# can stay in AP form (matches AP location strings without translation) and
+# the Switch's kingdomBitFor() lookups still resolve.
+_AP_TO_SWITCH_KINGDOM = {"Bowser's": "Bowser"}
+_SWITCH_TO_AP_KINGDOM = {v: k for k, v in _AP_TO_SWITCH_KINGDOM.items()}
+
+
+def kingdom_ap_to_switch(kingdom: str | None) -> str | None:
+    if kingdom is None:
+        return None
+    return _AP_TO_SWITCH_KINGDOM.get(kingdom, kingdom)
+
+
+def kingdom_switch_to_ap(kingdom: str | None) -> str | None:
+    if kingdom is None:
+        return None
+    return _SWITCH_TO_AP_KINGDOM.get(kingdom, kingdom)
+
+
 # ---------------------------------------------------------------------------
 # Switch -> Bridge
 # ---------------------------------------------------------------------------
@@ -247,7 +268,7 @@ class ItemRef:
         """
         return _strip_none({
             "kind": self.kind,
-            "kingdom": self.kingdom,
+            "kingdom": kingdom_ap_to_switch(self.kingdom),
             "shine_id": self.shine_id,
             "cap": self.cap,
             "name": self.name,
@@ -290,6 +311,7 @@ class ItemMsg:
     def to_wire(self) -> dict[str, Any]:
         d = asdict(self)
         d["from"] = d.pop("from_")
+        d["kingdom"] = kingdom_ap_to_switch(d.get("kingdom"))
         return _strip_none(d)
 
 
@@ -369,7 +391,10 @@ class OutstandingEntry:
     count: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        return {"kingdom": self.kingdom, "count": self.count}
+        return {
+            "kingdom": kingdom_ap_to_switch(self.kingdom) or "",
+            "count": self.count,
+        }
 
 
 @dataclass
