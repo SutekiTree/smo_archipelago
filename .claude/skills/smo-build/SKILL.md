@@ -7,7 +7,7 @@ description: Build the SMO Switch mod (subsdk9 / switch-mod/) and deploy to Ryuj
 
 ## Golden rule
 
-**Ryujinx FIRST, real Switch never as the first test.** A failed Switch launch increments HOS's "title failed to launch" counter for SMO; enough failures shows "Corrupted data detected" prompts (recoverable in ~1 min via Settings → Data Management → Check for Corrupted Data, but a poor experience). Every subsdk build boots clean in Ryujinx before deploying to D:\.
+**Ryujinx FIRST, real Switch never as the first test.** A failed Switch launch increments HOS's "title failed to launch" counter for SMO; enough failures shows "Corrupted data detected" prompts (recoverable in ~1 min via Settings → Data Management → Check for Corrupted Data, but a poor experience). Every subsdk build boots clean in Ryujinx before being copied to the SD card.
 
 ## Step 0 (one-time after fresh clone or items.json change)
 
@@ -72,14 +72,18 @@ Ryujinx's log is gold — `[rtld]` unresolved-symbol lines, guest stack traces w
 
 ```pwsh
 & "C:/Program Files/CMake/bin/cmake.exe" --install build  # populates sd-overlay/
-xcopy /E /I /Y C:\Users\maxwe\Documents\smo_archipelago\switch-mod\sd-overlay\atmosphere D:\atmosphere
+# Replace <SD>: with whatever drive letter the SD card mounts as on this machine.
+xcopy /E /I /Y C:\Users\maxwe\Documents\smo_archipelago\switch-mod\sd-overlay\atmosphere <SD>:\atmosphere
 ```
 
-After deploy, eject the SD card programmatically so the user can pull it without remembering:
+Confirm the drive letter with the user before copying — it varies per machine (the maintainer's is `D:`, others may differ). Don't guess. After the copy, optionally eject the same drive so the user can pull it without remembering:
 
 ```pwsh
-(New-Object -comObject Shell.Application).Namespace(17).ParseName("D:").InvokeVerb("Eject")
+# Only run with a drive letter the user has confirmed is the SD card.
+(New-Object -comObject Shell.Application).Namespace(17).ParseName("<SD>:").InvokeVerb("Eject")
 ```
+
+**Never run `Eject` against a drive letter you didn't confirm with the user this turn** — the wrong letter ejects whatever is there (external HDD, thumb drive, ...).
 
 If a Switch deploy ever causes the corruption icon: Settings → Data Management → Software → Super Mario Odyssey → Check for Corrupted Data. NOT a reinstall.
 
