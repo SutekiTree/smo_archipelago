@@ -15,8 +15,25 @@ from pathlib import Path
 
 import pytest
 
-_AP = Path(__file__).resolve().parents[3] / "vendor" / "Archipelago"
-if _AP.exists() and str(_AP) not in sys.path:
+# Worktrees don't carry an initialized vendor/Archipelago submodule, so fall
+# back to the main checkout one level above the worktree root (the same
+# pattern test_connect_gate.py uses). Without this, every test in this file
+# silently skips in a `git worktree`-based dev loop.
+def _find_archipelago() -> Path | None:
+    for parent in Path(__file__).resolve().parents:
+        cand = parent / "vendor" / "Archipelago"
+        if (cand / "CommonClient.py").exists():
+            return cand
+        worktrees = parent.parent
+        if worktrees.name == "worktrees":
+            main_cand = worktrees.parent.parent / "vendor" / "Archipelago"
+            if (main_cand / "CommonClient.py").exists():
+                return main_cand
+    return None
+
+
+_AP = _find_archipelago()
+if _AP is not None and str(_AP) not in sys.path:
     sys.path.insert(0, str(_AP))
 
 try:  # pragma: no cover
@@ -45,6 +62,9 @@ class _StubSwitch:
         self.kills: list = []
         self.labels: list = []
         self.outstanding: list = []
+        self.ap_states: list[str] = []
+        self.capturesanity_calls: list[bool] = []
+        self.push_capturesanity_calls: int = 0
 
     async def send_item(self, item: ItemMsg) -> None:
         self.items.append(item)
@@ -61,6 +81,15 @@ class _StubSwitch:
         # ap_moons_kingdom[bit] on the mod side stays in sync). Stub it
         # for tests that just observe send_item.
         self.outstanding.append(msg)
+
+    async def send_ap_state(self, conn: str) -> None:
+        self.ap_states.append(conn)
+
+    def set_capturesanity_enabled(self, enabled: bool) -> None:
+        self.capturesanity_calls.append(bool(enabled))
+
+    async def push_capturesanity_replay(self) -> None:
+        self.push_capturesanity_calls += 1
 
 
 @pytest.mark.asyncio
@@ -127,6 +156,102 @@ async def test_ap_received_item_carries_name_for_moon():
     from client.protocol import encode
     wire = encode(msg).decode("utf-8")
     assert '"name":"Cascade Kingdom Power Moon"' in wire
+
+
+@pytest.mark.asyncio
+async def test_connected_handler_pushes_capturesanity_off_to_switch():
+    """Regression: the Connected handler must extract `capturesanity`
+    from the packet's slot_data dict (NOT from `self.slot_data`, which
+    CommonContext does not auto-stash) and push it to the Switch.
+
+    The original implementation hit an AttributeError mid-handler,
+    which silently broke EVERY post-Connected side effect (scout warm,
+    notify subscription, capturesanity push). Catching this here
+    prevents a regression where a future change reintroduces
+    `self.slot_data` or other CommonContext attributes that don't exist."""
+    import asyncio
+    ctx = SMOContext(
+        server_address=None, password=None,
+        state=BridgeState(),
+        datapackage=DataPackage(),
+        shine_map=ShineMap(),
+        capture_map=CaptureMap(),
+    )
+    ctx.auth = "Mario"
+    sw = _StubSwitch()
+    ctx.switch = sw  # type: ignore[assignment]
+
+    # Default before Connected: True (fail-safe = current behavior).
+    assert ctx.capturesanity_enabled is True
+
+    await ctx._handle_ap_package("Connected", {
+        "slot_data": {"capturesanity": 0},
+        # Other Connected fields the handler tolerates being absent —
+        # team/slot stay None so _outstanding_key() returns None and
+        # set_notify is skipped, and display/colors default off so
+        # scout warming is skipped.
+    })
+
+    assert sw.capturesanity_calls == [False]
+    assert sw.push_capturesanity_calls == 1
+    assert sw.ap_states == ["ready"]
+    # ctx mirror gets flipped too — used by gui.py to hide the
+    # "Captures unlocked" section (which would otherwise list 50
+    # synthetic unlocks).
+    assert ctx.capturesanity_enabled is False
+
+
+@pytest.mark.asyncio
+async def test_connected_handler_pushes_capturesanity_on_to_switch():
+    """Symmetric case: when slot_data.capturesanity == 1, the switch
+    gets enabled=True and push_capturesanity_replay is still called
+    (the method itself is the no-op gate, not the call site)."""
+    import asyncio
+    ctx = SMOContext(
+        server_address=None, password=None,
+        state=BridgeState(),
+        datapackage=DataPackage(),
+        shine_map=ShineMap(),
+        capture_map=CaptureMap(),
+    )
+    ctx.auth = "Mario"
+    sw = _StubSwitch()
+    ctx.switch = sw  # type: ignore[assignment]
+
+    await ctx._handle_ap_package("Connected", {
+        "slot_data": {"capturesanity": 1},
+    })
+
+    assert sw.capturesanity_calls == [True]
+    assert sw.push_capturesanity_calls == 1
+    assert ctx.capturesanity_enabled is True
+
+
+@pytest.mark.asyncio
+async def test_connected_handler_tolerates_missing_slot_data():
+    """Defensive: a malformed Connected packet (or a server that
+    doesn't ship slot_data) must not crash — default to enabled=False
+    matches the apworld's default Capturesanity Toggle = OFF."""
+    import asyncio
+    ctx = SMOContext(
+        server_address=None, password=None,
+        state=BridgeState(),
+        datapackage=DataPackage(),
+        shine_map=ShineMap(),
+        capture_map=CaptureMap(),
+    )
+    ctx.auth = "Mario"
+    sw = _StubSwitch()
+    ctx.switch = sw  # type: ignore[assignment]
+
+    # No slot_data key at all.
+    await ctx._handle_ap_package("Connected", {})
+    assert sw.capturesanity_calls == [False]
+
+    # Explicit None.
+    sw.capturesanity_calls.clear()
+    await ctx._handle_ap_package("Connected", {"slot_data": None})
+    assert sw.capturesanity_calls == [False]
 
 
 def test_to_ref_preserves_name_for_all_kinds():
