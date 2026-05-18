@@ -142,10 +142,8 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
     from kivy.uix.boxlayout import BoxLayout
     from kivy.uix.button import Button
     from kivy.uix.checkbox import CheckBox
-    from kivy.uix.filechooser import FileChooserListView
     from kivy.uix.gridlayout import GridLayout
     from kivy.uix.label import Label
-    from kivy.uix.popup import Popup
     from kivy.uix.progressbar import ProgressBar
     from kivy.uix.screenmanager import Screen, ScreenManager
     from kivy.uix.scrollview import ScrollView
@@ -165,6 +163,67 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
 
     def _h1(text: str) -> Label:
         return _label(f"[size=24][b]{text}[/b][/size]", markup=True, height=48)
+
+    def _kivy_filter_to_tk_filetypes(
+        picker_filter: tuple[str, ...] | list[str],
+    ) -> list[tuple[str, str]]:
+        """Translate the apworld's Kivy-style filter tuples (`("hactool*",
+        "*.exe", "*")`) into tkinter `filetypes` pairs. tkinter wants
+        `[(label, pattern), ...]` and surfaces them in the "Files of type"
+        dropdown — the first entry is selected by default. We map `*.ext`
+        → "EXT files", literal `*` / `*.*` → "All files", and other globs
+        (like `hactool*`) get the pattern as their own label."""
+        if not picker_filter:
+            return [("All files", "*.*")]
+        out: list[tuple[str, str]] = []
+        for pat in picker_filter:
+            if pat in ("*", "*.*"):
+                out.append(("All files", "*.*"))
+            elif pat.startswith("*.") and len(pat) > 2:
+                out.append((f"{pat[2:].upper()} files", pat))
+            else:
+                out.append((pat, pat))
+        return out
+
+    def _native_open_file(
+        title: str,
+        filetypes: list[tuple[str, str]],
+        initial_dir: str | None = None,
+    ) -> str | None:
+        """Open the OS-native "open file" dialog and return the picked
+        path (or None on cancel / failure). Tk's `askopenfilename` maps to
+        the Win32 common open-file dialog on Windows, NSOpenPanel on macOS,
+        and the GTK/XDG portal on Linux — much more familiar to users than
+        Kivy's `FileChooserListView`. `-topmost` keeps the dialog above
+        the Kivy window. Returns None (not "") on cancel so callers can
+        `if path:` without ambiguity."""
+        try:
+            import tkinter
+            import tkinter.filedialog
+        except ImportError as e:
+            wizard_log(f"tkinter unavailable for native picker: {e!r}")
+            return None
+        tkroot = tkinter.Tk()
+        try:
+            tkroot.withdraw()
+            tkroot.attributes("-topmost", True)
+            kwargs: dict[str, Any] = {
+                "title": title,
+                "filetypes": filetypes,
+                "parent": tkroot,
+            }
+            if initial_dir:
+                kwargs["initialdir"] = initial_dir
+            chosen = tkinter.filedialog.askopenfilename(**kwargs)
+        except Exception as e:
+            wizard_log(f"native open-file picker failed: {e!r}")
+            chosen = ""
+        finally:
+            try:
+                tkroot.destroy()
+            except Exception:
+                pass
+        return chosen or None
 
     def _nav_row(on_back, on_next, *, next_text="Next", next_enabled=True):
         row = BoxLayout(orientation="horizontal", size_hint_y=None, height=48, spacing=8)
@@ -262,32 +321,22 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
         next_btn_holder: dict[str, Any] = {}
 
         def open_picker_for(r: PrereqResult) -> None:
-            """Open a Kivy file dialog filtered for the given prereq, then
-            persist the picked path under the prereq's key in setup_state
-            and re-run the prereq check so the row turns green."""
-            popup_root = BoxLayout(orientation="vertical", spacing=8, padding=8)
-            chooser = FileChooserListView(filters=list(r.picker_filter) or ["*"])
-            popup_root.add_widget(chooser)
-            btn_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=40, spacing=8)
-            ok_btn = Button(text="OK")
-            cancel_btn = Button(text="Cancel")
-            btn_row.add_widget(cancel_btn)
-            btn_row.add_widget(ok_btn)
-            popup_root.add_widget(btn_row)
-            popup = Popup(title=r.picker_label, content=popup_root, size_hint=(0.9, 0.9))
-
-            def commit(_i):
-                sel = chooser.selection
-                if sel:
-                    state = load_setup_state()
-                    state[f"{r.key}_path"] = sel[0]
-                    save_setup_state(state)
-                popup.dismiss()
-                do_check()
-
-            ok_btn.bind(on_release=commit)
-            cancel_btn.bind(on_release=lambda _i: popup.dismiss())
-            popup.open()
+            """Open the OS-native file dialog filtered for the given
+            prereq, persist the picked path under the prereq's key in
+            setup_state, and re-run the prereq check so the row turns
+            green. Uses the native dialog (Win32 / NSOpenPanel / XDG
+            portal) rather than Kivy's FileChooserListView — most users
+            know how to drive their OS's file picker, and recognize a
+            real Windows Explorer window faster than the Kivy one."""
+            picked = _native_open_file(
+                title=r.picker_label,
+                filetypes=_kivy_filter_to_tk_filetypes(r.picker_filter),
+            )
+            if picked:
+                state = load_setup_state()
+                state[f"{r.key}_path"] = picked
+                save_setup_state(state)
+            do_check()
 
         def render(results: list[PrereqResult]) -> None:
             rows_box.clear_widgets()
@@ -366,22 +415,50 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
             "Browse to a NSP dump of Super Mario Odyssey 1.0.0 (not a "
             "patched version — 1.0.0 only). Moon + capture names will be "
             "extracted to %APPDATA%/SMOArchipelago/data/ and never leave "
-            "your machine."
+            "your machine.",
+            height=64,
         ))
-        chooser = FileChooserListView(filters=["*.nsp"])
-        root.add_widget(chooser)
+
+        # The path display + Browse button. Display is a read-only text
+        # input so long paths can be scrolled (a Label would clip silently
+        # at the right edge for any path past the viewport width).
+        picker_row = BoxLayout(orientation="horizontal", size_hint_y=None,
+                               height=48, spacing=8)
+        path_input = TextInput(
+            text="(no file picked — click Browse...)",
+            readonly=True,
+            multiline=False,
+        )
+        picker_row.add_widget(path_input)
+        browse_btn = Button(text="Browse...", size_hint_x=None, width=120)
+        picker_row.add_widget(browse_btn)
+        root.add_widget(picker_row)
+
         nav, _, next_btn = _nav_row(lambda: goto("prereqs"),
-                                    lambda: (set_nsp(), goto("extract")))
-
-        def set_nsp() -> None:
-            sel = chooser.selection
-            if sel:
-                wizard_state["nsp_path"] = Path(sel[0])
-
-        def update_enabled(*_):
-            next_btn.disabled = not chooser.selection
-        chooser.bind(selection=update_enabled)
+                                    lambda: goto("extract"))
         next_btn.disabled = True
+
+        def on_browse(_i) -> None:
+            # Title matches the file the user sees on disk so the dialog
+            # tells them exactly what to point at; many users have the
+            # SMO NSP sitting under their Downloads or Switch-dumps
+            # folder and recognize the filename instantly.
+            current = wizard_state.get("nsp_path")
+            initial_dir = str(current.parent) if current else None
+            picked = _native_open_file(
+                title="Location of Super Mario Odyssey.nsp",
+                filetypes=[
+                    ("Switch NSP files", "*.nsp"),
+                    ("All files", "*.*"),
+                ],
+                initial_dir=initial_dir,
+            )
+            if picked:
+                wizard_state["nsp_path"] = Path(picked)
+                path_input.text = picked
+                next_btn.disabled = False
+
+        browse_btn.bind(on_release=on_browse)
         root.add_widget(nav)
         s.add_widget(root)
         return s
