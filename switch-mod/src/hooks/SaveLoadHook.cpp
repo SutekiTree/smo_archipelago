@@ -34,6 +34,27 @@ HOOK_DEFINE_TRAMPOLINE(SaveLoadHook) {
         st.received_kingdom_mask = 0;
         st.goal_sent = false;
         st.death_pending_send.store(false, std::memory_order_release);
+        // Drain any pending capture-grant retries left over from before this
+        // save load. After captures_unlocked is wiped above, AddHackDictionary
+        // Hook would block any flushPendingCaptureGrants retry whose bit
+        // hasn't been re-set yet — the dict write gets silently swallowed
+        // while the deferred Cappy bubble still fires, recreating the
+        // original "Cappy bubble without compendium entry" symptom in a small
+        // race window between this reset and the bridge re-HELLO replay. The
+        // bridge re-HELLO is the canonical re-population path; let it do its
+        // job cleanly. Both producer (applyOnFrame) and consumer
+        // (flushPendingCaptureGrants) of this queue run on the frame thread,
+        // same as this hook, so draining via popDiscard is race-free.
+        std::size_t drained = 0;
+        while (st.pending_capture_grant.peekRef() != nullptr) {
+            st.pending_capture_grant.popDiscard();
+            ++drained;
+        }
+        if (drained > 0) {
+            SMOAP_LOG_INFO("SaveLoadHook: dropped %zu pending capture grant(s) "
+                           "(bridge re-HELLO will re-send them)",
+                           drained);
+        }
         // Tell the socket worker to close-and-reopen so the bridge's HELLO
         // replay re-syncs both sides. The actual socket close happens on the
         // worker thread; we just set the atomic here.
