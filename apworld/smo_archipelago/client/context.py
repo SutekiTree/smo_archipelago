@@ -62,9 +62,8 @@ class SMOClientCommandProcessor(ClientCommandProcessor):
     Item injection lives on the AP server console (`/send <slot> <item>`)
     not here — the AP-received path in `_handle_ap_package` is the sole
     producer of ItemMsgs. The commands surviving on this processor are
-    debug utilities only: `/label` (visual test of the Channel-A cutscene
-    hook), `/smo_status` (read-only tracker state), `/inject_deathlink`
-    (synthesize a KillMsg without a second slot).
+    debug utilities only: `/smo_status` (read-only tracker state) and
+    `/inject_deathlink` (synthesize a KillMsg without a second slot).
     """
 
     def _result_to_output(self, result) -> None:
@@ -75,37 +74,19 @@ class SMOClientCommandProcessor(ClientCommandProcessor):
             for line in result.info.splitlines():
                 self.output(line)
 
-    def _cmd_label(self, *args: str) -> bool:
-        """Push a Channel-A moon-label string straight to the Switch.
-
-        Visual test for the cutscene-label hook. Collect any moon in
-        Ryujinx within ~4s and the cutscene shows your text.
-        Example: /label Sent Cap Power Moon -> P3
-        """
-        ctx: SMOContext = self.ctx  # type: ignore[assignment]
-        result = parse_command("label " + " ".join(args), ctx.state)
-        self._result_to_output(result)
-        if result.label is not None and ctx.switch is not None:
-            async_start(ctx.switch.send_moon_label(result.label), name="cmd send_moon_label")
-            self.output(f"sent moon_label text={result.label.text!r} seq={result.label.seq}")
-        elif result.label is not None:
-            self.output("(no Switch connected — label discarded)")
-        return True
-
     def _cmd_smo_status(self) -> bool:
         """Show SMOClient tracker state + connection / datapackage debug info.
 
         Tracker state (received items, checks, captures, kingdoms, last
         item) comes from the pure `parse_command("status")` for unit-test
         coverage. The extra connection / data-package / scout-cache lines
-        replace what used to live in the "Connections" tab — they're
-        debug info that doesn't deserve a permanent UI surface but is
+        are debug info that doesn't deserve a permanent UI surface but is
         still useful to dump on demand.
         """
         ctx: SMOContext = self.ctx  # type: ignore[assignment]
         result = parse_command("status", ctx.state)
         self._result_to_output(result)
-        # Connection + infra summary (formerly the Connections tab).
+        # Connection + infra summary.
         snap = ctx.state.snapshot()
         self.output(f"ap_conn={snap.get('ap_conn', '?')} server={ctx.server_address or '—'}")
         if ctx.switch is not None:
@@ -129,9 +110,7 @@ class SMOClientCommandProcessor(ClientCommandProcessor):
         """Synthesize a fake inbound KillMsg directly to the Switch (debug).
 
         Bypasses AP entirely — useful for exercising the Switch's inbound
-        DeathLink apply path without a second slot. Replaces the
-        `POST /api/test/inject-deathlink` Flask endpoint the web tracker
-        had in Phase 2-and-earlier.
+        DeathLink apply path without a second slot.
         """
         ctx: SMOContext = self.ctx  # type: ignore[assignment]
         if ctx.switch is None:
@@ -268,7 +247,7 @@ class SMOContext(CommonContext):
         until the Switch HELLOs (see `_on_switch_ready`).
 
         We still set `self.server_address` synchronously so the GUI's
-        Connect bar / Connections tab show the user's chosen target.
+        Connect bar shows the user's chosen target.
         """
         if address is None:
             address = self.server_address

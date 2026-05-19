@@ -11,10 +11,10 @@ path in `context.py::_handle_ap_package` is the sole producer of
 ItemMsgs. Use `/send <slot> <item name>` on the AP server console
 to inject items during dev.
 
-Surviving commands (`/label`, `/smo_status`, `/inject_deathlink`)
-are debug utilities, not item sends. `/label` is parsed here;
-`/smo_status` and `/inject_deathlink` are pure ClientCommandProcessor
-methods in `context.py`.
+Surviving commands (`/smo_status`, `/inject_deathlink`) are debug
+utilities, not item sends. Both are pure ClientCommandProcessor
+methods in `context.py`; this module owns the shared `status`
+parser they delegate to.
 """
 
 from __future__ import annotations
@@ -22,7 +22,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from .protocol import MoonLabelMsg
 from .state import BridgeState
 
 log = logging.getLogger(__name__)
@@ -30,13 +29,10 @@ log = logging.getLogger(__name__)
 
 HELP_TEXT = """\
 SMO Client commands (type with leading /):
-  /label <text>                     send a MoonLabelMsg directly (Channel A visual
-                                    test). seq is auto-assigned high (999999) so it
-                                    beats any pending bridge-issued label.
   /smo_status                       show client-side tracker state
   /inject_deathlink [src] [cause]
-                                    bypass AP entirely and synthesize a KillMsg
-                                    straight to the Switch (debug)
+                                    synthesize an inbound KillMsg straight
+                                    to the Switch, bypassing AP (debug)
 
 To inject items, use the AP server console:
   /send <slot> <item name>          e.g. /send Mario Cascade Kingdom Power Moon
@@ -47,9 +43,8 @@ To inject items, use the AP server console:
 class ParseResult:
     """Outcome of parsing a single command line.
 
-    Exactly one (or none) of `label`, `info`, `error`, `quit` is set.
+    Exactly one (or none) of `info`, `error`, `quit` is set.
     """
-    label: MoonLabelMsg | None = None
     info: str | None = None
     error: str | None = None
     quit: bool = False
@@ -60,9 +55,7 @@ def parse_command(line: str, state: BridgeState | None = None) -> ParseResult:
     s = line.strip()
     if not s:
         return ParseResult()  # silent no-op
-    parts = s.split(None, 1)
-    cmd = parts[0].lower()
-    arg = parts[1].strip() if len(parts) > 1 else ""
+    cmd = s.split(None, 1)[0].lower()
 
     if cmd in ("quit", "exit", "q"):
         return ParseResult(quit=True)
@@ -89,13 +82,5 @@ def parse_command(line: str, state: BridgeState | None = None) -> ParseResult:
             f"captures_unlocked={n_caps}\n"
             + last
         ))
-
-    if cmd == "label":
-        if not arg:
-            return ParseResult(error="usage: label <text>")
-        # 999999 sits well above any sane bridge-issued seq; useful for
-        # standalone visual tests where you want to override a stale
-        # pending label.
-        return ParseResult(label=MoonLabelMsg(text=arg, seq=999999))
 
     return ParseResult(error=f"unknown command: {cmd!r}; type `help`")

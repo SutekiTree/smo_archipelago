@@ -291,9 +291,9 @@ def _format_odyssey(ctx: "SMOContext") -> str:
     Intentionally SKIPS:
       * slot / seed / items / checks / deaths — already in the window
         title (slot/seed on connect) and the top progress bar (checks).
-      * recent items list — AP logs received items into the Archipelago
-        tab with player + item names; duplicating was a hold-over from
-        when the Flask web page was the only UI.
+      * recent items list — AP already logs received items into the
+        Archipelago tab with player + item names; duplicating would be
+        noise.
       * data-package / scout-cache debug counts — moved to /smo_status.
     """
     snap = ctx.state.snapshot()
