@@ -245,10 +245,10 @@ bool ApState::buildPaySnapshot(PendingPaySnapshot& out) const {
     auto fn = reinterpret_cast<GetPayShineNumFn>(get_pay_shine_num_fn);
     GameDataHolderAccessor acc{holder};
     // Iterate by kingdom BIT and resolve the matching worldId. Composition
-    // (bit → short name → worldId) honors the four SMO↔apworld order swaps
-    // documented on kingdomBitForWorldId — direct kKingdoms[] indexing
-    // would mis-route Sea↔Snow / Boss↔Sky just like M7 Path A's gate path
-    // does, and we'd report Snow's PayShineNum under the Seaside slot.
+    // (bit → short name → worldId) honors the Sea↔Snow swap documented on
+    // kingdomBitForWorldId — direct kKingdoms[] indexing would mis-route
+    // Sea↔Snow just like M7 Path A's gate path does, and we'd report
+    // Snow's PayShineNum under the Seaside slot.
     for (int bit = 0; bit < 17; ++bit) {
         const char* name = smoap::game::kingdomForBit(static_cast<std::uint8_t>(bit));
         if (!name || !*name) {

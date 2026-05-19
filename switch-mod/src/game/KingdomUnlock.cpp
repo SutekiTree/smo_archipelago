@@ -63,8 +63,25 @@ void installPayShineSnapshotSymbol() {
 }
 
 std::uint8_t kingdomBitForWorldId(int world_id) {
-    // 0..16 maps mostly 1:1 to kKingdoms[], with the four swaps documented in
-    // KingdomUnlock.hpp. Encoded as a constexpr table for trivial diffability.
+    // 0..16 maps mostly 1:1 to kKingdoms[], with the ONE Sea/Snow swap
+    // documented in KingdomUnlock.hpp. Encoded as a constexpr table for
+    // trivial diffability.
+    //
+    // History: an earlier version of this table also swapped Boss/Sky on the
+    // mistaken assumption that "Boss" was Bowser's Kingdom and "Sky" was
+    // Ruined. Per OdysseyDecomp `getWorldIndexBoss()=11` corresponds to the
+    // home stage whose develop name is "Attack" (AttackWorldHomeStage),
+    // which contains the Ruined-Kingdom shine list (Lord of Lightning, etc.).
+    // `getWorldIndexSky()=12` corresponds to SkyWorldHomeStage, which
+    // contains the Bowser's-Kingdom shine list (Bowser's Castle Timer
+    // Challenge, etc.). Since our kKingdoms[] already orders "Ruined"
+    // before "Bowser" (bits 11 and 12), the SMO order matches the apworld
+    // order here and no swap is needed.
+    //
+    // Symptom of the old bug: the in-game per-kingdom HUD (M6 phase D's
+    // ShineNumGetHook) read from the wrong ap_moons_kingdom slot in
+    // Bowser's / Ruined kingdoms, showing each kingdom the other's
+    // outstanding moon count.
     static constexpr std::uint8_t kWorldIdToBit[17] = {
         0,   // 0  Hat        -> Cap
         1,   // 1  Waterfall  -> Cascade
@@ -77,8 +94,8 @@ std::uint8_t kingdomBitForWorldId(int world_id) {
         9,   // 8  Sea        -> Seaside (bit 9)   <-- SWAP
         8,   // 9  Snow       -> Snow    (bit 8)   <-- SWAP
         10,  // 10 Lava       -> Luncheon
-        12,  // 11 Boss       -> Bowser  (bit 12)  <-- SWAP
-        11,  // 12 Sky        -> Ruined  (bit 11)  <-- SWAP
+        11,  // 11 Boss(Attack)-> Ruined  (bit 11)  identity — see history above
+        12,  // 12 Sky        -> Bowser  (bit 12)  identity — see history above
         13,  // 13 Moon       -> Moon
         14,  // 14 Peach      -> Mushroom
         15,  // 15 Special1   -> Dark Side
@@ -129,9 +146,9 @@ const char* kingdomShortFromHomeStage(const char* home_stage) {
 }
 
 const char* kingdomShortFromWorldId(int world_id) {
-    // Route via kingdomBitForWorldId so the SMO↔apworld order swaps
-    // (Sea/Snow, Boss/Sky — see hpp comment) are honored. Direct
-    // kKingdoms[world_id] would mis-route the Seaside/Snow M7 gate.
+    // Route via kingdomBitForWorldId so the SMO↔apworld Sea/Snow swap
+    // (see hpp comment) is honored. Direct kKingdoms[world_id] would
+    // mis-route the Seaside/Snow M7 gate.
     const std::uint8_t bit = kingdomBitForWorldId(world_id);
     if (bit == 0xff) return nullptr;
     const char* short_name = kingdomForBit(bit);

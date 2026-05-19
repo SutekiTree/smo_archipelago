@@ -18,13 +18,21 @@ const char* kingdomForBit(std::uint8_t bit);
 
 // M6 phase D — map SMO's internal world id (returned by
 // GameDataFunction::getCurrentWorldIdNoDevelop) to our kKingdoms[] bit index.
-// 17 kingdoms in total, but the SMO ordering DIFFERS from our kKingdoms[] in
-// two places (verified against OdysseyDecomp's getWorldIndex* functions):
+// 17 kingdoms in total, with ONE Sea/Snow swap relative to kKingdoms[]
+// (verified against OdysseyDecomp's getWorldIndex* functions):
 //
 //   - SMO id 8  = Sea (Seaside)   → our bit 9  (Seaside)
 //   - SMO id 9  = Snow            → our bit 8  (Snow)
-//   - SMO id 11 = Boss (Bowser's) → our bit 12 (Bowser)
-//   - SMO id 12 = Sky (Ruined)    → our bit 11 (Ruined)
+//
+// Boss (id 11, develop name "Attack") and Sky (id 12) ARE identity-mapped:
+// per OdysseyDecomp + the actual SMO 1.0.0 ShineList contents,
+// AttackWorldHomeStage holds the RUINED Kingdom shines (Lord of Lightning,
+// Roulette Tower, etc.) and SkyWorldHomeStage holds the BOWSER'S Kingdom
+// shines (Bowser's Castle, Jizo, Bowser Statue's Nose, etc.). Our
+// kKingdoms[] already orders "Ruined" at bit 11 and "Bowser" at bit 12,
+// matching SMO. An earlier version of this table mistakenly added a
+// Boss/Sky swap and produced the Bowser↔Ruined HUD/outstanding swap users
+// observed in late-game play.
 //
 // Other 13 ids are identity-mapped. Returns 0xff for out-of-range / unknown
 // (caller treats as "kingdom-less" and suppresses any debit). Don't reorder
@@ -54,15 +62,15 @@ void installPayShineSnapshotSymbol();
 const char* kingdomShortFromHomeStage(const char* home_stage);
 
 // Map a SMO internal worldId (0..16) to the apworld kingdom short name.
-// Composes kingdomBitForWorldId + kingdomForBit so the 4 SMO/apworld order
-// mismatches documented on kingdomBitForWorldId are honored — direct
-// indexing into kKingdoms[] would mis-route Sea↔Snow and Boss↔Sky for the
-// M7 Path A Seaside/Snow gate. Returns nullptr for unknown ids.
+// Composes kingdomBitForWorldId + kingdomForBit so the Sea↔Snow swap
+// documented on kingdomBitForWorldId is honored — direct indexing into
+// kKingdoms[] would mis-route Sea↔Snow for the M7 Path A Seaside/Snow
+// gate. Returns nullptr for unknown ids.
 const char* kingdomShortFromWorldId(int world_id);
 
 // Inverse of kingdomShortFromWorldId. Returns -1 for unknown short names.
 // Composes kingdomBitFor + scan over kingdomBitForWorldId so the inverse
-// also honors the 4 SMO/apworld swaps.
+// also honors the Sea/Snow swap.
 int worldIdFromKingdomShort(const char* kingdom_short);
 
 }  // namespace smoap::game
