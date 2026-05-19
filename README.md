@@ -13,12 +13,10 @@ Today the SMO Archipelago experience is a *Manual* client ([empathy-mp3/SMO-manu
 
 ## Requirements
 
-| Requirement | Notes |
-|---|---|
-| **Super Mario Odyssey 1.0.0** | 1.1.0+ won't work. Downgrade with [Istador/odyssey-downgrade](https://github.com/Istador/odyssey-downgrade). |
-| **Switch firmware 21.x or earlier, with Atmosphere CFW** | FW22+ is **not supported** — homebrew lifecycle changes break our module. |
-| **Windows PC** on the same LAN as the Switch | Linux/macOS aren't blocked by design but the wizard and several scripts assume Windows paths. |
-| **Archipelago, Python 3.12, devkitPro+devkitA64, CMake, Ninja, hactool, prod.keys** | The setup wizard checks for all of these and links you to install pages for whatever's missing. |
+- **Super Mario Odyssey 1.0.0**
+- **Switch firmware 21.x or earlier, with Atmosphere CFW**
+- **Windows PC** on the same LAN as the Switch
+- **Archipelago, Python 3.12, devkitPro+devkitA64, CMake, Ninja, hactool, prod.keys**
 
 See [`docs/first-time-setup.md`](docs/first-time-setup.md) for the full prereq table with install links.
 
