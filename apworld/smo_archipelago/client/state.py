@@ -199,6 +199,28 @@ class BridgeState:
         with self._lock:
             return dict(self.outstanding_by_kingdom)
 
+    def get_kingdom_lifetime_received(self, kingdom: str) -> int:
+        """Lifetime sum of moon items received for `kingdom`, with
+        Multi-Moon weighted as 3 and Power Moon as 1 (matching
+        `KingdomMoons` in hooks/Rules.py).
+
+        M7 Path A consumes this on the Switch via OutstandingMsg's
+        lake_received_total / snow_received_total fields — distinct from
+        outstanding_by_kingdom (the balance, which decays as the player
+        deposits at the kingdom's Odyssey). The kingdom-order gate must
+        read the lifetime number, otherwise depositing at Lake re-closes
+        the Wooded gate (2026-05-18 regression: post-Sand fork showed two
+        Lake kingdoms after a Lake deposit).
+
+        Data is populated by add_received_item, which runs for every item
+        in the AP items_received history (including the pre-rii historical
+        replay), so this survives bridge restarts without explicit
+        persistence — the next Connected/ReceivedItems rebuilds it from
+        the authoritative server-side list.
+        """
+        with self._lock:
+            return int(self.moons_received_by_kingdom.get(kingdom, 0))
+
     def reset_deposit_session(self) -> None:
         """Drop the session-scoped deposit-seq high-water mark.
 

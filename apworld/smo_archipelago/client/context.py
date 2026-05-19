@@ -497,11 +497,19 @@ class SMOContext(CommonContext):
         Called whenever outstanding_by_kingdom changes (grant arrival,
         AP-store retrieval, deposit applied). The Switch overwrites
         ap_moons_kingdom[bit] for each entry.
+
+        Always ships lake_received_total / snow_received_total too — the
+        M7 Path A kingdom-order gate consumes those on the Switch. Lifetime
+        counts come from BridgeState.moons_received_by_kingdom, which is
+        populated by add_received_item for every Moon item in the AP
+        history (so it survives bridge restart on the next Connected).
         """
         if self.switch is None:
             return
         await self.switch.send_outstanding(OutstandingMsg(
             entries=self._outstanding_entries_for_switch(),
+            lake_received_total=self.state.get_kingdom_lifetime_received("Lake"),
+            snow_received_total=self.state.get_kingdom_lifetime_received("Snow"),
         ))
 
     async def _hydrate_outstanding_from_ap(self) -> None:

@@ -3,7 +3,6 @@
 #include <cstring>
 
 #include "../ap/ApState.hpp"
-#include "KingdomUnlock.hpp"
 
 namespace smoap::game {
 
@@ -26,6 +25,22 @@ constexpr Rule kRules[] = {
     {"Seaside", "Snow", "SnowWorldHomeStage", kSnowRequiredForSeaside},
 };
 
+// Map prereq short name -> the matching lifetime counter on ApState.
+// Two scalars rather than an indexed array because only Lake and Snow are
+// gate prereqs today (matches regions.json's KingdomMoons(Lake,8) and
+// KingdomMoons(Snow,10)). Returns -1 if the prereq isn't one of those two,
+// which the caller treats as fail-open (same as an unknown kingdomBitFor).
+int readPrereqLifetime(const char* prereq) {
+    auto& st = smoap::ap::ApState::instance();
+    if (std::strcmp(prereq, "Lake") == 0) {
+        return st.lake_received_total.load(std::memory_order_relaxed);
+    }
+    if (std::strcmp(prereq, "Snow") == 0) {
+        return st.snow_received_total.load(std::memory_order_relaxed);
+    }
+    return -1;
+}
+
 }  // namespace
 
 OrderGateDecision evaluateOrderGateForKingdom(const char* kingdom_short) {
@@ -35,15 +50,19 @@ OrderGateDecision evaluateOrderGateForKingdom(const char* kingdom_short) {
     for (const auto& r : kRules) {
         if (std::strcmp(kingdom_short, r.picked) != 0) continue;
 
-        const std::uint8_t prereq_bit = kingdomBitFor(r.prereq);
-        if (prereq_bit == 0xff) {
-            // Misconfigured rule (prereq kingdom not in KingdomUnlock's table)
-            // — fail open. Caller logs.
+        // Read the *lifetime* count of moons received for the prereq
+        // kingdom, NOT ap_moons_kingdom[prereq] (which is the undeposited
+        // balance and would re-close the gate after Mario deposits at the
+        // prereq's Odyssey — see the 2026-05-18 regression where this
+        // showed two Lake kingdoms at the post-Sand fork after a Lake
+        // deposit). The bridge ships these in OutstandingMsg.
+        const int have = readPrereqLifetime(r.prereq);
+        if (have < 0) {
+            // Misconfigured rule (prereq kingdom not Lake or Snow) — fail
+            // open. If a new gate prereq lands in regions.json, add the
+            // scalar to ApState + the wire format + readPrereqLifetime.
             return d;
         }
-        const int have = smoap::ap::ApState::instance()
-                             .ap_moons_kingdom[prereq_bit]
-                             .load(std::memory_order_relaxed);
         d.prereq_moons_now = have;
         d.prereq_required  = r.threshold;
         if (have >= r.threshold) {

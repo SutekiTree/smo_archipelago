@@ -151,3 +151,78 @@ def test_set_received_items_index_accepts_increases_and_decreases():
     s.set_received_items_index(10)
     s.set_received_items_index(3)
     assert s.get_received_items_index() == 3
+
+
+# ---------- get_kingdom_lifetime_received (M7 Path A gate source) ----------
+#
+# The 2026-05-18 regression: post-Sand fork showed two Lake kingdoms after
+# Mario deposited at Lake's Odyssey. Cause: KingdomOrderGate read the
+# undeposited balance (ap_moons_kingdom[Lake]), which the deposit had just
+# debited below the 8-moon threshold. The fix moved the gate onto a
+# lifetime counter that never decrements.
+
+def test_lifetime_received_starts_at_zero_for_unseen_kingdom():
+    s = BridgeState()
+    assert s.get_kingdom_lifetime_received("Lake") == 0
+    assert s.get_kingdom_lifetime_received("Snow") == 0
+
+
+def test_lifetime_received_counts_power_moons_as_one_each():
+    from client.protocol import ItemRef
+    from client.state import ItemEvent
+    s = BridgeState()
+    for _ in range(3):
+        s.add_received_item(ItemEvent(
+            item=ItemRef(kind="moon", kingdom="Lake", shine_id="Power Moon"),
+        ))
+    assert s.get_kingdom_lifetime_received("Lake") == 3
+
+
+def test_lifetime_received_weighs_multi_moon_as_three():
+    """Matches `KingdomMoons` in hooks/Rules.py and the Switch's
+    moonGrantAmount helper, so the gate threshold (e.g. 8 effective moons
+    for Wooded) is apples-to-apples."""
+    from client.protocol import ItemRef
+    from client.state import ItemEvent
+    s = BridgeState()
+    s.add_received_item(ItemEvent(
+        item=ItemRef(kind="moon", kingdom="Snow", shine_id="Multi-Moon"),
+    ))
+    assert s.get_kingdom_lifetime_received("Snow") == 3
+    s.add_received_item(ItemEvent(
+        item=ItemRef(kind="moon", kingdom="Snow", shine_id="Power Moon"),
+    ))
+    assert s.get_kingdom_lifetime_received("Snow") == 4
+
+
+def test_lifetime_received_does_not_decay_on_deposit():
+    """The regression-defining invariant: depositing at a kingdom's
+    Odyssey decrements the *balance* but must NOT touch the lifetime
+    counter the kingdom-order gate consumes."""
+    from client.protocol import ItemRef
+    from client.state import ItemEvent
+    s = BridgeState()
+    for _ in range(8):
+        s.add_received_item(ItemEvent(
+            item=ItemRef(kind="moon", kingdom="Lake", shine_id="Power Moon"),
+        ))
+        s.apply_grant("Lake", 1)
+    # Mario fuels Lake's Odyssey to leave (debits the balance to 0).
+    s.apply_deposit("Lake", 8)
+    assert s.get_outstanding().get("Lake", 0) == 0   # balance drained
+    assert s.get_kingdom_lifetime_received("Lake") == 8  # lifetime intact
+
+
+def test_lifetime_received_ignores_non_moon_items():
+    """Capture and other items must not show up in the lifetime moon count
+    (they don't satisfy KingdomMoons in hooks/Rules.py either)."""
+    from client.protocol import ItemRef
+    from client.state import ItemEvent
+    s = BridgeState()
+    s.add_received_item(ItemEvent(
+        item=ItemRef(kind="capture", kingdom="Lake", cap="Cheep Cheep"),
+    ))
+    s.add_received_item(ItemEvent(
+        item=ItemRef(kind="other", kingdom="Lake"),
+    ))
+    assert s.get_kingdom_lifetime_received("Lake") == 0

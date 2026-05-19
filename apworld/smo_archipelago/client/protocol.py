@@ -406,14 +406,27 @@ class OutstandingMsg:
     each kingdom present in `entries`; kingdoms missing from the message are
     left untouched (lets the bridge omit zero entries if it wants to —
     today it sends all known kingdoms for unambiguous full-state replace).
+
+    M7 Path A adds two scalars for the kingdom-order gate's prereq kingdoms
+    (Lake gates Wooded, Snow gates Seaside). These are *lifetime* AP-receipt
+    counts (Multi-Moon = 3, Power Moon = 1) — distinct semantics from the
+    balance in `entries[].count`. The gate must read the lifetime number,
+    otherwise depositing in the prereq's Odyssey re-closes the gate (the
+    2026-05-18 regression that showed two Lake kingdoms at the post-Sand
+    fork after a Lake deposit). Always shipped — bridge defaults to 0 on a
+    fresh slot. Switch parser tolerates absent fields for forward compat.
     """
     t: str = "outstanding"
     entries: list[OutstandingEntry] = field(default_factory=list)
+    lake_received_total: int = 0
+    snow_received_total: int = 0
 
     def to_wire(self) -> dict[str, Any]:
         return {
             "t": self.t,
             "entries": [e.to_dict() for e in self.entries],
+            "lake_received_total": int(self.lake_received_total),
+            "snow_received_total": int(self.snow_received_total),
         }
 
 

@@ -812,13 +812,22 @@ class SwitchServer:
         # to match. Item replay below skips Moons (else we'd double-count
         # — once from OutstandingMsg, once from the item-apply path on the
         # mod side).
+        #
+        # M7 Path A also ships lifetime Lake/Snow receipt totals so the
+        # kingdom-order gate has the right number on reconnect (read from
+        # BridgeState directly — populated by add_received_item across the
+        # AP history and so already correct here).
         if self._get_outstanding is not None:
             try:
                 entries = self._get_outstanding()
             except Exception:
                 log.exception("get_outstanding_entries failed during HELLO")
                 entries = []
-            await self._send(OutstandingMsg(entries=entries))
+            await self._send(OutstandingMsg(
+                entries=entries,
+                lake_received_total=self._state.get_kingdom_lifetime_received("Lake"),
+                snow_received_total=self._state.get_kingdom_lifetime_received("Snow"),
+            ))
 
         # Replay snapshots so the Switch can re-apply state idempotently.
         replay_ids = [evt.item for evt in self._state.all_checked_locations()]

@@ -624,6 +624,36 @@ TEST(decode_outstanding_caps_at_max_entries) {
     EXPECT_EQ_I(m.outstanding.entries[0].count, 1);
 }
 
+TEST(decode_outstanding_lifetime_totals) {
+    // M7 Path A — lifetime Lake/Snow AP-receipt counts ride alongside
+    // entries[]. The Switch's KingdomOrderGate reads these instead of the
+    // (decaying) balance to avoid re-closing the Wooded gate after a Lake
+    // deposit.
+    DecodedMsg m;
+    EXPECT(decodeFrom(
+        R"({"t":"outstanding","entries":[)"
+        R"({"kingdom":"Lake","count":2}],)"
+        R"("lake_received_total":10,"snow_received_total":4})",
+        m));
+    EXPECT_EQ_I(m.outstanding.entry_count, 1u);
+    EXPECT_EQ_S(m.outstanding.entries[0].kingdom, "Lake");
+    EXPECT_EQ_I(m.outstanding.entries[0].count, 2);
+    EXPECT_EQ_I(m.outstanding.lake_received_total, 10);
+    EXPECT_EQ_I(m.outstanding.snow_received_total, 4);
+}
+
+TEST(decode_outstanding_lifetime_defaults_when_absent) {
+    // Backward-compat: a bridge that pre-dates M7 Path A sends no lifetime
+    // fields. The decoder must accept the message and surface 0 for both
+    // (the gate then fails-closed for Wooded/Seaside until a fresh bridge
+    // reships OutstandingMsg with real totals).
+    DecodedMsg m;
+    EXPECT(decodeFrom(R"({"t":"outstanding","entries":[]})", m));
+    EXPECT_EQ_I(m.outstanding.entry_count, 0u);
+    EXPECT_EQ_I(m.outstanding.lake_received_total, 0);
+    EXPECT_EQ_I(m.outstanding.snow_received_total, 0);
+}
+
 TEST(roundtrip_deposit_via_reader) {
     Deposit d{};
     d.seq = 99;

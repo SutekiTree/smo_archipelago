@@ -272,6 +272,33 @@ public:
     // ap_moons_kingdom[bit] is the per-kingdom credit count.
     std::atomic<int> ap_moons_kingdom[17] = {};
 
+    // M7 Path A — cumulative AP-received moon totals for the two prereq
+    // kingdoms the kingdom-order gate cares about (Lake gates Wooded; Snow
+    // gates Seaside). DIFFERENT semantics from ap_moons_kingdom[]:
+    //   - ap_moons_kingdom[Lake] is the *undeposited balance*, debited by
+    //     AddPayShineHook every time Mario hands moons to the Lake Odyssey.
+    //   - lake_received_total is the *lifetime sum of Lake moon items ever
+    //     received from AP*. Monotonically non-decreasing within a session.
+    // The gate must use the lifetime total — using the balance produced the
+    // 2026-05-18 regression where depositing in Lake's Odyssey re-closed
+    // the Wooded gate and the post-Sand fork showed two Lake kingdoms.
+    //
+    // Authoritative source is the bridge: it computes from
+    // BridgeState.moons_received_by_kingdom (the full AP items_received
+    // history) and ships them on every OutstandingMsg, INCLUDING the one
+    // sent right after HelloAck. On every OutstandingMsg the Switch
+    // overwrites these store-style — bridge wins. No local increment in
+    // the ItemMsg drain (would only matter for the subsecond gap between
+    // ItemMsg arrival and the OutstandingMsg that follows it, and the
+    // gate is consulted on user input at the world map, not per-frame).
+    //
+    // Scoped to two scalars rather than a 17-wide array because only Lake
+    // and Snow are gate prereqs in regions.json today; if a new prereq
+    // ever lands, add another scalar here + a wire field + a KingdomOrderGate
+    // lookup.
+    std::atomic<int> lake_received_total{0};
+    std::atomic<int> snow_received_total{0};
+
     // M6 phase B — GameDataHolder pointer cache.
     //
     // DrawMainHook reads HakoniwaSequence::mGameDataHolder (offset 0xB8, a
