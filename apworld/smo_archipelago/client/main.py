@@ -46,14 +46,10 @@ def _resolve_apworld_data() -> Path:
     return Path(__file__).resolve().parent.parent / "data"
 
 
-# Map-resolution and is_setup_complete live in client/setup_state.py so they
-# can be unit-tested without importing CommonClient / Utils (which the test
+# Map-resolution helper lives in client/setup_state.py so it can be
+# unit-tested without importing CommonClient / Utils (which the test
 # fixture intentionally excludes — see conftest.py).
-from .setup_state import (
-    _resolve_map_path,
-    _user_data_dir,
-    is_setup_complete,
-)
+from .setup_state import _resolve_map_path
 
 
 def _load_settings():

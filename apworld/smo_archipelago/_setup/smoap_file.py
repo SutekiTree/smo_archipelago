@@ -5,13 +5,10 @@ the multiworld is created (see `SMOWorld.generate_output` in the apworld's
 `__init__.py`), shipped inside the per-player zip alongside the standard AP
 artifacts. The user double-clicks it; Archipelago Launcher resolves the file
 extension via `SuffixIdentifier('.smoap')` in the Component registration and
-hands the path to `launch_smo_client`, which:
-
-  - If first-time-setup hasn't been completed: spawns the wizard, passing the
-    `.smoap` path so it can hand off to SMOClient on completion.
-  - If setup IS complete: parses the .smoap directly and launches SMOClient
-    with `--name` (and optionally `--connect`) pre-filled, so the user lands
-    in the Connect bar ready to go.
+hands the path to `launch_smo_client`, which parses the .smoap and launches
+SMOClient with `--name` (and optionally `--connect`) pre-filled, so the
+user lands in the Connect bar ready to go. The setup wizard is invoked
+separately via `/setup` inside SMOClient.
 
 The format is intentionally tiny — just enough to identify *which slot* this
 player is. Everything else (bridge IP, deploy target, paths) is per-machine

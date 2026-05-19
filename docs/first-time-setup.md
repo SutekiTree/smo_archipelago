@@ -77,8 +77,9 @@ to it, exactly like every other AP client.
 3. **Open the Archipelago Launcher and click "SMO Client"** in the Clients
    list. The SMO Client window opens.
 4. **Type `/setup` in the SMO Client command bar.** The setup wizard opens
-   in a fresh window. (On a brand-new install the wizard may also pop on
-   its own when SMO Client detects no prior setup state.)
+   in a fresh window. This is also how you re-run the wizard later (LAN
+   IP change, apworld update, switching deploy targets) — SMO Client
+   never auto-spawns the wizard.
 5. **Walk the wizard.** Eight pages, in order:
    1. Welcome — read the overview.
    2. Prerequisites — wizard checks the table above; click "Install..." for

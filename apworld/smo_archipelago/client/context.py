@@ -113,23 +113,21 @@ class SMOClientCommandProcessor(ClientCommandProcessor):
         return True
 
     def _cmd_setup(self) -> bool:
-        """Re-run the first-time-setup wizard.
+        """Open the setup wizard in a new window.
 
-        Use this when the bridge PC's LAN IP changes (Switch mod has the
-        old one baked in), when you've updated to a newer apworld and need
-        to rebuild + redeploy the Switch mod to match, when the apworld's
-        capture list is edited, or when you want to switch deploy target
-        between real Switch and Ryujinx. Spawns the wizard as a
-        subprocess so SMOClient stays up; the wizard's "Done" page does
-        NOT re-launch SMOClient in this codepath (the user already has
-        one running).
+        Covers first-time setup and re-runs alike: when the bridge PC's
+        LAN IP changes (Switch mod has the old one baked in), when you've
+        updated to a newer apworld and need to rebuild + redeploy the
+        Switch mod to match, when the apworld's capture list is edited,
+        or when you want to switch deploy target between real Switch and
+        Ryujinx. Spawns the wizard as a subprocess so SMOClient stays
+        open while it runs.
         """
         from worlds.LauncherComponents import launch_subprocess
         # Defer to a module-level callable that the subprocess machinery
         # can pickle by qualified name. `_run_setup_wizard_no_smoap` is
-        # the entry point exported by the apworld root __init__ for
-        # exactly this purpose (also used by the .smoap → launch routing
-        # when setup hasn't completed yet).
+        # the only sanctioned entry point exported by the apworld root
+        # __init__ for the wizard.
         from .. import _run_setup_wizard_no_smoap
         launch_subprocess(_run_setup_wizard_no_smoap, name="SMOSetup")
         self.output(

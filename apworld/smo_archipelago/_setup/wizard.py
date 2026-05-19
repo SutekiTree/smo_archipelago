@@ -1,9 +1,10 @@
 """Kivy multi-page setup wizard.
 
-Entry point: `run_setup_wizard(smoap_path: str | None = None)`. Called via
-`launch_subprocess` from the apworld root `__init__.py::launch_smo_client`
-when the user double-clicks a `.smoap` file and `is_setup_complete()`
-returns False. Also surfaced via the `/setup` slash command in SMOClient.
+Entry point: `run_setup_wizard(smoap_path: str | None = None)`. Surfaced
+via the `/setup` slash command in SMOClient (which spawns this in a new
+window via `launch_subprocess` while SMOClient stays open). Covers both
+first-time setup and re-runs — bridge IP changes, apworld updates,
+switching deploy targets between Ryujinx / SD card / custom folder.
 
 Pages (sequenced; each calls `next_page()` when its work completes):
 
@@ -236,10 +237,13 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
     def build_welcome() -> Screen:
         s = Screen(name="welcome")
         root = BoxLayout(orientation="vertical", padding=20, spacing=12)
-        root.add_widget(_h1("SMO Archipelago — First-time setup"))
+        root.add_widget(_h1("SMO Archipelago — Setup"))
         msg = (
             "This wizard prepares everything SMOClient needs to talk to a "
-            "modded Switch running Super Mario Odyssey 1.0.0.\n\n"
+            "modded Switch running Super Mario Odyssey 1.0.0. Run it the "
+            "first time you set up the client, and again whenever you "
+            "update to a newer apworld, your bridge PC's LAN IP changes, "
+            "or you want to switch deploy targets.\n\n"
             "REQUIREMENTS — confirm these BEFORE continuing:\n"
             "  - SMO version 1.0.0. If you're on 1.1.0+, downgrade first "
             "with Istador/odyssey-downgrade:\n"
@@ -263,9 +267,8 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
             "retail Switch firmware).\n"
             "  - Copy the compiled module to your SD card OR Ryujinx mods "
             "directory.\n\n"
-            "You only need to run this once per machine. Changing AP server "
-            "or slot does NOT require re-running this — those go through "
-            "SMOClient's Connect bar."
+            "Changing AP server or slot does NOT require re-running this "
+            "— those go through SMOClient's Connect bar."
         )
         m = Label(text=msg, halign="left", valign="top", text_size=(600, None))
         m.bind(size=lambda inst, val: setattr(inst, "text_size", (val[0], None)))

@@ -1,7 +1,9 @@
-"""Tests for `is_setup_complete()` and the APPDATA map search path in
-`client/main.py`. These gate the wizard-vs-launch decision the
-`launch_smo_client` Component callback makes when the user opens a
-`.smoap` file."""
+"""Tests for the APPDATA map search path in `client/setup_state.py`.
+
+Covers `_resolve_map_path` precedence (explicit override > APPDATA >
+legacy bundled location) and the `_user_data_dir` env-var fallbacks.
+SMOClient reads through these helpers on every launch to find the
+wizard-produced shine_map.json / capture_map.json."""
 
 from __future__ import annotations
 
@@ -12,7 +14,6 @@ import pytest
 from client.setup_state import (
     _resolve_map_path,
     _user_data_dir,
-    is_setup_complete,
 )
 
 
@@ -23,30 +24,6 @@ def isolated_appdata(monkeypatch, tmp_path: Path) -> Path:
     APPDATA may be unset)."""
     monkeypatch.setenv("APPDATA", str(tmp_path))
     return tmp_path / "SMOArchipelago"
-
-
-def test_setup_complete_false_on_empty_appdata(isolated_appdata: Path) -> None:
-    assert not is_setup_complete()
-
-
-def test_setup_complete_requires_all_four_files(isolated_appdata: Path) -> None:
-    data = isolated_appdata / "data"
-    build = isolated_appdata / "build" / "cmake"
-    data.mkdir(parents=True)
-    build.mkdir(parents=True)
-
-    # Drop only some of the required files — should still be incomplete.
-    (data / "shine_map.json").write_text("[]")
-    assert not is_setup_complete(), "missing capture_map + binaries"
-
-    (data / "capture_map.json").write_text("[]")
-    assert not is_setup_complete(), "missing subsdk9 + main.npdm"
-
-    (build / "subsdk9").write_bytes(b"\x7fELF")
-    assert not is_setup_complete(), "missing main.npdm"
-
-    (build / "main.npdm").write_bytes(b"META")
-    assert is_setup_complete(), "all four present"
 
 
 def test_resolve_map_path_prefers_appdata(

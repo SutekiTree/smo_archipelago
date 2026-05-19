@@ -461,44 +461,20 @@ def launch_smo_client(*args):
 
     Triggered by double-clicking a `.smoap` file (the Component's
     `SuffixIdentifier('.smoap')` registers the extension globally) or by
-    clicking the "SMO Client" button directly. In both cases the
-    decision tree is:
+    clicking the "SMO Client" button directly. Always launches SMOClient;
+    when a `.smoap` is provided its slot_name / server_address / password
+    are expanded into CLI overrides so the Connect bar lands pre-filled.
 
-      1. If first-time setup hasn't been completed yet
-         (`is_setup_complete()` returns False): spawn the setup wizard,
-         passing the .smoap path so it can hand off to SMOClient at the
-         end.
-      2. Otherwise: parse the .smoap (if any) for slot_name +
-         server_address + password, and launch SMOClient with those as
-         CLI overrides.
+    The setup wizard (toolchain install, NSP extract, mod build + deploy)
+    is no longer auto-triggered here. Users invoke it via the `/setup`
+    slash command inside SMOClient — that path covers both first-time
+    setup and re-runs (bridge IP changed, apworld updated, switching
+    deploy target, ...).
 
     Kept lazy-importing CommonClient / Kivy so headless gen hosts that
     never touch this function don't pay the import cost.
     """
-    from .client.setup_state import is_setup_complete
     smoap_path = next((a for a in args if a.endswith(".smoap")), None)
-
-    if not is_setup_complete():
-        # `launch` (not `launch_subprocess`) is critical for the file-association
-        # entry path. When the AP frozen installer routes a `.smoap` double-click,
-        # `is_kivy_running()` is False — `launch` runs the wizard inline in the
-        # Launcher's main process, where Kivy boots cleanly. The
-        # `launch_subprocess` alternative spawns via `multiprocessing.Process`
-        # which in PyInstaller-frozen builds re-enters with a half-initialized
-        # bootstrap and Kivy fails to load `library.zip/kivy/data/style.kv`
-        # (reproduced in v0.1.1-alpha). On a GUI-button click instead,
-        # `is_kivy_running()` is True and `launch` falls back to the subprocess
-        # path; that path is still broken under frozen + multiprocessing + Kivy
-        # but isn't on the user-facing file-association flow this fix targets.
-        launch_or_subprocess(
-            _run_setup_wizard_with_smoap if smoap_path else _run_setup_wizard_no_smoap,
-            name="SMOSetup",
-            args=(smoap_path,) if smoap_path else (),
-        )
-        return
-
-    # Setup done — if a .smoap was passed, expand it into CLI args so
-    # SMOClient lands in the Connect bar with everything pre-filled.
     final_args = list(args)
     if smoap_path:
         try:
@@ -539,30 +515,16 @@ def _run_smo_client_with_args(*args: str) -> None:
 
 
 @_visible_errors("Setup wizard")
-def _run_setup_wizard_with_smoap(smoap_path: str) -> None:
-    """Module-level entry: open the wizard, then optionally hand off to
-    SMOClient after Kivy shuts down.
-
-    The wizard returns True iff the user clicked "Launch SMOClient" on the
-    Done page. We can only act on that here — AFTER `run_setup_wizard`
-    returns — because doing it from inside the wizard's Kivy app would
-    require either a broken-in-frozen `launch_subprocess` spawn or a
-    nested Kivy `App().run()` (which is unsupported)."""
-    from ._setup.wizard import run_setup_wizard
-    if run_setup_wizard(smoap_path):
-        # Recursive call: setup is now complete, so this routes through the
-        # post-setup branch of launch_smo_client and inline-launches
-        # SMOClient with the .smoap-derived CLI args.
-        launch_smo_client(smoap_path)
-
-
-@_visible_errors("Setup wizard")
 def _run_setup_wizard_no_smoap() -> None:
-    """Module-level subprocess entry: open the wizard standalone. Used
-    by the `/setup` slash command in SMOClient and by direct
-    "SMO Client" Launcher button clicks with no .smoap argument."""
+    """Module-level subprocess entry: open the setup wizard.
+
+    Invoked by the `/setup` slash command in SMOClient (which goes
+    through `launch_subprocess` so SMOClient stays open while the
+    wizard runs in its own window). The wizard handles first-time
+    setup and re-runs alike — bridge IP changes, apworld updates,
+    switching deploy targets."""
     from ._setup.wizard import run_setup_wizard
-    run_setup_wizard(None)
+    run_setup_wizard()
 
 
 def add_client_to_launcher() -> None:

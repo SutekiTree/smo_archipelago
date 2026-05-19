@@ -1,9 +1,9 @@
-"""First-time setup wizard for the SMO Archipelago client.
+"""Setup wizard for the SMO Archipelago client.
 
-A user double-clicks a `.smoap` file → Archipelago Launcher routes to
-`launch_smo_client` (registered in `apworld/smo_archipelago/__init__.py`) →
-if setup hasn't been completed yet, the launcher spawns
-`_setup.wizard.run_setup_wizard` instead of the regular SMOClient.
+The user types `/setup` in SMOClient → SMOClient's `/setup` handler
+spawns `_setup.wizard.run_setup_wizard` in a new window via
+`launch_subprocess`. The same flow handles first-time setup and re-runs
+(bridge IP change, apworld update, switching deploy targets).
 
 The wizard's job is to turn a fresh machine into one that can:
   - resolve raw SMO identifiers to apworld names (extract shine/capture maps

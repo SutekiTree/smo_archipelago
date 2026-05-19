@@ -468,10 +468,7 @@ def collect_build_outputs() -> dict[str, Path]:
 
 
 def maps_ready() -> bool:
-    """True iff both extracted maps live in the per-user data dir.
-
-    Used by the wizard's resume logic and by `client/main.py`'s
-    `is_setup_complete()` check."""
+    """True iff both extracted maps live in the per-user data dir."""
     d = data_dir()
     return (d / "shine_map.json").exists() and (d / "capture_map.json").exists()
 
