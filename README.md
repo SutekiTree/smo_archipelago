@@ -26,13 +26,14 @@ See [`docs/first-time-setup.md`](docs/first-time-setup.md) for the full prereq t
 
 1. **Download `smo.apworld`** from the [Releases page](../../releases).
 2. **Drop it into your Archipelago install's `custom_worlds/`** directory.
-3. **Generate a multiworld with an SMO slot.** From the Archipelago Launcher: *Generate Template* → edit the YAML labeled **Spicy Meatball Overdrive** in `Players/` → *Generate*. Extract the per-player zip from `output/`; alongside the usual AP files you'll find a `<player>.smoap`.
-4. **Double-click your `.smoap` file.** Archipelago Launcher routes it to **SMO Client**. On first run, SMOClient opens the setup wizard, which walks you through prereq checks → SMO NSP pick → moon/capture extraction → bridge PC IP → Switch-mod compile → deploy to SD card (or Ryujinx).
+3. **Open the Archipelago Launcher and click "SMO Client"** in the Clients list.
+4. **Run `/setup`** in the SMOClient command bar. The setup wizard walks you through prereq checks → SMO NSP pick → moon/capture extraction → bridge PC IP → Switch-mod compile → deploy to SD card (or Ryujinx). You only need to do this **once per machine** (or again if your bridge PC's LAN IP changes, or after upgrading to a new SMO Archipelago release).
 5. **Boot SMO.** The mod loads on game start and dials the bridge PC every couple seconds until SMOClient is listening.
+6. **Join a multiworld.** Type the host/port and your slot name into the Connect bar in SMOClient and click *Connect* — exactly like any other Archipelago client.
 
 Detailed walkthrough: [`docs/first-time-setup.md`](docs/first-time-setup.md).
 
-After setup, joining additional multiworlds is just **double-click the `.smoap`**.
+After setup is done, **you don't need an `.smoap` file to play**. Open SMO Client from the Archipelago Launcher and connect to whichever multiworld you want — different game, different host, different slot, no rebuild required. If the multiworld's organizer did hand you a `<player>.smoap` file, double-clicking it just opens SMO Client with the slot name pre-filled; you can always type it yourself instead.
 
 ## How the game plays differently from vanilla SMO
 
@@ -123,8 +124,12 @@ Moon -> P3").
 
 ### Changing AP server or slot after setup
 
-**Doesn't require a rebuild.** Just type `/connect <host>:<port> <slot>`
-in SMOClient's command bar, or double-click a different `.smoap` file.
+**Doesn't require a rebuild.** Open SMO Client from the Archipelago
+Launcher and type `/connect <host>:<port> <slot>` in the command bar — or,
+if the multiworld's organizer sent you an `.smoap` file, double-click that
+to open SMO Client with the slot pre-filled. Either path works for any
+multiworld you join, as long as the SMO mod on your Switch matches the
+SMO Archipelago version the seed was generated against.
 See [`docs/changing-servers.md`](docs/changing-servers.md) for the full
 rebuild-vs-no-rebuild matrix.
 

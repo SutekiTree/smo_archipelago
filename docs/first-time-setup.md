@@ -1,8 +1,9 @@
 # First-time setup
 
 This page describes everything a brand-new SMO Archipelago player needs to
-do once on their machine. After this, joining a multiworld is just
-double-clicking your `.smoap` file.
+do once on their machine. After this, joining a multiworld is the same as
+with any other Archipelago client: open **SMO Client** from the Archipelago
+Launcher and connect to the AP server.
 
 > **Platform:** Windows only today. Linux and macOS aren't blocked by
 > design, but the setup wizard and several scripts assume `%APPDATA%`,
@@ -31,8 +32,10 @@ Before you start, confirm all three:
   other one later)
 
 You only need to run this once per machine. **Changing AP server or slot
-does NOT require re-running setup** — see
-[changing servers](changing-servers.md).
+does NOT require re-running setup** — once setup is done, you can join any
+multiworld by opening SMO Client from the Archipelago Launcher and typing
+its host/port and slot name into the Connect bar. See
+[changing servers](changing-servers.md) for details.
 
 ## Prerequisites
 
@@ -62,31 +65,20 @@ back-and-forth:
 
 ## The flow
 
+Setup is independent of any specific multiworld. Do it once; afterwards you
+can join any SMO Archipelago multiworld by opening SMO Client and connecting
+to it, exactly like every other AP client.
+
 1. **Download `smo.apworld`** from the
    [Releases page](https://github.com/mdietz94/smo_archipelago/releases).
 2. **Drop it into Archipelago's `custom_worlds/`** directory. On Windows the
    path is typically `%LOCALAPPDATA%\Archipelago\custom_worlds\` or
    wherever you installed Archipelago.
-3. **Generate a multiworld with an SMO slot.** If this is your first time
-   using Archipelago at all, the short version:
-   1. Open the Archipelago Launcher and click *Generate Template*. This
-      writes a YAML stub for every installed game into your `Players/`
-      directory; find the one labeled **Spicy Meatball Overdrive**
-      (that's how this apworld registers).
-   2. Edit the YAML to set your `name` and any options you care about
-      (defaults are sensible — see the *Include...* toggles' inline
-      docstrings for the per-toggle impact).
-   3. Click *Generate*. The Launcher produces a per-player zip in
-      `output/`. Extract it; alongside the usual `.archipelago` /
-      `.zip` files you'll find a `<player>.smoap` — that's your
-      personal "join this multiworld as this slot" file.
-   See AP's
-   [Setting up a YAML](https://archipelago.gg/tutorial/Archipelago/setup/en)
-   tutorial for the longer walkthrough.
-4. **Double-click your `.smoap` file.** Archipelago Launcher routes it to
-   **SMO Client** (that's how the entry appears in the Launcher's Clients
-   list). On first run, SMO Client notices you haven't set up yet and
-   opens the setup wizard.
+3. **Open the Archipelago Launcher and click "SMO Client"** in the Clients
+   list. The SMOClient Kivy window opens.
+4. **Type `/setup` in the SMOClient command bar.** The setup wizard opens
+   in a fresh window. (On a brand-new install the wizard may also pop on
+   its own when SMOClient detects no prior setup state.)
 5. **Walk the wizard.** Eight pages, in order:
    1. Welcome — read the overview.
    2. Prerequisites — wizard checks the table above; click "Install..." for
@@ -114,20 +106,37 @@ back-and-forth:
         `%APPDATA%/Ryujinx/mods/contents/...`. (Ryujinx itself is no
         longer publicly distributed; the wizard works with whichever
         copy you already have.)
-   8. Done — click "Launch SMOClient now" to immediately connect to the
-      multiworld using the slot the `.smoap` file specified.
+   8. Done — wizard closes and returns control to SMOClient.
 6. **Boot SMO.** On your Switch (or in Ryujinx, if that's where you
-   deployed) — the mod loads on game start.
-   It dials the bridge PC every couple seconds until SMOClient is listening
-   (port 17777 by default); the SMOClient GUI flips from "waiting for
-   Switch" to "ready" the moment HELLO arrives.
+   deployed) — the mod loads on game start. It dials the bridge PC every
+   couple seconds until SMOClient is listening (port 17777 by default);
+   the SMOClient GUI flips from "waiting for Switch" to "ready" the moment
+   HELLO arrives.
+7. **Join a multiworld.** Either:
+   - **You're hosting / running the seed yourself:** click *Generate
+     Template* in the Archipelago Launcher to get a YAML stub for
+     **Spicy Meatball Overdrive** in your `Players/` directory, edit your
+     `name` and options, click *Generate*, and host the resulting
+     `.archipelago` file. Then type the host/port and slot name into
+     SMOClient's Connect bar.
+   - **You're joining someone else's seed:** ask the organizer for the
+     host/port and your slot name, type them into SMOClient's Connect bar,
+     and click *Connect*. If they sent you a `<player>.smoap` file you can
+     double-click it instead — it just opens SMOClient with the slot name
+     pre-filled.
+
+   See AP's
+   [Setting up a YAML](https://archipelago.gg/tutorial/Archipelago/setup/en)
+   tutorial if you're new to Archipelago seed generation in general.
 
 ## After setup
 
-Joining additional multiworlds is just **double-click the `.smoap`**. The
-wizard runs only on first launch (and on `/setup` from the SMOClient
-command bar if you want to re-trigger it explicitly). Subsequent launches
-go straight to SMOClient with the slot name pre-filled in the Connect bar.
+Joining additional multiworlds is just **open SMOClient from the
+Archipelago Launcher and type the host/port + slot name into the Connect
+bar** — or double-click a `.smoap` file if the organizer sent you one. The
+wizard does not need to run again unless the bridge PC's LAN IP changes or
+you upgrade to a new SMO Archipelago release; run `/setup` from the
+SMOClient command bar in those cases.
 
 ## Troubleshooting
 
@@ -173,7 +182,9 @@ DPI scaling issue on Windows (try `set KIVY_DPI=96` before launching).
 If anything goes wrong and you want a clean slate:
 
 ```pwsh
-# Delete all wizard outputs (will trigger setup on next .smoap open):
+# Delete all wizard outputs. Next time you open SMOClient (from the
+# Archipelago Launcher), the wizard will pop on its own; you can also
+# trigger it explicitly with /setup from the command bar.
 Remove-Item -Recurse -Force "$env:APPDATA\SMOArchipelago"
 ```
 

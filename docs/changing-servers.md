@@ -7,11 +7,11 @@ different costs. Knowing which is which saves time.
 
 | What you want to change | Rebuild required? | How |
 |---|---|---|
-| AP server address (host:port) | **No.** | Type `/connect <host>:<port> <slot>` in SMOClient, or pass `--connect <host>:<port>` on the CLI, or double-click a fresh `.smoap` from a different AP gen. |
-| AP slot name | **No.** | Use the same `/connect` trick or `--name <slot>`, or double-click the new `.smoap`. |
+| AP server address (host:port) | **No.** | Open SMOClient from the Archipelago Launcher and type `/connect <host>:<port> <slot>` in the command bar — or pass `--connect <host>:<port>` on the CLI. A `.smoap` file is **not** needed; if you happen to have one from the organizer, double-clicking it just pre-fills the slot. |
+| AP slot name | **No.** | Same as above: `/connect <host>:<port> <slot>` in SMOClient, or `--name <slot>` on the CLI. |
 | AP password | **No.** | `/connect <host>:<port> <slot> <password>`, or `--password <pwd>`. |
 | Switch listen port (PC side) | **No.** | Edit `host.yaml` or pass `--switch-port`. |
-| Bridge PC's LAN IP | **Yes.** Re-run the setup wizard. | Type `/setup` in SMOClient or double-click any `.smoap` after deleting `%APPDATA%/SMOArchipelago/`. |
+| Bridge PC's LAN IP | **Yes.** Re-run the setup wizard. | Open SMOClient from the Archipelago Launcher and type `/setup` in the command bar. |
 | Switching to a different bridge PC | **Yes.** Set up on the new PC. | Run the wizard on the new PC. |
 
 ## Per-session: server, slot, password
@@ -42,13 +42,17 @@ python vendor\Archipelago\Launcher.py "SMO Client" `
     --connect archipelago.gg:38281 --name Mario --password hunter2
 ```
 
-### By double-clicking a `.smoap` file
+### By double-clicking a `.smoap` file (optional convenience)
 
-Every multiworld you join gives you a `<player>.smoap` file. Double-clicking
-it routes through Archipelago Launcher → SMOClient with the slot name
-pre-filled. If the generator's host also filled the server address (an
-optional field in the `.smoap` JSON), the Connect bar is pre-populated too;
-otherwise type it in and click Connect.
+If the multiworld's organizer hands you a `<player>.smoap` file, you can
+double-click it instead of typing the slot name by hand — Archipelago
+Launcher routes it through to SMOClient with the slot name pre-filled.
+If the `.smoap`'s optional host field is also set, the Connect bar is
+pre-populated too; otherwise type it in and click Connect.
+
+`.smoap` files are convenience, not a requirement. You can always join a
+multiworld by opening SMOClient from the Archipelago Launcher and typing
+the host/port and slot name into the Connect bar yourself.
 
 ### Per-session DeathLink toggle
 
@@ -71,8 +75,8 @@ You need to re-run the wizard when:
 
 ### Quickest path
 
-1. Open SMOClient (any way you usually do — clicking "SMO Client" in the
-   Archipelago Launcher works, or just double-click any old `.smoap`).
+1. Open SMOClient from the Archipelago Launcher (click "SMO Client" in
+   the Clients list).
 2. Type `/setup` in the command bar.
 3. The wizard opens in a fresh window. Walk forward — you can usually
    skip-by-rechecking the prereqs and extraction pages (their outputs are
