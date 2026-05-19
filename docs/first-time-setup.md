@@ -17,8 +17,8 @@ Before you start, confirm all three:
 | Requirement | Why | What to do if you don't have it |
 |---|---|---|
 | **Super Mario Odyssey 1.0.0** | Every public SMO mod (lunakit, OdysseyDecomp, ours) targets the original 1.0.0 release. 1.1.0+ have different symbol offsets, struct layouts, and patched behaviors — our module won't load on them. | If you're on 1.1.0, 1.2.0, or 1.3.0, downgrade to 1.0.0 using [Istador/odyssey-downgrade](https://github.com/Istador/odyssey-downgrade). Follow that tool's README — it's a one-time process that removes the update overlay so the cartridge / base NSP runs as 1.0.0. |
-| **Switch firmware 21.x or earlier, OR the Ryujinx emulator** | The subsdk9-style modules we rely on use a homebrew lifecycle Nintendo changed in firmware 22. **FW22 is NOT supported** by this project, even though Atmosphere 1.11+ technically boots on it. Ryujinx loads the same `subsdk9` overlay as a mod and is fully supported. | Stay on FW 21.x on real hardware. If you've already updated to FW22 or later, there is currently no downgrade path back to 21.x on a stock Switch — either wait for SMO Archipelago to add FW22 compatibility (no ETA) or use Ryujinx instead. |
-| **Atmosphere CFW** running on the above firmware (real Switch only) | The mod ships as an Atmosphere overlay (`exefs/subsdk9`). Ryujinx loads the same overlay as a mod, so Atmosphere is not needed when emulating. | Follow one of the community guides — [NH Switch Guide](https://nh-server.github.io/switch-guide/) is the canonical starting point. Make sure you're on FW 21.x BEFORE setting up Atmosphere; don't update past 21.x. Skip this row entirely if you're running on Ryujinx. |
+| **Switch firmware 21.x or earlier, OR an emulator** | The subsdk9-style modules we rely on use a homebrew lifecycle Nintendo changed in firmware 22. **FW22 is NOT supported** by this project, even though Atmosphere 1.11+ technically boots on it. An emulator loads the same `subsdk9` overlay as a mod and is fully supported. | Stay on FW 21.x on real hardware. If you've already updated to FW22 or later, there is currently no downgrade path back to 21.x on a stock Switch — either wait for SMO Archipelago to add FW22 compatibility (no ETA) or use an emulator instead. |
+| **Atmosphere CFW** running on the above firmware (real Switch only) | The mod ships as an Atmosphere overlay (`exefs/subsdk9`). An emulator loads the same overlay as a mod, so Atmosphere is not needed when emulating. | Follow one of the community guides — [NH Switch Guide](https://nh-server.github.io/switch-guide/) is the canonical starting point. Make sure you're on FW 21.x BEFORE setting up Atmosphere; don't update past 21.x. Skip this row entirely if you're running on an emulator. |
 
 ## What you'll end up with
 
@@ -53,7 +53,7 @@ back-and-forth:
 | **hactool** | Extracts RomFS from your SMO NSP | https://github.com/SciresM/hactool/releases |
 | **prod.keys** (Switch console keys) | hactool needs them to decrypt the NSP | Dump with [Lockpick_RCM](https://github.com/Lockpick-Switch/Lockpick_RCM) → place at `%USERPROFILE%\.switch\prod.keys` |
 | **Your SMO 1.0.0 NSP** | Source of moon + capture names | Your legally-purchased copy. **Not** a patched version — 1.0.0 only. |
-| **A modded Switch OR Ryujinx** | Where SMO actually runs | Atmosphere CFW on a modded Switch (FW 21.x or earlier), or the Ryujinx emulator |
+| **A modded Switch OR an emulator** | Where SMO actually runs | Atmosphere CFW on a modded Switch (FW 21.x or earlier), or an emulator |
 
 > ⚠️ **Why so many tools?** SMO Archipelago is "play your own Switch", not
 > "play an emulated ROM". The mod that talks to AP runs inside SMO on the

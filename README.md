@@ -14,7 +14,7 @@ Today the SMO Archipelago experience is a *Manual* client ([empathy-mp3/SMO-manu
 ## Requirements
 
 - **Super Mario Odyssey 1.0.0**
-- **Switch firmware 21.x or earlier, with Atmosphere CFW** — or **Ryujinx** emulator
+- **Switch firmware 21.x or earlier, with Atmosphere CFW** — or an **emulator**
 - **Windows PC** on the same LAN as the Switch
 - **Archipelago, Python 3.12, devkitPro+devkitA64, CMake, Ninja, hactool, prod.keys**
 
