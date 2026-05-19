@@ -15,7 +15,8 @@
                     "description": "A guide to setting up Super Mario Odyssey for Archipelago multiworld games.",
                     "language": "English",
                     "file_name": "setup_en.md",
-                    "link": "setup/en"
+                    "link": "setup/en",
+                    "authors": ["maxdietz"]
                 }
             ]
         }
