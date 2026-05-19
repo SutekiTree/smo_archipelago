@@ -1,3 +1,17 @@
 {
-  "versions": []
+  "versions": [
+    {
+      "package_version": "0.1.18-alpha",
+      "download_url": "https://github.com/mdietz94/smo_archipelago/releases/download/v0.1.18-alpha/smo-poptracker-v0.1.18-alpha.zip",
+      "sha256": "42a79f98d01268bba4776eefef82ffdc571fbb456ccc7a3c5b9114535f5d296b",
+      "changelog": [
+        "Warn users to start a new save before opening SMO Client",
+        "Also fire goal from ShineNumGetHook to cover save-load into Mushroom",
+        "Fire goal on first Mushroom Kingdom visit, not Long Journey's End",
+        "Remove Bowser from AP item pool to fix end-game softlock",
+        "Update getGotShineNum bullet: hook does fire, in save-slot summary contexts",
+        "Wire PopTracker pack auto-update"
+      ]
+    }
+  ]
 }
