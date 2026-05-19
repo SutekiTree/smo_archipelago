@@ -90,21 +90,37 @@ the quick one first.
 
 ### Step 1 — observe whether existing patches fire on 2D shines (5 min)
 
-1. Build & deploy with the current ShineAppearanceHook (use the `smo-build`
-   skill).
-2. Boot a save with a 2D moon nearby. Easiest: **Cap Kingdom → "Behind the
-   Big Wall"** is a 2D mural room near the start of the game.
-3. Walk into the 2D section, but **don't collect the moon yet**. Tail
-   Ryujinx `lm.log` for `[shine-color] subst#…` lines.
-4. The hook logs every substitution (lines 65-73). If lines appear for the
-   2D shine's UID → patches fire, diagnosis is (A), the fix is a material-
-   color override on the loaded ShineDot model.
-5. If no log line appears for that UID → diagnosis is (B), the fix is to
-   find ShineDot's separate BL offsets and patch them too.
+Per mdietz: in SMO all of a kingdom's shines are loaded into the scene
+immediately on landing, so `Shine::init` fires for every shine at once and
+the corresponding `[shine-color] subst#…` log burst appears all at the
+landing moment — no need to walk to individual moons.
 
-To know the 2D shine's UID, cross-reference the kingdom + obj_id in
-`apworld/smo_archipelago/client/data/shine_map.json` (gitignored — already
-generated locally via `scripts/extract_shine_map.py`).
+1. Build & deploy with the current `ShineAppearanceHook` (use the
+   `smo-build` skill).
+2. Optionally augment `ShineAppearanceHook.cpp:65-73` to also log which
+   offset fired (read the return address from `exl::hook::InlineCtx` —
+   typically `ctx->pc` or `ctx->X[30]` for LR — and bin it into one of
+   the 4 known offsets). Without this you can count fires but not
+   attribute them to pair 1 vs pair 2.
+3. Boot Ryujinx on a save with all shines un-collected in (say) Cap or
+   Cascade Kingdom.
+4. Land. Tail `lm.log` and count `[shine-color] subst#…` lines for that
+   kingdom. Expected = `2 × (number of shines in kingdom)` if every fire
+   path is covered.
+5. Cross-reference the logged `uid=N` values against
+   `apworld/smo_archipelago/client/data/shine_map.json` (gitignored,
+   regenerated per `docs/extract-moon-data.md`) to see which moons
+   appeared in the log. Identify the kingdom's known 2D moons
+   (the side-scrolling mural rooms are common SMO knowledge) and check
+   whether their UIDs are present.
+
+Decision:
+- 2D shine UIDs present in the log → diagnosis (A); existing patches
+  fire on `ShineDot` too. Fix is a material-color override on the
+  loaded model.
+- 2D shine UIDs absent (or fire count is short of `2 × moons`) →
+  diagnosis (B); `Shine::init` takes a separate branch for ShineDot.
+  Fix is to find that branch's BL offsets and add patches there.
 
 ### Step 2 — disassemble `Shine::init` (10 min, only if Step 1 inconclusive)
 
