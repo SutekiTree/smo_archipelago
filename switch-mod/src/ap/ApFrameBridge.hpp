@@ -25,9 +25,6 @@ void reportCaptureChecked(const char* hack_name);
 // ScenarioFlagHook -> sends tracker-UI hint with the new scenario number.
 void reportStatus(const char* stage_name, int scenario_no);
 
-// EndingHook -> sends goal=true; idempotent via ApState::goal_sent.
-void reportGoal();
-
 // DeathHook -> sends death event; debounced via ApState::death_pending_send.
 void reportDeath();
 

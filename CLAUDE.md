@@ -104,7 +104,7 @@ The client owns AP-protocol complexity (websocket + deflate + TLS + reconnect, a
 | M6 phase D — moon-deposit debit | DONE 2026-05-17 (Ryujinx-verified) | [docs/milestones.md#m6-phase-d](docs/milestones.md#m6-phase-d) |
 | M7 Path A — kingdom-order gate | DONE 2026-05-17 (Ryujinx-verified) | [docs/milestones.md#m7-path-a--kingdom-order-gate](docs/milestones.md#m7-path-a--kingdom-order-gate) |
 | M7 phase A — capture lock | DONE 2026-05-16 | [docs/milestones.md#m7-phase-a--capture-lock](docs/milestones.md#m7-phase-a--capture-lock) |
-| M7 phase B — goal detection | DEFERRED (needs playtest) | [docs/milestones.md#m7-phase-b-deferred](docs/milestones.md#m7-phase-b-deferred) |
+| M7 phase B — goal detection | DONE 2026-05-18 (bridge-side rewire) | [docs/milestones.md#m7-phase-b](docs/milestones.md#m7-phase-b) |
 | M8 — apworld extensions + ImGui + polish | NOT STARTED | [docs/milestones.md#m8](docs/milestones.md#m8) |
 | PopTracker pack | DONE 2026-05-17 (user-verified) | [docs/milestones.md#poptracker-pack](docs/milestones.md#poptracker-pack) |
 
@@ -220,7 +220,7 @@ For anything not covered by a skill, [docs/milestones.md](docs/milestones.md) is
 1. **`PlayerHackKeeper::startHack` may not be a single chokepoint** — capture entry can split across multiple functions per cap-type. Secondary read-only check on `CapTargetInfo::isCaptureTarget` from the frame pump if the trampoline misses cases.
 2. **Synthetic moon grant** must not retrigger our own hook — `ApState::synthetic_grant_this_frame` guard exists, plus belt-and-braces dedupe by `locations_checked` hash set.
 3. **`Game.py` game-name guard**: bridge should compare `game_name` against `RoomInfo` at startup to catch seed mis-pairing. Not yet implemented.
-4. **DemoPeachWedding hook fires for the wedding cutscene** which is the canonical SMO ending. If 1.0.0 names that demo differently (unlikely given OdysseyDecomp targets 1.0.0), the symbol won't resolve and we'd fall back to hooking a `setMainScenarioNo` call with the post-Bowser scenario value.
+4. **Goal detection now lives on the bridge, not the Switch.** A 2026-05-18 playtest showed `DemoPeachWedding::makeActorAlive` (the old `EndingHook` target) fires in Bowser's Kingdom too — `DemoPeachWedding` per OdysseyDecomp is a generic "Peach in wedding dress on screen" actor with no end-of-game semantics, so any cutscene that places wedding-Peach trips it. Replaced with a bridge-side trigger: `SMOContext.report_check` calls `report_goal()` when a moon resolves to the apworld's `victory: true` location, "Defeat Bowser and Escape the Moon" (Multi Moon awarded after the spark-pylon escape). The MSBT name alias lives in `MOON_NAME_ALIASES` in context.py — "Long Journey's End" (Nintendo's English text) → "Defeat Bowser and Escape the Moon" (apworld goal name) — so a stock-extracted `shine_map.json` resolves cleanly without regeneration. `EndingHook.cpp`, the `kDemoPeachWeddingMakeActorAlive` symbol, and `smoap::ap::reportGoal` are gone; `ApState::goal_sent` stays because the snapshot path still encodes it.
 
 ## What's definitely NOT done
 
@@ -233,9 +233,9 @@ For anything not covered by a skill, [docs/milestones.md](docs/milestones.md) is
 
 ## What's next
 
-**M7 phase B — goal detection playtest.** `EndingHook` is wired on `DemoPeachWedding::makeActorAlive` since M3 and is supposed to set `ApState::goal_sent` + ship an AP `StatusUpdate{ClientGoal}`. Validation requires actually defeating Bowser in Ryujinx; expected to be a small task if the symbol resolves and the demo fires once-per-defeat as designed.
+**M7 phase B — goal detection (DONE 2026-05-18).** Bridge-side trigger on the "Defeat Bowser and Escape the Moon" location resolution replaced the broken `DemoPeachWedding`-based Switch hook (which fired in Bowser's Kingdom too). See known-unknowns #4 above.
 
-**M6 phase C — snapshot enumerate** is the natural next big-ticket item if M7B turns out clean. The kingdom-unlock half of phase C was dropped 2026-05-18 (M7 Path A's substitution hooks cover gating without needing AP-driven `unlockWorld` writes). What remains: `enumerateOwnedShines` / `enumerateOwnedCaptures` to populate the M4.5 reconciliation stream the bridge already consumes — stubs are in `CaptureGate.cpp` / `MoonApply.cpp` and just need GameDataHolder traversal bodies.
+**M6 phase C — snapshot enumerate** is the natural next big-ticket item. The kingdom-unlock half of phase C was dropped 2026-05-18 (M7 Path A's substitution hooks cover gating without needing AP-driven `unlockWorld` writes). What remains: `enumerateOwnedShines` / `enumerateOwnedCaptures` to populate the M4.5 reconciliation stream the bridge already consumes — stubs are in `CaptureGate.cpp` / `MoonApply.cpp` and just need GameDataHolder traversal bodies.
 
 **M6.6 — Cappy bubble (Channel B)**: items arriving outside the moon-get cutscene window need a UI surface. Three UI candidates to spike — see [docs/milestones.md#m66-deferred-next-milestone](docs/milestones.md#m66-deferred-next-milestone).
 

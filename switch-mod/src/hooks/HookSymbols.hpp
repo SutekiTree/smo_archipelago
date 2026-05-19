@@ -103,15 +103,6 @@ inline constexpr const char* kGameDataFileSetMainScenarioNo =
 inline constexpr const char* kGameDataFileInitializeData =
     "_ZN12GameDataFile14initializeDataEv";
 
-// --- Goal trigger (Bowser-defeat wedding cutscene fires) ---
-// DemoPeachWedding::makeActorAlive()  (override of al::LiveActor)
-// Source: MonsterDruide1/OdysseyDecomp src/Demo/DemoPeachWedding.h:8
-// This is the precise moment the wedding ending demo activates. Idempotent
-// guard via ApState::goal_sent so a "watch credits twice" scenario doesn't
-// re-fire.
-inline constexpr const char* kDemoPeachWeddingMakeActorAlive =
-    "_ZN16DemoPeachWedding14makeActorAliveEv";
-
 // --- Mario death (DeathLink outbound) ---
 // PlayerHitPointData::kill()
 // Source: lunakit-vendor/src/game/GameData/PlayerHitPointData.h:25
@@ -401,6 +392,5 @@ inline constexpr const char* kSeadGameSystemCtor       = kGameSystemInit;
 inline constexpr const char* kShineGetSetter           = kGameDataFileSetGotShine;
 inline constexpr const char* kScenarioNoSetter         = kGameDataFileSetMainScenarioNo;
 inline constexpr const char* kSaveDataLoad             = kGameDataFileInitializeData;
-inline constexpr const char* kEndingDemoStart          = kDemoPeachWeddingMakeActorAlive;
 
 }  // namespace smoap::sym

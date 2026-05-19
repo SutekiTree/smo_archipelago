@@ -65,14 +65,6 @@ void reportStatus(const char* stage_name, int scenario_no) {
     // TODO(M5): wire to a dedicated outbound_status_ring for the tracker.
 }
 
-void reportGoal() {
-    auto& st = ApState::instance();
-    if (st.goal_sent) return;
-    st.goal_sent = true;
-    StatusEvent e{.goal = true};
-    st.outbound_status.push(e);
-}
-
 void reportDeath() {
     auto& st = ApState::instance();
     // Debounce: if a death is already queued and unsent, skip.

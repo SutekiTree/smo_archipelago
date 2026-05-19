@@ -27,7 +27,6 @@ SYMBOLS = [
     "_ZN16PlayerHackKeeper13forceKillHackEv",
     "_ZN12GameDataFile17setMainScenarioNoEi",
     "_ZN12GameDataFile14initializeDataEv",
-    "_ZN16DemoPeachWedding14makeActorAliveEv",
     # M6: shine-counter hooks (HUD substitution for AP credit display).
     "_ZN16GameDataFunction18getCurrentShineNumE22GameDataHolderAccessor",
     "_ZN16GameDataFunction14getGotShineNumE22GameDataHolderAccessori",

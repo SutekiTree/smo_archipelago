@@ -197,6 +197,11 @@ public:
 
     std::bitset<128> captures_unlocked;     // 43 used; index from capture_table.h
     FlatHashSet<4096> locations_checked;    // session dedupe (hash of message body)
+    // Snapshot-only flag: ApClient encodes this in state_chunk meta so the
+    // bridge can suppress a stale snapshot re-fire on HELLO. No Switch-side
+    // hook drives it any more — goal detection now lives on the bridge
+    // (fires when the "Defeat Bowser and Escape the Moon" location resolves
+    // from a Switch moon-check). SaveLoadHook still clears this on reload.
     bool goal_sent = false;
     bool synthetic_grant_this_frame = false;
 
