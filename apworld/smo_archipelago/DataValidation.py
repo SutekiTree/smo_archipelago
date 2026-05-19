@@ -142,7 +142,7 @@ class DataValidation():
     @staticmethod
     def checkRegionNamesInLocations():
         for location in DataValidation.location_table:
-            if "region" not in location or location["region"] in ["Menu", "Manual"]:
+            if "region" not in location or location["region"] in ["Menu", "SMO"]:
                 continue
 
             region_exists = len([name for name in DataValidation.region_table if name == location["region"]]) > 0
@@ -268,16 +268,16 @@ class DataValidation():
             if region.player != player:
                 continue
 
-            manualregion = DataValidation.region_table.get(region.name, {})
-            if "requires" in manualregion and manualregion["requires"]:
-                region_requires = json.dumps(manualregion["requires"])
+            regionData = DataValidation.region_table.get(region.name, {})
+            if "requires" in regionData and regionData["requires"]:
+                region_requires = json.dumps(regionData["requires"])
 
                 DataValidation._checkLocationRequiresForItemValueWithRegex(values_requested, region_requires)
 
             for location in region.locations:
-                manualLocation = world.location_name_to_location.get(location.name, {})
-                if "requires" in manualLocation and manualLocation["requires"]:
-                    DataValidation._checkLocationRequiresForItemValueWithRegex(values_requested, manualLocation["requires"])
+                locationData = world.location_name_to_location.get(location.name, {})
+                if "requires" in locationData and locationData["requires"]:
+                    DataValidation._checkLocationRequiresForItemValueWithRegex(values_requested, locationData["requires"])
 
         # compare whats available vs requested but only if there's anything requested
         if values_requested:
@@ -365,7 +365,7 @@ class DataValidation():
 
         for starting_block in starting_items:
             if type(starting_block) is not dict or len(starting_block.keys()) == 0:
-                raise ValidationError("One of your starting item definitions is not a valid dictionary.\n   Each definition must be inside {}, as demonstrated in the Manual documentation.")
+                raise ValidationError("One of your starting item definitions is not a valid dictionary.\n   Each definition must be inside {}.")
 
             valid_keys = ["items", "item_categories", "random", "if_previous_item", "_comment"] # _comment is provided by schema
             invalid_keys = [f'"{key}"' for key in starting_block.keys() if key not in valid_keys]

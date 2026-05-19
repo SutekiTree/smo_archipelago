@@ -2,8 +2,8 @@ from BaseClasses import MultiWorld, Item
 from typing import Optional, List
 from worlds.AutoWorld import World
 from .Data import category_table
-from .Items import ManualItem
-from .Locations import ManualLocation
+from .Items import SMOItem
+from .Locations import SMOLocation
 from .hooks.Helpers import before_is_category_enabled, before_is_item_enabled, before_is_location_enabled
 
 from typing import Union
@@ -53,13 +53,13 @@ def is_item_name_enabled(multiworld: MultiWorld, player: int, item_name: str) ->
 
     return is_item_enabled(multiworld, player, item)
 
-def is_item_enabled(multiworld: MultiWorld, player: int, item: ManualItem) -> bool:
+def is_item_enabled(multiworld: MultiWorld, player: int, item: SMOItem) -> bool:
     """Check if an item has been disabled by a yaml option."""
     hook_result = before_is_item_enabled(multiworld, player, item)
     if hook_result is not None:
         return hook_result
 
-    return _is_manualobject_enabled(multiworld, player, item)
+    return _is_smoobject_enabled(multiworld, player, item)
 
 def is_location_name_enabled(multiworld: MultiWorld, player: int, location_name: str) -> bool:
     """Check if a location named 'location_name' has been disabled by a yaml option."""
@@ -69,16 +69,16 @@ def is_location_name_enabled(multiworld: MultiWorld, player: int, location_name:
 
     return is_location_enabled(multiworld, player, location)
 
-def is_location_enabled(multiworld: MultiWorld, player: int, location: ManualLocation) -> bool:
+def is_location_enabled(multiworld: MultiWorld, player: int, location: SMOLocation) -> bool:
     """Check if a location has been disabled by a yaml option."""
     hook_result = before_is_location_enabled(multiworld, player, location)
     if hook_result is not None:
         return hook_result
 
-    return _is_manualobject_enabled(multiworld, player, location)
+    return _is_smoobject_enabled(multiworld, player, location)
 
-def _is_manualobject_enabled(multiworld: MultiWorld, player: int, object: any) -> bool:
-    """Internal method: Check if a Manual Object has any category disabled by a yaml option.
+def _is_smoobject_enabled(multiworld: MultiWorld, player: int, object: any) -> bool:
+    """Internal method: check if an item/location has any category disabled by a yaml option.
     \nPlease use the proper is_'item/location'_enabled or is_'item/location'_name_enabled methods instead.
     """
     enabled = True

@@ -64,8 +64,8 @@ def _load_settings():
     normal Launcher flow but the fallback keeps headless smoke tests
     happy)."""
     try:
-        from .. import ManualWorld  # type: ignore[attr-defined]
-        return ManualWorld.settings
+        from .. import SMOWorld  # type: ignore[attr-defined]
+        return SMOWorld.settings
     except Exception:
         log.warning("could not load SMOSettings; using built-in defaults")
 

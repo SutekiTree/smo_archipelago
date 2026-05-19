@@ -1,9 +1,8 @@
 # Localised pytest config — makes apworld/smo_archipelago/tests/ a self-contained
 # rootdir so pytest does NOT walk up and try to import apworld/smo_archipelago/
-# as a package. That package's __init__.py imports the Manual framework + the
-# Archipelago `worlds.AutoWorld` machinery, which is heavy and (more importantly)
-# duplicates the registration the zipped apworld in vendor/Archipelago/custom_worlds/
-# already did.
+# as a package. That package's __init__.py imports Archipelago `worlds.AutoWorld`
+# machinery, which is heavy and (more importantly) duplicates the registration
+# the zipped apworld in vendor/Archipelago/custom_worlds/ already did.
 #
 # importlib mode is also more isolated than prepend mode — each test module
 # imports independently without prepending arbitrary parents to sys.path.

@@ -2,7 +2,7 @@
 
 An Archipelago client for **Super Mario Odyssey** on a modded Nintendo Switch.
 
-Today the SMO Archipelago experience is a *Manual* client ([empathy-mp3/SMO-manual-AP](https://github.com/empathy-mp3/SMO-manual-AP)) — an honor-system checklist where players tick boxes by hand. This project replaces the honor system with an in-game module that:
+This project provides an in-game module that:
 
 - Detects moons / captures / scenario events on Switch and reports them as AP location checks.
 - Receives AP items (moons, captures, kingdoms) and applies them to the live game.
@@ -141,7 +141,7 @@ Type `/setup` in SMO Client to re-run the wizard.
 
 ## Credits
 
-- [empathy-mp3](https://github.com/empathy-mp3/SMO-manual-AP) — original SMO Manual AP world (apworld is forked from this).
+- [empathy-mp3](https://github.com/empathy-mp3/SMO-manual-AP) — upstream apworld this fork descends from.
 - [Amethyst-szs](https://github.com/Amethyst-szs/smo-lunakit) — LunaKit SMO mod SDK.
 - [shadowninja108](https://github.com/shadowninja108/exlaunch) — exlaunch.
 - [ArchipelagoMW](https://github.com/ArchipelagoMW/Archipelago) — Archipelago.

@@ -2,11 +2,11 @@
 from worlds.AutoWorld import World
 from BaseClasses import MultiWorld, CollectionState
 
-# Object classes from Manual -- extending AP core -- representing items and locations that are used in generation
-from ..Items import ManualItem
-from ..Locations import ManualLocation
+# Item/Location subclasses extending AP core, used during generation
+from ..Items import SMOItem
+from ..Locations import SMOLocation
 
-# Raw JSON data from the Manual apworld, respectively:
+# Raw JSON data from the apworld, respectively:
 #          data/game.json, data/items.json, data/locations.json, data/regions.json
 #
 from ..Data import game_table, item_table, location_table, region_table
@@ -26,7 +26,7 @@ import logging
 ##    5. pre_fill - Creates the victory location
 ##
 ## The create_item method is used by plando and start_inventory settings to create an item from an item name.
-## The fill_slot_data method will be used to send data to the Manual client for later use, like deathlink.
+## The fill_slot_data method will be used to send data to the SMO client for later use, like deathlink.
 ########################################################################################
 
 
@@ -104,7 +104,7 @@ def before_create_item(item_name: str, world: World, multiworld: MultiWorld, pla
     return item_name
 
 # The item that was created is provided after creation, in case you want to modify the item
-def after_create_item(item: ManualItem, world: World, multiworld: MultiWorld, player: int) -> ManualItem:
+def after_create_item(item: SMOItem, world: World, multiworld: MultiWorld, player: int) -> SMOItem:
     return item
 
 # This method is run towards the end of pre-generation, before the place_item options have been handled and before AP generation occurs
@@ -115,11 +115,11 @@ def before_generate_basic(world: World, multiworld: MultiWorld, player: int) -> 
 def after_generate_basic(world: World, multiworld: MultiWorld, player: int):
     pass
 
-# This is called before slot data is set and provides an empty dict ({}), in case you want to modify it before Manual does
+# This is called before slot data is set and provides an empty dict ({}), in case you want to modify it before the world fills it
 def before_fill_slot_data(slot_data: dict, world: World, multiworld: MultiWorld, player: int) -> dict:
     return slot_data
 
-# This is called after slot data is set and provides the slot data at the time, in case you want to check and modify it after Manual is done with it
+# This is called after slot data is set and provides the slot data at the time, in case you want to check and modify it after the world fills it
 def after_fill_slot_data(slot_data: dict, world: World, multiworld: MultiWorld, player: int) -> dict:
     return slot_data
 

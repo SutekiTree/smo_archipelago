@@ -1,16 +1,14 @@
 {
     "_comment": [ "remove the _ before a non-comment/info propertie to enable it",
-    "For more info use json schemas to get a description and allowed value for every properties",
-    "https://github.com/ManualForArchipelago/Manual/blob/main/docs/resources/json-schemas-for-world-devs.md"],
+    "For more info use json schemas to get a description and allowed value for every properties"],
     "docs": {
         "_comment": [ "For more info on the possible documentation properties check schema and/or the github",
             "https://github.com/ArchipelagoMW/Archipelago/blob/main/docs/world%20api.md#webworld-class"
         ],
         "apworld_description": [
-            "Manual games allow you to set custom check locations and custom item names that will be rolled into a multiworld.",
-            "This allows any variety of game -- PC, console, board games, Microsoft Word memes... really anything -- to be part of a multiworld randomizer.",
-            "The key component to including these games is some level of manual restriction. Since the items are not actually withheld from the player,",
-            "the player must manually refrain from using these gathered items until the tracker shows that they have been acquired or sent."
+            "Spicy Meatball Overdrive is the Archipelago world for Super Mario Odyssey on a modded Nintendo Switch (FW 21.x, SMO 1.0.0, Atmosphere CFW) or an emulator.",
+            "An in-game module detects moons / captures / scenario events on Switch and reports them as AP location checks, receives AP items and applies them to the live game,",
+            "and enforces capture locks until the AP item is received. Progress is surfaced through a tracker tab in SMO Client and an in-game HUD overlay."
         ],
         "web": {
             "_comment": "for more info check github https://github.com/ArchipelagoMW/Archipelago/blob/main/docs/world%20api.md#webworld-class",
@@ -19,7 +17,7 @@
             "tutorials": [
                 {
                     "name": "Multiworld Setup Guide",
-                    "description": "A guide to setting up manual game integration for Archipelago multiworld games.",
+                    "description": "A guide to setting up Super Mario Odyssey for Archipelago multiworld games.",
                     "language": "English",
                     "file_name": "setup_en.md",
                     "link": "setup/en",

@@ -25,8 +25,8 @@ python C:\Users\maxwe\Documents\smo_archipelago\scripts\build_poptracker_pack.py
 
 ## What the generator does
 
-- Mirrors the Manual id-allocation algorithm in [apworld/.../Game.py](../../apworld/smo_archipelago/Game.py) so AP location_ids in the pack match SMOClient's (verified: `Cap: Frog-Jumping Above the Fog`→`14481151500` and `Cascade: Our First Power Moon`→`14481151511`).
-- Parses the Manual `requires` mini-language (`|Name:N|`, `{Func(args)}`, `and`/`or`, paren grouping) and translates to PopTracker OR-of-AND access_rules.
+- Mirrors the id-allocation algorithm in [apworld/.../Game.py](../../apworld/smo_archipelago/Game.py) so AP location_ids in the pack match SMOClient's (verified: `Cap: Frog-Jumping Above the Fog`→`14481151500` and `Cascade: Our First Power Moon`→`14481151511`).
+- Parses the apworld's `requires` mini-language (`|Name:N|`, `{Func(args)}`, `and`/`or`, paren grouping) and translates to PopTracker OR-of-AND access_rules.
 - Per-region prereq chains flattened at build time via [regions.json](../../apworld/smo_archipelago/data/regions.json)'s `connects_to` graph.
 - Per-category yaml-option gates pulled from [categories.json](../../apworld/smo_archipelago/data/categories.json).
 - Lua ports of all ~30 functions in [Rules.py](../../apworld/smo_archipelago/hooks/Rules.py) live in [poptracker/pack-src/scripts/logic.lua](../../poptracker/pack-src/scripts/logic.lua), guarded on the same `capturesanity` check the Python uses.
@@ -36,7 +36,7 @@ python C:\Users\maxwe\Documents\smo_archipelago\scripts\build_poptracker_pack.py
 
 PopTracker has NO built-in locations panel or location-tree widget. The documented widget set is `container/dock/array/tabbed/group/item/itemgrid/map/layout/recentpins/text/canvas`. **Locations are ONLY visible when placed as pins on a `map` widget.**
 
-Pack ships a 740×560 dark-gray placeholder PNG (generated stdlib-only via `struct` + `zlib` in `make_solid_png`) with the 16 kingdom buckets pinned on a 4×4 grid (Cap top-left, Captures bottom-right, ordering loosely follows linear-chain progression). Each kingdom is one top-level location with all its moons as `sections` (the DBFZ Manual-pack reference uses this flat shape — nested `children + sections` is two levels deeper than PopTracker accepts and silently breaks the location panel). Click a pin → kingdom drawer with section list; sections color by access-rule state.
+Pack ships a 740×560 dark-gray placeholder PNG (generated stdlib-only via `struct` + `zlib` in `make_solid_png`) with the 16 kingdom buckets pinned on a 4×4 grid (Cap top-left, Captures bottom-right, ordering loosely follows linear-chain progression). Each kingdom is one top-level location with all its moons as `sections` (the DBFZ reference pack uses this flat shape — nested `children + sections` is two levels deeper than PopTracker accepts and silently breaks the location panel). Click a pin → kingdom drawer with section list; sections color by access-rule state.
 
 ## What NOT to try (iteration history)
 

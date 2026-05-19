@@ -1,6 +1,6 @@
 from BaseClasses import Item
 from .Data import item_table
-from .Game import filler_item_name, starting_index
+from .Game import filler_item_name, game_name, starting_index
 from .hooks.Items import before_item_table_processed
 
 item_table = before_item_table_processed(item_table)
@@ -57,5 +57,5 @@ item_name_to_id = {name: id for id, name in item_id_to_name.items()}
 ######################
 
 
-class ManualItem(Item):
-    game = "Manual"
+class SMOItem(Item):
+    game = game_name

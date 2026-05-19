@@ -22,9 +22,9 @@ from .Items import item_id_to_name, item_name_to_id, item_name_to_item, item_nam
 from .DataValidation import runGenerationDataValidation, runPreFillDataValidation
 
 from .Regions import create_regions
-from .Items import ManualItem
+from .Items import SMOItem
 from .Rules import set_rules
-from .Options import manual_options_data
+from .Options import smo_options_data
 from .Helpers import is_option_enabled, is_item_enabled, get_option_value
 
 from BaseClasses import ItemClassification, Tutorial, Item
@@ -84,12 +84,12 @@ class SMOSettings(settings.Group):
     deathlink_default: typing.Union[settings.Bool, bool] = False
 
 
-class ManualWorld(World):
+class SMOWorld(World):
     __doc__ = world_description
     game: str = game_name
     web = world_webworld
 
-    options_dataclass = manual_options_data
+    options_dataclass = smo_options_data
     settings: typing.ClassVar[SMOSettings]
     data_version = 2
     required_client_version = (0, 3, 4)
@@ -142,7 +142,7 @@ class ManualWorld(World):
             unused_goal.parent_region.locations.remove(unused_goal)
 
         location_game_complete.place_locked_item(
-            ManualItem("__Victory__", ItemClassification.progression, None, player=self.player))
+            SMOItem("__Victory__", ItemClassification.progression, None, player=self.player))
 
         after_create_regions(self, self.multiworld, self.player)
 
@@ -243,7 +243,7 @@ class ManualWorld(World):
         if "progression_skip_balancing" in item and item["progression_skip_balancing"]:
             classification = ItemClassification.progression_skip_balancing
 
-        item_object = ManualItem(name, classification,
+        item_object = SMOItem(name, classification,
                         self.item_name_to_id[name], player=self.player)
 
         item_object = after_create_item(item_object, self, self.multiworld, self.player)
@@ -261,79 +261,79 @@ class ManualWorld(World):
         before_generate_basic(self, self.multiworld, self.player)
 
         # Handle item forbidding
-        manual_locations_with_forbid = {location['name']: location for location in location_name_to_location.values() if "dont_place_item" in location or "dont_place_item_category" in location}
-        locations_with_forbid = [l for l in self.multiworld.get_unfilled_locations(player=self.player) if l.name in manual_locations_with_forbid.keys()]
+        forbid_locations_map = {location['name']: location for location in location_name_to_location.values() if "dont_place_item" in location or "dont_place_item_category" in location}
+        locations_with_forbid = [l for l in self.multiworld.get_unfilled_locations(player=self.player) if l.name in forbid_locations_map.keys()]
         for location in locations_with_forbid:
-            manual_location = manual_locations_with_forbid[location.name]
+            location_data = forbid_locations_map[location.name]
             forbidden_item_names = []
 
-            if "dont_place_item" in manual_location:
-                if len(manual_location["dont_place_item"]) == 0:
+            if "dont_place_item" in location_data:
+                if len(location_data["dont_place_item"]) == 0:
                     continue
 
-                forbidden_item_names.extend([i["name"] for i in item_name_to_item.values() if i["name"] in manual_location["dont_place_item"]])
+                forbidden_item_names.extend([i["name"] for i in item_name_to_item.values() if i["name"] in location_data["dont_place_item"]])
 
-            if "dont_place_item_category" in manual_location:
-                if len(manual_location["dont_place_item_category"]) == 0:
+            if "dont_place_item_category" in location_data:
+                if len(location_data["dont_place_item_category"]) == 0:
                     continue
 
-                forbidden_item_names.extend([i["name"] for i in item_name_to_item.values() if "category" in i and set(i["category"]).intersection(manual_location["dont_place_item_category"])])
+                forbidden_item_names.extend([i["name"] for i in item_name_to_item.values() if "category" in i and set(i["category"]).intersection(location_data["dont_place_item_category"])])
 
             if len(forbidden_item_names) > 0:
                 forbid_items_for_player(location, forbidden_item_names, self.player)
                 forbidden_item_names.clear()
 
         # Handle specific item placements using fill_restrictive
-        manual_locations_with_placements = {location['name']: location for location in location_name_to_location.values() if "place_item" in location or "place_item_category" in location}
-        locations_with_placements = [l for l in self.multiworld.get_unfilled_locations(player=self.player) if l.name in manual_locations_with_placements.keys()]
+        placement_locations_map = {location['name']: location for location in location_name_to_location.values() if "place_item" in location or "place_item_category" in location}
+        locations_with_placements = [l for l in self.multiworld.get_unfilled_locations(player=self.player) if l.name in placement_locations_map.keys()]
         for location in locations_with_placements:
-            manual_location = manual_locations_with_placements[location.name]
+            location_data = placement_locations_map[location.name]
             eligible_items = []
 
-            if "place_item" in manual_location:
-                if len(manual_location["place_item"]) == 0:
+            if "place_item" in location_data:
+                if len(location_data["place_item"]) == 0:
                     continue
 
-                eligible_items = [item for item in self.multiworld.itempool if item.name in manual_location["place_item"] and item.player == self.player]
+                eligible_items = [item for item in self.multiworld.itempool if item.name in location_data["place_item"] and item.player == self.player]
 
                 if len(eligible_items) == 0:
-                    raise Exception("Could not find a suitable item to place at %s. No items that match %s." % (manual_location["name"], ", ".join(manual_location["place_item"])))
+                    raise Exception("Could not find a suitable item to place at %s. No items that match %s." % (location_data["name"], ", ".join(location_data["place_item"])))
 
-            if "place_item_category" in manual_location:
-                if len(manual_location["place_item_category"]) == 0:
+            if "place_item_category" in location_data:
+                if len(location_data["place_item_category"]) == 0:
                     continue
 
-                eligible_item_names = [i["name"] for i in item_name_to_item.values() if "category" in i and set(i["category"]).intersection(manual_location["place_item_category"])]
+                eligible_item_names = [i["name"] for i in item_name_to_item.values() if "category" in i and set(i["category"]).intersection(location_data["place_item_category"])]
                 eligible_items = [item for item in self.multiworld.itempool if item.name in eligible_item_names and item.player == self.player]
 
                 if len(eligible_items) == 0:
-                    raise Exception("Could not find a suitable item to place at %s. No items that match categories %s." % (manual_location["name"], ", ".join(manual_location["place_item_category"])))
+                    raise Exception("Could not find a suitable item to place at %s. No items that match categories %s." % (location_data["name"], ", ".join(location_data["place_item_category"])))
 
-            if "dont_place_item" in manual_location:
-                if len(manual_location["dont_place_item"]) == 0:
+            if "dont_place_item" in location_data:
+                if len(location_data["dont_place_item"]) == 0:
                     continue
 
-                eligible_items = [item for item in eligible_items if item.name not in manual_location["dont_place_item"]]
+                eligible_items = [item for item in eligible_items if item.name not in location_data["dont_place_item"]]
 
                 if len(eligible_items) == 0:
-                    raise Exception("Could not find a suitable item to place at %s. No items that match placed_items(_category) because of forbidden %s." % (manual_location["name"], ", ".join(manual_location["dont_place_item"])))
+                    raise Exception("Could not find a suitable item to place at %s. No items that match placed_items(_category) because of forbidden %s." % (location_data["name"], ", ".join(location_data["dont_place_item"])))
 
-            if "dont_place_item_category" in manual_location:
-                if len(manual_location["dont_place_item_category"]) == 0:
+            if "dont_place_item_category" in location_data:
+                if len(location_data["dont_place_item_category"]) == 0:
                     continue
 
-                forbidden_item_names = [i["name"] for i in item_name_to_item.values() if "category" in i and set(i["category"]).intersection(manual_location["dont_place_item_category"])]
+                forbidden_item_names = [i["name"] for i in item_name_to_item.values() if "category" in i and set(i["category"]).intersection(location_data["dont_place_item_category"])]
 
                 eligible_items = [item for item in eligible_items if item.name not in forbidden_item_names]
 
                 if len(eligible_items) == 0:
-                    raise Exception("Could not find a suitable item to place at %s. No items that match placed_items(_category) because of forbidden categories %s." % (manual_location["name"], ", ".join(manual_location["dont_place_item_category"])))
+                    raise Exception("Could not find a suitable item to place at %s. No items that match placed_items(_category) because of forbidden categories %s." % (location_data["name"], ", ".join(location_data["dont_place_item_category"])))
                 forbidden_item_names.clear()
 
 
             # if we made it here and items is empty, then we encountered an unknown issue... but also can't do anything to place, so error
             if len(eligible_items) == 0:
-                raise Exception("Custom item placement at location %s failed." % (manual_location["name"]))
+                raise Exception("Custom item placement at location %s failed." % (location_data["name"]))
 
             item_to_place = self.random.choice(eligible_items)
             location.place_locked_item(item_to_place)
@@ -344,7 +344,7 @@ class ManualWorld(World):
 
         after_generate_basic(self, self.multiworld, self.player)
 
-        # Enable this in Meta.json to generate a diagram of your manual.  Only works on 0.4.4+
+        # Enable this in meta.json to generate a diagram of regions/locations. Only works on 0.4.4+
         if enable_region_diagram:
             from Utils import visualize_regions
             visualize_regions(self.multiworld.get_region("Menu", self.player), f"{self.game}_{self.player}.puml")
@@ -569,13 +569,7 @@ def add_client_to_launcher() -> None:
     """Register the "SMO Client" Component with the Archipelago Launcher.
 
     Idempotent: re-importing this module (e.g. AP's apworld autodiscover
-    can call us more than once across reloads) won't create duplicates.
-
-    Previously also registered "Manual Client" (.apmanual fallback) and
-    "Manual Discord Server" components inherited from the upstream Manual
-    framework — both removed because the shipped client is no longer
-    Manual-based and the .apmanual file just confused users (cf. the v0.1.1
-    bug report about two files in the per-player zip)."""
+    can call us more than once across reloads) won't create duplicates."""
     for c in components:
         if c.display_name == "SMO Client":
             return

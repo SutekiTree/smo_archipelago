@@ -2,7 +2,7 @@
 
 An `.apworld` file is just a zip with the world package at its root. Archipelago
 0.5+ auto-discovers `.apworld` files in `<checkout>/custom_worlds/` at startup,
-so this is the supported way to ship a forked Manual world without polluting
+so this is the supported way to ship a custom world without polluting
 `vendor/Archipelago/worlds/` (which would also get clobbered by `git submodule
 update`).
 

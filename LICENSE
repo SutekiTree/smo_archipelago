@@ -20,6 +20,6 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-This project includes a fork of the manual_smo_mp3 Archipelago world by
+This project includes a fork of an upstream SMO Archipelago world by
 empathy-mp3, used under its original license terms. See apworld/smo_archipelago/
 for that fork's licensing.

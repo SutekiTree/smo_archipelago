@@ -3,15 +3,12 @@ from .Data import game_table
 if 'creator' in game_table:
     game_table['player'] = game_table['creator']
 
-# AP-protocol game name. We diverge from the upstream Manual framework's
-# `Manual_<g>_<p>` convention because this is no longer an honor-system
-# Manual world — it's a real client with in-game enforcement. The literal
-# string is what lands in the .yaml seed `game:` field and in every AP
-# wire `Connect` packet.
+# AP-protocol game name. This is what lands in the .yaml seed `game:` field
+# and in every AP wire `Connect` packet.
 #
-# Item / location ID derivation below still keys off the raw `game_table`
-# fields ("SMO" / "archipelago") so changing this display name does NOT
-# shift IDs and is safe for in-flight seeds (item IDs are stable).
+# Item / location ID derivation below keys off the raw `game_table` fields
+# ("SMO" / "archipelago") so changing this display name does NOT shift IDs
+# and is safe for in-flight seeds (item IDs are stable).
 game_name = "Spicy Meatball Overdrive"
 filler_item_name = game_table["filler_item_name"] if "filler_item_name" in game_table else "Filler"
 starting_items = game_table["starting_items"] if "starting_items" in game_table else None
@@ -21,7 +18,7 @@ starting_items = game_table["starting_items"] if "starting_items" in game_table 
 # - It's assumed that the first two characters of a game and the last character *should* be fairly unique, but we use the remaining characters anyways to move the pool
 # - The player name is meant to be a small differentiator, so we just apply a flat multiplier for that
 
-# 100m + 70m + 10m, which should put all Manual games comfortably in the billions
+# 100m + 70m + 10m, which should put the pool comfortably in the billions
 starting_index = (ord(game_table["game"][:1]) * 100000000) + \
     (ord(game_table["game"][1:2]) * 70000000) + \
     (ord(game_table["game"][-1:]) * 10000000)

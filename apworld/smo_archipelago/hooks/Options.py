@@ -7,7 +7,7 @@ from ..Helpers import is_option_enabled, get_option_value
 
 
 ####################################################################
-# NOTE: At the time that options are created, Manual has no concept of the multiworld or its own world.
+# NOTE: At the time that options are created, the world has no concept of the multiworld or its own world.
 #       Options are defined before the world is even created.
 #
 # Example of creating your own option:
@@ -137,7 +137,7 @@ class Capturesanity(Toggle):
     item — capturing an enemy you haven't unlocked yanks Mario back out and grants no credit."""
     display_name = "Capturesanity"
 
-# This is called before any manual options are defined, in case you want to define your own with a clean slate or let Manual define over them
+# This is called before any options are defined, in case you want to define your own with a clean slate
 def before_options_defined(options: dict) -> dict:
     options["capturesanity"] = Capturesanity
     # Per-kingdom Peace toggles
@@ -162,6 +162,6 @@ def before_options_defined(options: dict) -> dict:
     options["include_precision_capture_moons"] = IncludePrecisionCaptureMoons
     return options
 
-# This is called after any manual options are defined, in case you want to see what options are defined or want to modify the defined options
+# This is called after any options are defined, in case you want to see what options are defined or want to modify the defined options
 def after_options_defined(options: dict) -> dict:
     return options

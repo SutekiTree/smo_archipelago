@@ -1,7 +1,9 @@
 from BaseClasses import Location
 from .Data import location_table
-from .Game import starting_index
+from .Game import game_name, starting_index
 from .hooks.Locations import before_location_table_processed
+
+ROOT_REGION = "SMO"
 
 location_table = before_location_table_processed(location_table)
 
@@ -20,7 +22,7 @@ for key, _ in enumerate(location_table):
     location_table[key]["id"] = count
 
     if not "region" in location_table[key]:
-        location_table[key]["region"] = "Manual" # all locations are in the same region for Manual
+        location_table[key]["region"] = ROOT_REGION
 
     count += 1
 
@@ -28,12 +30,12 @@ if not victory_names:
     # Add the game completion location, which will have the Victory item assigned to it automatically
     location_table.append({
         "id": count + 1,
-        "name": "__Manual Game Complete__",
-        "region": "Manual",
+        "name": "__Game Complete__",
+        "region": ROOT_REGION,
         "requires": []
         # "category": custom_victory_location["category"] if "category" in custom_victory_location else []
     })
-    victory_names.append("__Manual Game Complete__")
+    victory_names.append("__Game Complete__")
 
 location_id_to_name: dict[int, str] = {}
 location_name_to_location: dict[str, dict] = {}
@@ -49,7 +51,6 @@ for item in location_table:
         location_name_groups[c].append(item["name"])
 
 
-# location_id_to_name[None] = "__Manual Game Complete__"
 location_name_to_id = {name: id for id, name in location_id_to_name.items()}
 
 ######################
@@ -57,5 +58,5 @@ location_name_to_id = {name: id for id, name in location_id_to_name.items()}
 ######################
 
 
-class ManualLocation(Location):
-    game = "Manual"
+class SMOLocation(Location):
+    game = game_name

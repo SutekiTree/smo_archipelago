@@ -74,8 +74,8 @@ def test_launch_subprocess_not_imported(smo_mod) -> None:
 @pytest.fixture
 def spy(smo_mod) -> list:
     """Replace `launch_or_subprocess` with a recorder. The bare
-    `launch_subprocess` import was removed in the .apmanual cleanup
-    (v0.1.x) — `test_launch_subprocess_not_imported` is the regression
+    `launch_subprocess` import was removed during the v0.1.x Launcher
+    cleanup — `test_launch_subprocess_not_imported` is the regression
     test that keeps it out."""
     via_launch: list[tuple] = []
 

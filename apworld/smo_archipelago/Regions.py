@@ -1,7 +1,7 @@
 from BaseClasses import Entrance, MultiWorld, Region
 from .Helpers import is_category_enabled, is_location_enabled
 from .Data import region_table
-from .Locations import ManualLocation, location_name_to_location
+from .Locations import ROOT_REGION, SMOLocation, location_name_to_location
 from worlds.AutoWorld import World
 from .hooks.Regions import before_region_table_processed
 
@@ -12,9 +12,10 @@ regionMap = { **region_table }
 starting_regions = [ name for name in regionMap if "starting" in regionMap[name].keys() and regionMap[name]["starting"] ]
 
 if len(starting_regions) == 0:
-    starting_regions = region_table.keys() # the Manual region connects to all user-defined regions automatically if you specify no starting regions
+    # If no region is flagged "starting", every user-defined region hangs off the root.
+    starting_regions = region_table.keys()
 
-regionMap["Manual"] = {
+regionMap[ROOT_REGION] = {
     "requires": [],
     "connects_to": starting_regions
 }
@@ -42,10 +43,10 @@ def create_regions(world: World, multiworld: MultiWorld, player: int):
         new_region = create_region(world, multiworld, player, region, locations, exit_array)
         multiworld.regions += [new_region]
 
-    menu = create_region(world, multiworld, player, "Menu", None, ["Manual"])
+    menu = create_region(world, multiworld, player, "Menu", None, [ROOT_REGION])
     multiworld.regions += [menu]
-    menuConn = multiworld.get_entrance("MenuToManual", player)
-    menuConn.connect(multiworld.get_region("Manual", player))
+    menuConn = multiworld.get_entrance(getConnectionName("Menu", ROOT_REGION), player)
+    menuConn.connect(multiworld.get_region(ROOT_REGION, player))
 
     # Link regions together
     for region in regionMap:
@@ -60,7 +61,7 @@ def create_region(world: World, multiworld: MultiWorld, player: int, name: str, 
     if locations:
         for location in locations:
             loc_id = world.location_name_to_id.get(location, 0)
-            locationObj = ManualLocation(player, location, loc_id, ret)
+            locationObj = SMOLocation(player, location, loc_id, ret)
             if location_name_to_location[location].get('prehint'):
                 world.options.start_location_hints.value.add(location)
             ret.locations.append(locationObj)

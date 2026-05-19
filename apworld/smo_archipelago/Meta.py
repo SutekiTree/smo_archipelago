@@ -6,10 +6,10 @@ from .Data import meta_table
 ##############
 # Meta Classes
 ##############
-class ManualWeb(WebWorld):
+class SMOWeb(WebWorld):
     tutorials = [Tutorial(
         "Multiworld Setup Guide",
-        "A guide to setting up manual game integration for Archipelago multiworld games.",
+        "A guide to setting up Super Mario Odyssey for Archipelago multiworld games.",
         "English",
         "setup_en.md",
         "setup/en",
@@ -51,7 +51,7 @@ def set_world_webworld(web: WebWorld) -> WebWorld:
                 # Converting json to Tutorials
                 tutorials.append(Tutorial(
                     tutorial.get("name", "Multiworld Setup Guide"),
-                    tutorial.get("description", "A guide to setting up manual game integration for Archipelago multiworld games."),
+                    tutorial.get("description", "A guide to setting up Super Mario Odyssey for Archipelago multiworld games."),
                     tutorial.get("language", "English"),
                     tutorial.get("file_name", "setup_en.md"),
                     tutorial.get("link", "setup/en"),
@@ -64,11 +64,10 @@ def set_world_webworld(web: WebWorld) -> WebWorld:
 # Meta Properties
 #################
 world_description: str = set_world_description("""
-    Manual games allow you to set custom check locations and custom item names that will be rolled into a multiworld.
-    This allows any variety of game -- PC, console, board games, Microsoft Word memes... really anything -- to be part of a multiworld randomizer.
-    The key component to including these games is some level of manual restriction. Since the items are not actually withheld from the player,
-    the player must manually refrain from using these gathered items until the tracker shows that they have been acquired or sent.
+    Spicy Meatball Overdrive is the Archipelago world for Super Mario Odyssey on a modded Nintendo Switch.
+    An in-game module detects moons / captures / scenario events automatically, applies received AP items live,
+    and enforces capture locks until the AP item is received.
     """)
-world_webworld: ManualWeb = set_world_webworld(ManualWeb())
+world_webworld: SMOWeb = set_world_webworld(SMOWeb())
 
 enable_region_diagram = bool(meta_table.get("enable_region_diagram", False))

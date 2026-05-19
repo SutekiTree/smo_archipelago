@@ -60,7 +60,7 @@ try:
     # gui.py imports kvui at module top. kvui asserts kivy isn't loaded
     # yet, so this import MUST happen before any direct `kivy.*` pull
     # (including pytest.importorskip("kivy"), which would load kivy and
-    # trip the assert). If kvui/kivy/Manual deps aren't present, skip.
+    # trip the assert). If kvui/kivy deps aren't present, skip.
     from client.gui import _bind_switch_pill_layout
 except Exception as exc:  # pragma: no cover — env-dependent
     pytest.skip(f"client.gui unavailable: {exc}", allow_module_level=True)

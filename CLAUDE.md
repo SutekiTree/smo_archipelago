@@ -10,7 +10,7 @@ This file is a fast-load brief for picking up the **Spicy Meatball Overdrive** p
 | In-repo source folder | `apworld/smo_archipelago/` | Kept verbose to avoid churning every dev-workflow path reference; only the deployed artifact uses `smo` |
 | Switch mod CMake project | `smo_archipelago` | Unrelated to the apworld; lives in `switch-mod/CMakeLists.txt` |
 
-All four "smo" spellings parse as **S**picy **M**eatball **O**verdrive. The 2026-05-16 rename pass dropped the `Manual_SMO_archipelago` AP identifier (Manual-framework prefix was redundant once we shipped a real client) and shortened the deployed zip to `smo.apworld` (the `_archipelago` suffix was redundant when the parent dir is literally `custom_worlds/`). Read this file first, then `docs/architecture.md` and the plan file at `C:\Users\maxwe\.claude\plans\after-much-work-i-tender-thompson.md`.
+All four "smo" spellings parse as **S**picy **M**eatball **O**verdrive. The 2026-05-16 rename pass dropped a prior framework-derived `<framework>_SMO_archipelago` AP identifier (we ship a real client with in-game enforcement) and shortened the deployed zip to `smo.apworld` (the `_archipelago` suffix was redundant when the parent dir is literally `custom_worlds/`). Read this file first, then `docs/architecture.md` and the plan file at `C:\Users\maxwe\.claude\plans\after-much-work-i-tender-thompson.md`.
 
 ## ⚠️ CRITICAL: Never commit Nintendo IP
 
@@ -27,7 +27,7 @@ This repository is open-source and built on a careful line: **functional identif
 - Any moon-name list, capture list, or stage list of more than ~5 entries pasted into a doc, comment, or commit message as illustrative content — bulk transcription is the same exposure as the file.
 
 **Generally OK (already in the repo, established by upstream forks):**
-- `apworld/smo_archipelago/data/locations.json` and `items.json` — the community-curated location and capture names (~479 locations + 42 captures after the shop / outfit / trap / Bowser-softlock purges; `grep -c '"name"'` for the current count). Forked from the public [empathy-mp3/SMO-manual-AP](https://github.com/empathy-mp3/SMO-manual-AP) Manual world. Edits are fine; bulk additions from a romfs dump are not — alignment with Nintendo's MSBT should happen one mismatch at a time, not as a wholesale copy.
+- `apworld/smo_archipelago/data/locations.json` and `items.json` — the community-curated location and capture names (~479 locations + 42 captures after the shop / outfit / trap / Bowser-softlock purges; `grep -c '"name"'` for the current count). Forked from the public [empathy-mp3/SMO-manual-AP](https://github.com/empathy-mp3/SMO-manual-AP) upstream. Edits are fine; bulk additions from a romfs dump are not — alignment with Nintendo's MSBT should happen one mismatch at a time, not as a wholesale copy.
 - Functional identifiers like `WaterfallWorldHomeStage`, `obj214`, `ScenarioName_<ObjId>`, `ShineList`, kingdom internal names (`CapWorld`/`SkyWorld`/etc.). These appear in every public SMO modding project (lunakit, MoonFlow, OdysseyDecomp) and are functional, not expressive.
 - The one M5.7 anchor entry (`"Our First Power Moon"`) appears in CLAUDE.md, the test suite, and docs as a known ground-truth datapoint. One name as a verifiable test fixture is fine; a list of names is not.
 
@@ -37,7 +37,7 @@ This repository is open-source and built on a careful line: **functional identif
 
 ## What we're building
 
-A real Archipelago client for **Super Mario Odyssey on a modded Switch (FW 21.2, native SMO 1.0.0 install, Atmosphere CFW)**. Replaces the existing Manual checklist client ([empathy-mp3/SMO-manual-AP](https://github.com/empathy-mp3/SMO-manual-AP)) — an honor-system tick-the-boxes app — with an in-game module that detects moons/captures/scenario events automatically, applies received items live, and enforces capture locks until the AP item arrives.
+A real Archipelago client for **Super Mario Odyssey on a modded Switch (FW 21.2, native SMO 1.0.0 install, Atmosphere CFW)**. Builds on the data layout from [empathy-mp3/SMO-manual-AP](https://github.com/empathy-mp3/SMO-manual-AP) (an earlier honor-system, tick-the-boxes-by-hand world) with an in-game module that detects moons/captures/scenario events automatically, applies received items live, and enforces capture locks until the AP item arrives.
 
 ### Architecture (two tiers)
 
@@ -59,12 +59,12 @@ The client owns AP-protocol complexity (websocket + deflate + TLS + reconnect, a
 |---|---|
 | **PC bridge, not direct Switch→AP** | websocket+deflate+TLS+reconnect on Switch is months of work; bridge solves it in ~hundred lines via `CommonContext` |
 | **Archipelago as git submodule, not pip install or vendored copy** | Their `setup.py` blocks pip; copying ~15 transitive files would drift fast. Submodule under `vendor/Archipelago/` is drift-proof and also enables seed generation in the same checkout |
-| **Forked apworld, not vendored unchanged** | M8 will add automation-only features (deathlink, traps, hint system, progressive moon gating) the Manual world can't enforce |
+| **Forked apworld, not vendored unchanged** | M8 will add automation-only features (deathlink, traps, hint system, progressive moon gating) the upstream honor-system world can't enforce |
 | **Web tracker priority, in-game ImGui later** | User preference. Web tracker (M5) ships before in-game tracker (M8) |
 | **LunaKit as soft dep (link headers), not fork** | LunaKit churns fast; submodule lets us pin without inheriting their bugs |
 | **Target SMO 1.0.0** | Canonical version every public mod (lunakit, smo-online, smo-practice, OdysseyDecomp) targets. User has a native 1.0.0 install on a downgraded FW 21.2 Switch |
 | **Bit-index capture table generated from apworld** | `scripts/sync_capture_table.py` regenerates `switch-mod/src/ap/capture_table.h` from `data/items.json` so Switch and bridge can't drift on cap-name → bit-index assignment |
-| **Game name `Spicy Meatball Overdrive`, zip `smo.apworld`** | Renamed 2026-05-16. AP-protocol name dropped the Manual-framework `Manual_SMO_archipelago` prefix (we ship a real client now, not a Manual world). Deployed zip shortened from `smo_archipelago.apworld` to `smo.apworld` — Archipelago derives the module name from the zip stem, so the world imports as `worlds.smo` and the host.yaml settings key is `smo_options`. The in-repo source folder stayed `apworld/smo_archipelago/` to avoid churning every dev-workflow path reference; see the identifier table in the preamble |
+| **Game name `Spicy Meatball Overdrive`, zip `smo.apworld`** | Renamed 2026-05-16. AP-protocol name dropped a prior framework-derived prefix (we ship a real client with in-game enforcement). Deployed zip shortened from `smo_archipelago.apworld` to `smo.apworld` — Archipelago derives the module name from the zip stem, so the world imports as `worlds.smo` and the host.yaml settings key is `smo_options`. The in-repo source folder stayed `apworld/smo_archipelago/` to avoid churning every dev-workflow path reference; see the identifier table in the preamble |
 | **Two-stage connect gate (SNI-style)** | SMOClient never auto-dials AP on launch. Clicking Connect (or `/connect` / `--connect`) parks the request until the Switch HELLOs; `SMOContext.connect()` overrides `CommonContext.connect` to dial AP from the Switch-ready callback. State tracked as `disconnected → waiting_for_switch → connected`. Mirrors SNIClient (user-cited gold standard); pre-fix, the default `archipelago.gg` host produced "Connection refused" the moment the user opened the Launcher button. Any new AP-dial path (auto-reconnect, scripted launch) must route through `SMOContext.connect()` — never `asyncio.create_task(server_loop(ctx))` directly. `disconnect()` clears the pending state so a stale dial doesn't fire on the next Switch reconnect. Tests: `apworld/smo_archipelago/tests/test_connect_gate.py` |
 
 ## Status
@@ -87,12 +87,12 @@ C:\Users\maxwe\Documents\smo_archipelago\
   .gitignore                     Note: third_party/ ignored; vendor/ tracked
   .gitmodules                    Submodules (vendor/Archipelago, lunakit-vendor)
   .claude/skills/                Project skills (smo-build, smo-loopback-test, ...)
-  apworld/smo_archipelago/       Forked manual_smo_mp3 → smo_archipelago apworld + client
+  apworld/smo_archipelago/       The apworld + Python client
     __init__.py                  World class + SMOSettings + "SMO Client" Component reg
     data/                        categories.json / game.json / items.json /
                                  locations.json / meta.json / regions.json
-    hooks/                       Manual-framework hook surfaces (Rules, Options, World, ...)
-    Data.py, Game.py, ...        Manual framework boilerplate
+    hooks/                       Generation hook surfaces (Rules, Options, World, ...)
+    Data.py, Game.py, ...        World boilerplate (item/location/region tables, etc.)
     _setup/                      One-download setup wizard (Kivy) — first-time toolchain +
                                  deploy + extract, surfaces in Archipelago Launcher.
     client/                      Python client (replaces the old standalone `bridge/`)
