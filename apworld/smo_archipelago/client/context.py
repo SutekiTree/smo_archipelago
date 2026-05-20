@@ -47,6 +47,19 @@ log = logging.getLogger(__name__)
 GAME_NAME = "Spicy Meatball Overdrive"
 
 
+# Mirror of the apworld's SMOWorld.GOAL_TO_VICTORY (defined in
+# apworld/smo_archipelago/__init__.py). Used by `_handle_ap_package`
+# (Connected) to derive the location name whose check should fire
+# ClientGoal. Festival mode: the festival moon is a real in-game
+# collectible but its AP address is nulled, so we tee report_goal off
+# report_check on this name. Mushroom mode: there's no in-game moon
+# for "Arrive in the Mushroom Kingdom" — leave entry out so the Switch's
+# credits hook stays the sole producer.
+_GOAL_LOC_BY_OPTION: dict[int, str] = {
+    1: "Metro: A Traditional Festival!",  # Goal.option_festival
+}
+
+
 class SMOClientCommandProcessor(ClientCommandProcessor):
     """`/`-prefixed commands typed into the Kivy command bar.
 
@@ -228,6 +241,16 @@ class SMOContext(CommonContext):
         # from re-firing on every Switch reconnect. AP server is idempotent
         # on ClientGoal anyway — this just keeps logs clean.
         self._goal_reported: bool = False
+        # Name of the location whose check should trigger goal. Set on
+        # Connected from slot_data["goal"] via GOAL_LOC_BY_OPTION. None
+        # means goal is fired exclusively by the Switch's `goal` wire
+        # message (mushroom mode: there's no real in-game moon for
+        # "Arrive in the Mushroom Kingdom", the credits hook fires it).
+        # Festival mode: the festival moon IS a real check, but the
+        # apworld nulls its `address` so AP-server-side goal detection
+        # via location check doesn't fire — the bridge tees a
+        # report_goal() off report_check() instead.
+        self._goal_location_name: str | None = None
 
     # ----------------------------------------------------------- AP overrides
 
@@ -625,6 +648,15 @@ class SMOContext(CommonContext):
                 # stored_data, which is); read it straight off the
                 # Connected args dict.
                 slot_data = args.get("slot_data") or {}
+                # Goal-trigger location: when the apworld's victory location
+                # is a real in-game moon (festival% mode), checking it on
+                # the Switch should fire ClientGoal. The apworld nulls the
+                # location's AP address so an AP-server-side detector won't
+                # fire — handle it bridge-side instead. Mushroom mode has
+                # no in-game moon to collect; the Switch's credits hook
+                # fires the goal via its own wire message.
+                self._goal_location_name = _GOAL_LOC_BY_OPTION.get(
+                    slot_data.get("goal"))
                 capturesanity = bool(slot_data.get("capturesanity", 0))
                 self.capturesanity_enabled = capturesanity
                 self.switch.set_capturesanity_enabled(capturesanity)
@@ -857,6 +889,12 @@ class SMOContext(CommonContext):
         log.info("forwarding LocationCheck %r (id=%d) to AP", loc_name, loc_id)
         await self.send_msgs([{"cmd": "LocationChecks", "locations": [loc_id]}])
         self.locations_checked.add(loc_id)
+        # If this check IS the goal trigger (festival mode), fire ClientGoal
+        # too — AP server-side detection can't run because the apworld nulls
+        # the victory location's address, so the loc_id we just sent isn't
+        # in our slot's missing_locations and the server won't follow up.
+        if self._goal_location_name is not None and loc_name == self._goal_location_name:
+            await self.report_goal()
         return loc_id
 
     def compose_moon_label_for_location(self, loc_id: int) -> str | None:

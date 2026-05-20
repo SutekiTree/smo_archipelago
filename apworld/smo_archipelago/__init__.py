@@ -40,6 +40,14 @@ from .hooks.World import \
     before_fill_slot_data, after_fill_slot_data, before_write_spoiler
 from .hooks.Data import hook_interpret_slot_data
 
+import re as _re
+
+# Matches a MetroPeace() rule call in a `requires` string. Word boundary
+# prevents a hypothetical future MetroPeaceful() rule from false-matching;
+# the open paren ensures we're matching a call, not the bare word.
+_METRO_PEACE_CALL_RE = _re.compile(r"\bMetroPeace\s*\(")
+
+
 def _needs_metro_peace(loc_data: dict) -> bool:
     """True if this location is only collectable after Metro Peace.
 
@@ -52,7 +60,7 @@ def _needs_metro_peace(loc_data: dict) -> bool:
     if "Metro Peace" in loc_data.get("category", []):
         return True
     requires = loc_data.get("requires", "")
-    return isinstance(requires, str) and "MetroPeace" in requires
+    return isinstance(requires, str) and bool(_METRO_PEACE_CALL_RE.search(requires))
 
 
 class SMOSettings(settings.Group):

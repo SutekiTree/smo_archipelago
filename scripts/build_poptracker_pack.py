@@ -524,6 +524,12 @@ FESTIVAL_REGIONS_HIDDEN = frozenset({
 })
 
 
+# Matches a MetroPeace() rule call in a `requires` string. Word boundary
+# prevents a hypothetical future MetroPeaceful() rule from false-matching;
+# the open paren ensures we're matching a call, not the bare word.
+_METRO_PEACE_CALL_RE = re.compile(r"\bMetroPeace\s*\(")
+
+
 def _needs_metro_peace(loc: dict) -> bool:
     """True if this Metro/Night Metro location is only reachable after
     Metro Peace (the post-festival "kingdom calmed" state). Mirrors
@@ -533,7 +539,7 @@ def _needs_metro_peace(loc: dict) -> bool:
     if "Metro Peace" in loc.get("category", []):
         return True
     requires = loc.get("requires", "")
-    return isinstance(requires, str) and "MetroPeace" in requires
+    return isinstance(requires, str) and bool(_METRO_PEACE_CALL_RE.search(requires))
 
 # Goal-option-value → victory-location-name. Mirror of the apworld's
 # SMOWorld.GOAL_TO_VICTORY in __init__.py — values come from the static
@@ -1177,6 +1183,17 @@ def self_test() -> int:
           location_out_of_festival_scope(
               {"name": "Metro: Sewer Treasure", "region": "Metro Kingdom",
                "category": ["Metro Kingdom"], "requires": "{MetroPeace()}"}))
+    # regex must require a CALL (open paren) and word boundary — guards
+    # against a hypothetical future MetroPeaceful()/PostMetroPeace()/etc.
+    check("festival does NOT false-match MetroPeaceful",
+          not _needs_metro_peace(
+              {"category": [], "requires": "{MetroPeaceful()}"}))
+    check("festival does NOT false-match PreMetroPeace string",
+          not _needs_metro_peace(
+              {"category": [], "requires": "PreMetroPeacefully"}))
+    check("festival matches MetroPeace with whitespace",
+          _needs_metro_peace(
+              {"category": [], "requires": "{MetroPeace ()}"}))
     # festival% scope: pre-Metro untouched
     check("festival keeps Cascade",
           not location_out_of_festival_scope(

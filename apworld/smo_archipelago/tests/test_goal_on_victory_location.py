@@ -155,3 +155,64 @@ async def test_report_check_does_not_fire_goal(tmp_path: Path):
     cmds = [m["cmd"] for m in sent]
     assert cmds == ["LocationChecks"]
     assert ctx._goal_reported is False
+
+
+def _shine_map_with_festival(tmp_path: Path) -> ShineMap:
+    """Shine map that resolves to the festival victory moon."""
+    p = tmp_path / "shine_map.json"
+    p.write_text(json.dumps([{
+        "stage_name": "CityWorldHomeStage",
+        "object_id": "MoonFestival",
+        "kingdom": "Metro",
+        "shine_id": "A Traditional Festival!",
+    }]), encoding="utf-8")
+    return ShineMap(p)
+
+
+@pytest.mark.asyncio
+async def test_report_check_fires_goal_for_festival_victory(tmp_path: Path):
+    """Festival mode: collecting the festival moon must fire ClientGoal.
+    AP server-side detection doesn't run (apworld nulls the victory
+    location's address), so the bridge tees report_goal off report_check."""
+    ctx = _make_ctx(_shine_map_with_festival(tmp_path))
+    # Simulate the Connected handler having read slot_data.goal == 1.
+    ctx._goal_location_name = "Metro: A Traditional Festival!"
+    sent = _install_send_capture(ctx)
+
+    ctx.dp.location_name_to_id["Metro: A Traditional Festival!"] = 70001
+    ctx.dp.location_id_to_name[70001] = "Metro: A Traditional Festival!"
+
+    await ctx.report_check(
+        kind="moon",
+        stage_name="CityWorldHomeStage",
+        object_id="MoonFestival",
+    )
+
+    cmds = [m["cmd"] for m in sent]
+    assert cmds == ["LocationChecks", "StatusUpdate"]
+    assert sent[1]["status"] == 30  # ClientStatus.CLIENT_GOAL
+    assert ctx._goal_reported is True
+
+
+@pytest.mark.asyncio
+async def test_report_check_does_not_fire_goal_in_mushroom_mode(tmp_path: Path):
+    """Mushroom mode: collecting the festival moon (a real in-game moon
+    that happens to exist server-side too) must NOT fire goal — the
+    credits hook is the sole producer in that mode."""
+    ctx = _make_ctx(_shine_map_with_festival(tmp_path))
+    # Mushroom mode: no goal-trigger location on the bridge.
+    assert ctx._goal_location_name is None
+    sent = _install_send_capture(ctx)
+
+    ctx.dp.location_name_to_id["Metro: A Traditional Festival!"] = 70001
+    ctx.dp.location_id_to_name[70001] = "Metro: A Traditional Festival!"
+
+    await ctx.report_check(
+        kind="moon",
+        stage_name="CityWorldHomeStage",
+        object_id="MoonFestival",
+    )
+
+    cmds = [m["cmd"] for m in sent]
+    assert cmds == ["LocationChecks"]
+    assert ctx._goal_reported is False
