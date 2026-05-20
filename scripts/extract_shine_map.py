@@ -95,12 +95,8 @@ def _bootstrap_and_reexec() -> None:
               file=sys.stderr, flush=True)
         # No --quiet: pip's "Collecting / Downloading / Installing" lines are
         # the only signal that anything is happening during the install.
-        # pycryptodome covers the title.keys-derivation fallback in
-        # extract_romfs (decrypt the .tik's titlekey block with titlekek_XX
-        # from prod.keys); cheap to install up front so the fallback works
-        # without a second pip round-trip mid-extract.
         subprocess.run(
-            [str(VENV_PY), "-m", "pip", "install", "oead", "pycryptodome"],
+            [str(VENV_PY), "-m", "pip", "install", "oead"],
             check=True,
         )
         print(f"[bootstrap] venv ready; relaunching under {VENV_PY}",
@@ -290,10 +286,18 @@ def _decode_msbt_text(raw: bytes, encoding_byte: int, endian: str) -> str:
 # hactool's "[WARN] Unable to match rights id to titlekey. Update title.keys?"
 # fires when the user has prod.keys but not title.keys — common, because
 # title.keys is per-game and most users never populate it. The NSP's .tik
-# file already contains the encrypted titlekey, and prod.keys has the
-# titlekek_XX needed to decrypt it; we derive the plaintext titlekey
-# ourselves and pass it via hactool's `--titlekey=` flag so we don't need
-# to touch the user's keys directory.
+# file already contains the encrypted titlekey block; we lift those 16 bytes
+# straight out of the .tik and pass them via hactool's `--titlekey=` flag,
+# which hactool decrypts internally with `titlekek_XX` from prod.keys.
+# This skips touching the user's `title.keys`.
+#
+# IMPORTANT: hactool's `--titlekey=` expects the *encrypted* titlekey
+# block, not the plaintext. hactool's NCA dump labels it "Titlekey
+# (Encrypted) (From CLI)" and then derives "Titlekey (Decrypted) (From
+# CLI)" itself. Earlier this code pre-decrypted with titlekek_XX before
+# passing the result to hactool, which then re-decrypted — producing
+# garbage and "Error: section N is corrupted!". Do not reintroduce a
+# pre-decrypt step here.
 #
 # Caveat: this only works for COMMON tickets (TitleKeyType=0). Personalized
 # tickets (TitleKeyType=1) bind the titlekey to the dumping console's eticket
@@ -356,31 +360,17 @@ def _read_ticket(tik_path: Path) -> tuple[bytes, bytes, int, int]:
     return rights_id, enc_key, titlekek_index, titlekey_type
 
 
-def _ensure_pycryptodome() -> None:
-    """Make `from Crypto.Cipher import AES` importable in the current venv.
-
-    pycryptodome is added to the venv bootstrap up top, but already-
-    bootstrapped venvs from before this code landed won't have it — install
-    on demand so the fallback heals itself silently.
-    """
-    try:
-        from Crypto.Cipher import AES  # noqa: F401
-        return
-    except ImportError:
-        pass
-    print("[bootstrap] installing pycryptodome (one-time, ~5s)",
-          file=sys.stderr, flush=True)
-    subprocess.run(
-        [sys.executable, "-m", "pip", "install", "pycryptodome"],
-        check=True,
-    )
-
-
 def _derive_title_key(tik_path: Path, keys_path: Path) -> tuple[str, str]:
-    """Return (rights_id_hex, titlekey_hex) by decrypting the .tik with prod.keys.
+    """Return (rights_id_hex, enc_titlekey_hex) — the encrypted titlekey
+    block lifted straight from the .tik, in the form hactool's `--titlekey=`
+    expects (it does the titlekek decryption itself).
+
+    We also check that `titlekek_XX` is present in prod.keys so we can fail
+    with an actionable message *before* hactool fails with a generic
+    "section corrupted" error; the value isn't otherwise used.
 
     Raises with an actionable message if the ticket is personalized or
-    prod.keys is missing the relevant titlekek_XX.
+    prod.keys is missing the relevant `titlekek_XX`.
     """
     rights_id, enc_key, key_gen, tk_type = _read_ticket(tik_path)
     if tk_type != 0:
@@ -402,10 +392,7 @@ def _derive_title_key(tik_path: Path, keys_path: Path) -> tuple[str, str]:
         raise RuntimeError(
             f"{titlekek_name} is {len(titlekek)} bytes in {keys_path}, expected 16"
         )
-    _ensure_pycryptodome()
-    from Crypto.Cipher import AES  # type: ignore
-    title_key = AES.new(titlekek, AES.MODE_ECB).decrypt(enc_key)
-    return rights_id.hex(), title_key.hex()
+    return rights_id.hex(), enc_key.hex()
 
 
 # -------- hactool: NSP -> RomFS -------------------------------------------
@@ -493,13 +480,13 @@ def extract_romfs(nsp: Path, keys: Path, hactool: Path, romfs_dir: Path) -> None
     tiks = sorted(pfs0_dir.glob("*.tik"))
     if tiks:
         try:
-            rights_id_hex, title_key_hex = _derive_title_key(tiks[0], keys)
+            rights_id_hex, enc_titlekey_hex = _derive_title_key(tiks[0], keys)
             print(
-                f"[titlekey] derived title key for rights id {rights_id_hex} "
-                f"from {tiks[0].name}",
+                f"[titlekey] lifted encrypted title key for rights id {rights_id_hex} "
+                f"from {tiks[0].name}; hactool will decrypt with titlekek",
                 file=sys.stderr, flush=True,
             )
-            titlekey_args = [f"--titlekey={title_key_hex}"]
+            titlekey_args = [f"--titlekey={enc_titlekey_hex}"]
         except Exception as e:
             # Don't fail hard yet — fall through to the NCA call and let
             # _run_hactool's WARN/Error detection surface the diagnostic.
