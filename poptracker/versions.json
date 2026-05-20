@@ -1,6 +1,22 @@
 {
   "versions": [
     {
+      "package_version": "0.1.20-alpha",
+      "download_url": "https://github.com/mdietz94/smo_archipelago/releases/download/v0.1.20-alpha/smo-poptracker-v0.1.20-alpha.zip",
+      "sha256": "ab1055b5fa516fbfea46a0b7603b10561aa4a03906c3ebe1a1fa0fe5831e4da8",
+      "changelog": [
+        "fix: stop double-decrypting titlekey before passing to hactool",
+        "Restore docs/milestones.md to pre-research state",
+        "Remove 2D research doc \u2014 defer to follow-up session",
+        "PopTracker auto-update: add v0.1.19-alpha to versions.json",
+        "Strip Phase-3 diagnostic logging from ShineAppearanceHook",
+        "Translate Shine list-index to BYML UniqueId before palette lookup",
+        "Recolor 2D ShineDot moons via X19 (parent Shine) instead of X0",
+        "Note kingdom shines load on landing for 2D-moon verification",
+        "Document Phase 1 research for 2D moon recoloring"
+      ]
+    },
+    {
       "package_version": "0.1.19-alpha",
       "download_url": "https://github.com/mdietz94/smo_archipelago/releases/download/v0.1.19-alpha/smo-poptracker-v0.1.19-alpha.zip",
       "sha256": "b716260a5eb3c8d68ba518e3d749712c7c634cdc0af2663a41ccf8220fa672e4",
