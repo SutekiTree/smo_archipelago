@@ -45,7 +45,13 @@ Decompresses the NSO segments (LZ4 block) and grep's the `.dynstr` table for the
 
 ## main.nso location
 
-User has SMO 1.0.0 NSP installed natively (no Atmosphere downgrade overlay). Local copies live at `C:\Users\maxwe\Downloads\SMO_1.0.0.nsp` and `C:\Users\maxwe\Downloads\main.nso` (15.4 MB extracted). **Never commit** — `.gitignore` covers `docs/main-*.nso` and the Downloads location is outside the repo.
+`main.nso` is **not** retained locally between sessions — it's copyrighted and `.gitignore`'d (`docs/main-*.nso`). If `check_nso_symbols.py` reports the file is missing, re-extract it from a local SMO 1.0.0 NSP (or XCI) dump:
+
+```pwsh
+python scripts\extract_shine_map.py --nsp <SMO 1.0.0 NSP>
+```
+
+The script's hactool flow drops the decrypted NCAs into `.romfs-cache/`; `main.nso` is the executable inside the program NCA. Point `check_nso_symbols.py` at that path once it's extracted. **Never commit** the result.
 
 ## Adding to the project
 

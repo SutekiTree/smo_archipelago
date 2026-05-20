@@ -175,7 +175,7 @@ C:\Users\maxwe\Documents\smo_archipelago\
 |---|---|
 | `C:\Users\maxwe\.switch\prod.keys` | Console keys (hactool default location). Also `dev.keys` |
 | `D:\switch\` | User's microSD — DO NOT write large files here, it's the actual SD card |
-| `C:\Users\maxwe\Downloads\SMO_1.0.0.nsp` + `main.nso` | Game dump (copyrighted — never commit) |
+| `<SMO 1.0.0 NSP>` | User-supplied game dump (copyrighted — never commit, path not stored in repo). `main.nso` is not retained locally; re-extract via `python scripts\extract_shine_map.py --nsp <SMO 1.0.0 NSP>` when needed (see `.claude/skills/smo-symbol-discovery/SKILL.md`). |
 | `C:\Users\maxwe\AppData\Roaming\Ryujinx\` | Ryujinx install + mods + logs |
 | `C:\Users\maxwe\Documents\ryujinx-1.3.3\` | Ryujinx executable |
 | `C:\Users\maxwe\.claude\plans\after-much-work-i-tender-thompson.md` | The authoritative plan (FW 21.2 + 1.0.0 simplification) |
