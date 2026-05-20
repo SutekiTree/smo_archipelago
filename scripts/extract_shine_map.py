@@ -25,7 +25,7 @@ Prereqs the user must have:
   - SMO 1.0.0 NSP **or** XCI file (override location with --nsp / --xci)
   - For XCI dumps: title.keys *alongside* prod.keys (i.e. derived from
     --keys's parent dir) with the SMO entry. Override the auto-derived
-    path with --titlekeys. NSPs ship their own .tik so this isn't needed.
+    path with --titlekey. NSPs ship their own .tik so this isn't needed.
 """
 from __future__ import annotations
 
@@ -431,14 +431,14 @@ def _run_hactool(
     # keeps showing the live hactool stream), and treat the WARN or any
     # "Error:" line as a hard failure.
     #
-    # `title_keys`: if given AND the file exists, pass `--titlekeys=` to
+    # `title_keys`: if given AND the file exists, pass `--titlekey=` to
     # hactool. Without this, hactool defaults the title-keys lookup to
     # `$HOME/.switch/title.keys` regardless of the `-k` path — surprising
     # for users who keep prod.keys elsewhere and reasonably expect their
     # title.keys to live next to it.
     cmd = [str(hactool), "--disablekeywarns", "-k", str(keys)]
     if title_keys is not None and title_keys.is_file():
-        cmd.append(f"--titlekeys={title_keys}")
+        cmd.append(f"--titlekey={title_keys}")
     cmd.extend(args)
     print(f"[hactool] {' '.join(cmd)}", file=sys.stderr, flush=True)
     proc = subprocess.Popen(
@@ -467,7 +467,7 @@ def _run_hactool(
             "(01000000000100000000000000000003). NSPs ship their own ticket so\n"
             "this typically only happens with XCI cartridge dumps. Update\n"
             f"title.keys at {expected} (derived from --keys; override with\n"
-            "--titlekeys) with the Super Mario Odyssey titlekey and rerun\n"
+            "--titlekey) with the Super Mario Odyssey titlekey and rerun\n"
             "the extract."
         )
     if error_lines:
@@ -834,7 +834,7 @@ def main(argv: list[str] | None = None) -> int:
                          "XCIs do not).")
     ap.add_argument("--keys", type=Path, default=DEFAULT_KEYS,
                     help=f"prod.keys (default: {DEFAULT_KEYS})")
-    ap.add_argument("--titlekeys", type=Path, default=None,
+    ap.add_argument("--titlekey", type=Path, default=None,
                     help="title.keys (default: derived from --keys's parent "
                          "dir as <keys-parent>/title.keys, matching hactool's "
                          "convention that prod.keys + title.keys live "
@@ -897,8 +897,8 @@ def main(argv: list[str] | None = None) -> int:
         # who relocate prod.keys typically expect title.keys to live too.
         # hactool itself defaults to $HOME/.switch/title.keys regardless
         # of -k, which silently breaks XCI decode when --keys points
-        # elsewhere; passing --titlekeys= explicitly closes that gap.
-        title_keys = args.titlekeys if args.titlekeys is not None \
+        # elsewhere; passing --titlekey= explicitly closes that gap.
+        title_keys = args.titlekey if args.titlekey is not None \
             else args.keys.parent / "title.keys"
         extract_romfs(dump_path, dump_kind, args.keys, hactool, args.romfs_cache,
                       title_keys=title_keys)
