@@ -216,3 +216,137 @@ def test_clean_extraction_returns_empty_result(extract_mod, tmp_path):
 
     assert result.section_corrupt_lines == []
     assert result.returncode == 0
+
+
+# -- --titlekey value MUST be a 32-char hex key, never a path --
+#
+# Regression guard. Hactool's `--titlekey=val` parses `val` via
+# `parse_hex_key(..., 16)` (16 raw bytes = 32 hex chars). A filesystem path
+# like `C:\Users\maxwe\.switch\title.keys` is not hex — hactool exits with
+# "Key must be hex!" before extraction starts. There's also no hactool flag
+# for overriding the title.keys file path (it only auto-loads from
+# `$HOME/.switch/title.keys`). An earlier version of `_run_hactool` happily
+# forwarded `--titlekey=<path>` when `title_keys=...` was passed, which
+# silently broke any XCI extract whose `title.keys` lived outside the
+# default location.
+
+
+def _capturing_popen_factory(seen_cmds: list[list[str]],
+                             stdout_lines: list[str], returncode: int = 0):
+    """Like _fake_popen but records each invocation's argv into `seen_cmds`."""
+    def _factory(cmd, *args, **kwargs):
+        seen_cmds.append(list(cmd))
+        m = MagicMock()
+        m.stdout = iter(stdout_lines)
+        m.wait.return_value = returncode
+        return m
+    return _factory
+
+
+def test_titlekey_arg_value_is_hex_not_path(extract_mod, tmp_path):
+    """`_run_hactool` must NEVER forward a filesystem path as the value of
+    `--titlekey=`. The `title_keys=` parameter is now metadata for error
+    messaging only; the actual `--titlekey=<hex>` arg (if any) is built by
+    the caller and threaded in via `*args`.
+    """
+    keys = tmp_path / "prod.keys"
+    keys.write_text("")
+    title_keys = tmp_path / "title.keys"
+    title_keys.write_text(
+        # SMO 1.0.0 rights id = encrypted titlekey (arbitrary value, just
+        # has to be 32 hex chars so anything that *does* look it up gets a
+        # parseable result).
+        "01000000000100000000000000000003=00112233445566778899aabbccddeeff\n",
+        encoding="utf-8",
+    )
+    hactool = tmp_path / "hactool.exe"
+    hactool.write_bytes(b"")
+
+    seen: list[list[str]] = []
+    with patch.object(extract_mod.subprocess, "Popen",
+                      side_effect=_capturing_popen_factory(
+                          seen, ["Done!\n"], returncode=0)):
+        extract_mod._run_hactool(
+            hactool, keys, "-t", "nca", title_keys=title_keys)
+
+    assert len(seen) == 1
+    cmd = seen[0]
+    # Hactool gets no --titlekey at all here — the caller supplied none.
+    titlekey_args = [a for a in cmd if a.startswith("--titlekey=")]
+    assert titlekey_args == [], (
+        f"_run_hactool must not forward title_keys path as --titlekey=, "
+        f"got: {titlekey_args!r}"
+    )
+    # Sanity: title_keys' string form must not appear anywhere in the argv
+    # (would catch any other accidental --titlekey-adjacent leak too).
+    assert str(title_keys) not in cmd, (
+        f"title_keys path leaked into hactool argv: {cmd!r}"
+    )
+
+
+def test_titlekey_arg_value_is_hex_when_caller_forwards_it(extract_mod, tmp_path):
+    """When the caller threads `--titlekey=<hex>` via *args (the .tik
+    derivation path), it survives intact — 32 hex chars, no path."""
+    keys = tmp_path / "prod.keys"
+    keys.write_text("")
+    hactool = tmp_path / "hactool.exe"
+    hactool.write_bytes(b"")
+    expected_hex = "00112233445566778899aabbccddeeff"
+
+    seen: list[list[str]] = []
+    with patch.object(extract_mod.subprocess, "Popen",
+                      side_effect=_capturing_popen_factory(
+                          seen, ["Done!\n"], returncode=0)):
+        extract_mod._run_hactool(
+            hactool, keys, "-t", "nca", f"--titlekey={expected_hex}")
+
+    assert len(seen) == 1
+    cmd = seen[0]
+    titlekey_args = [a for a in cmd if a.startswith("--titlekey=")]
+    assert titlekey_args == [f"--titlekey={expected_hex}"]
+    # The value is exactly 32 hex chars (what hactool's parse_hex_key wants).
+    value = titlekey_args[0].split("=", 1)[1]
+    assert len(value) == 32
+    assert all(c in "0123456789abcdefABCDEF" for c in value), (
+        f"--titlekey value is not hex: {value!r}"
+    )
+
+
+def test_lookup_title_key_returns_hex_for_present_entry(extract_mod, tmp_path):
+    """`_lookup_title_key` parses Switch title.keys files and returns the
+    encrypted titlekey as 32 lowercase hex chars — the form hactool wants."""
+    title_keys = tmp_path / "title.keys"
+    title_keys.write_text(
+        "01000000000100000000000000000003 = 00112233445566778899AABBCCDDEEFF\n"
+        "# unrelated comment line\n"
+        "0100000000010001000000000000000a = deadbeefdeadbeefdeadbeefdeadbeef\n",
+        encoding="utf-8",
+    )
+
+    got = extract_mod._lookup_title_key(
+        title_keys, "01000000000100000000000000000003")
+    assert got == "00112233445566778899aabbccddeeff"
+    assert len(got) == 32
+
+
+def test_lookup_title_key_returns_none_for_missing_entry(extract_mod, tmp_path):
+    """No matching rights ID → None (hactool's own title.keys auto-load gets
+    a chance, and if that also fails the WARN-detection branch surfaces the
+    actionable "Update title.keys" diagnostic)."""
+    title_keys = tmp_path / "title.keys"
+    title_keys.write_text(
+        "ffffffffffffffffffffffffffffffff=00112233445566778899aabbccddeeff\n",
+        encoding="utf-8",
+    )
+    got = extract_mod._lookup_title_key(
+        title_keys, "01000000000100000000000000000003")
+    assert got is None
+
+
+def test_lookup_title_key_returns_none_for_missing_file(extract_mod, tmp_path):
+    """Caller treats `None` as "fall through to hactool's auto-load" — must
+    not raise on a path that doesn't exist."""
+    got = extract_mod._lookup_title_key(
+        tmp_path / "does-not-exist.keys",
+        "01000000000100000000000000000003")
+    assert got is None

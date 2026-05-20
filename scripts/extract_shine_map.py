@@ -58,6 +58,12 @@ DEFAULT_CAP_REVIEW = REPO_ROOT / "bridge" / "smo_ap_bridge" / "data" / "capture_
 APWORLD_LOCATIONS = REPO_ROOT / "apworld" / "smo_archipelago" / "data" / "locations.json"
 APWORLD_ITEMS = REPO_ROOT / "apworld" / "smo_archipelago" / "data" / "items.json"
 
+# SMO 1.0.0's rights ID — the lookup key used in title.keys. Final byte (0x03)
+# is the NCA master key revision (FW 3.0.1-3.0.2 → titlekek_02). Stable across
+# every retail SMO 1.0.0 dump and shared by every public SMO modding project,
+# so hardcoding is safe.
+SMO_RIGHTS_ID = "01000000000100000000000000000003"
+
 
 # -------- self-bootstrap: ensure we're in the 3.12 venv with oead ----------
 
@@ -401,6 +407,32 @@ def _derive_title_key(tik_path: Path, keys_path: Path) -> tuple[str, str]:
     return rights_id.hex(), enc_key.hex()
 
 
+def _lookup_title_key(title_keys_path: Path, rights_id_hex: str) -> str | None:
+    """Look up an encrypted title key in a Switch `title.keys` file.
+
+    The file format (used by hactool's own `extkeys_parse_titlekeys`) is one
+    `<rights_id_hex>=<encrypted_titlekey_hex>` entry per line; 32 hex chars on
+    each side. Returns the encrypted titlekey as a 32-char lowercase hex
+    string — the form hactool's `--titlekey=<val>` flag expects — or `None`
+    if the file is missing/unreadable or has no entry for `rights_id_hex`.
+
+    We never pass the file path to `--titlekey=` directly: hactool parses
+    that arg via `parse_hex_key(..., 16)` (16 raw bytes = 32 hex chars) and
+    a path like `C:\\Users\\...\\title.keys` is not 32 hex chars, so hactool
+    rejects it with "Key must be hex!" and exits. Hactool has no CLI flag
+    for overriding the title.keys file path — it only auto-loads from
+    `$HOME/.switch/title.keys` (`%USERPROFILE%\\.switch\\title.keys` on
+    Windows). So if the user keeps title.keys elsewhere, the only way to
+    honor `--titlekey <path>` is to parse it ourselves and forward the
+    decrypted-by-titlekek-later titlekey hex on the command line.
+    """
+    keys = _parse_keys_file(title_keys_path)
+    enc = keys.get(rights_id_hex.lower())
+    if enc is None or len(enc) != 16:
+        return None
+    return enc.hex()
+
+
 # -------- hactool: NSP -> RomFS -------------------------------------------
 
 def resolve_hactool(arg: Path | None) -> Path:
@@ -450,14 +482,16 @@ def _run_hactool(
     # the one Error: line we let through — see `_HactoolResult` and
     # `extract_romfs` for the recovery flow.
     #
-    # `title_keys`: if given AND the file exists, pass `--titlekey=` to
-    # hactool. Without this, hactool defaults the title-keys lookup to
-    # `$HOME/.switch/title.keys` regardless of the `-k` path — surprising
-    # for users who keep prod.keys elsewhere and reasonably expect their
-    # title.keys to live next to it.
+    # `title_keys`: tracked only so the "Unable to match rights id" branch
+    # can name the file the user expected to be consulted. We deliberately do
+    # NOT forward the path as `--titlekey=<path>` — hactool's `--titlekey=`
+    # parses its value as 16 raw bytes of hex (`parse_hex_key(..., 16)`), so
+    # a filesystem path makes hactool exit with "Key must be hex!" before
+    # extraction starts. There's no hactool flag for overriding the
+    # title.keys file path (it only auto-loads `%USERPROFILE%\.switch\
+    # title.keys`); the caller forwards a custom path's contents by parsing
+    # `title.keys` itself and passing `--titlekey=<hex>` via *args.
     cmd = [str(hactool), "--disablekeywarns", "-k", str(keys)]
-    if title_keys is not None and title_keys.is_file():
-        cmd.append(f"--titlekey={title_keys}")
     cmd.extend(args)
     print(f"[hactool] {' '.join(cmd)}", file=sys.stderr, flush=True)
     proc = subprocess.Popen(
@@ -601,6 +635,27 @@ def extract_romfs(
                 "with the SMO entry)" if dump_kind == "xci" else "")
         print(f"[titlekey] no .tik in {work_dir}; falling back to title.keys{hint}",
               file=sys.stderr, flush=True)
+
+    # If .tik derivation didn't yield anything but the user supplied a
+    # title.keys file (or we defaulted to one next to prod.keys), parse it
+    # ourselves and forward the SMO entry as `--titlekey=<hex>`. Hactool's
+    # `--titlekey=` flag wants the encrypted-title-key bytes as hex, NOT a
+    # filesystem path — see `_lookup_title_key` for the full rationale.
+    # If the user's title.keys lives at hactool's default location and we
+    # find no entry, leave `titlekey_args` empty so hactool's own auto-load
+    # gets a chance (and, if it also fails, _run_hactool surfaces the
+    # actionable "Update title.keys" diagnostic).
+    if not titlekey_args and title_keys is not None and title_keys.is_file():
+        enc_hex = _lookup_title_key(title_keys, SMO_RIGHTS_ID)
+        if enc_hex is not None:
+            print(f"[titlekey] using {SMO_RIGHTS_ID} entry from {title_keys}; "
+                  f"hactool will decrypt with titlekek",
+                  file=sys.stderr, flush=True)
+            titlekey_args = [f"--titlekey={enc_hex}"]
+        else:
+            print(f"[titlekey] {title_keys} has no entry for {SMO_RIGHTS_ID}; "
+                  f"falling back to hactool's $HOME/.switch/title.keys lookup",
+                  file=sys.stderr, flush=True)
 
     ncas = sorted(work_dir.glob("*.nca"), key=lambda p: p.stat().st_size, reverse=True)
     if not ncas:
