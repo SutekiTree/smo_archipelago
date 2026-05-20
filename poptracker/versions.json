@@ -1,6 +1,14 @@
 {
   "versions": [
     {
+      "package_version": "0.1.23-alpha",
+      "download_url": "https://github.com/mdietz94/smo_archipelago/releases/download/v0.1.23-alpha/smo-poptracker-v0.1.23-alpha.zip",
+      "sha256": "3e62cee4774d106b84270813f55a523b940e21a0dc691e976043f56ea0e9ae66",
+      "changelog": [
+        "fix(extract): use hactool's singular --titlekey flag"
+      ]
+    },
+    {
       "package_version": "0.1.20-alpha",
       "download_url": "https://github.com/mdietz94/smo_archipelago/releases/download/v0.1.20-alpha/smo-poptracker-v0.1.20-alpha.zip",
       "sha256": "ab1055b5fa516fbfea46a0b7603b10561aa4a03906c3ebe1a1fa0fe5831e4da8",
