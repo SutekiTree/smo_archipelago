@@ -172,9 +172,12 @@ def test_unknown_error_still_exits(extract_mod, tmp_path):
     assert "failed to open file" in str(exc_info.value)
 
 
-def test_nonzero_returncode_still_exits(extract_mod, tmp_path):
+def test_nonzero_returncode_still_exits_with_actionable_message(extract_mod, tmp_path):
     """Even with no `Error:` lines in stdout, a non-zero exit code is fatal
-    — hactool crashed or aborted before completing.
+    — hactool crashed or aborted before completing. Common real-world cause:
+    a truncated PFS0 where hactool prints "Failed to read file!" and exits
+    non-zero without prefixing the line with "Error:". Surface the actionable
+    "re-dump" diagnostic so the user knows what to do.
     """
     keys = tmp_path / "prod.keys"
     keys.write_text("")
@@ -182,11 +185,14 @@ def test_nonzero_returncode_still_exits(extract_mod, tmp_path):
     hactool.write_bytes(b"")
 
     with patch.object(extract_mod.subprocess, "Popen",
-                      side_effect=_fake_popen([], returncode=2)):
+                      side_effect=_fake_popen(["Failed to read file!\n"], returncode=1)):
         with pytest.raises(SystemExit) as exc_info:
             extract_mod._run_hactool(hactool, keys, "-t", "nca")
 
-    assert "hactool exited 2" in str(exc_info.value)
+    msg = str(exc_info.value)
+    assert "exit code 1" in msg
+    assert "NXDumpTool" in msg  # actionable advice present
+    assert "Re-dump" in msg
 
 
 # -- happy path: no errors, returns clean result --

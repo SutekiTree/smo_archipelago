@@ -487,17 +487,33 @@ def _run_hactool(
         sys.exit(
             "ERROR: hactool could not decrypt the dump — your title.keys is\n"
             "missing the entry for SMO's rights ID\n"
-            "(01000000000100000000000000000003). NSPs ship their own ticket so\n"
-            "this typically only happens with XCI cartridge dumps. Update\n"
-            f"title.keys at {expected} (derived from --keys; override with\n"
-            "--titlekey) with the Super Mario Odyssey titlekey and rerun\n"
-            "the extract."
+            "(01000000000100000000000000000003). This happens when:\n"
+            "  - the dump is an XCI cartridge image (no ticket inside), OR\n"
+            "  - the dump is a 'stripped' NSP that was repacked without its\n"
+            "    .tik file (some scene releases / shrunk NSPs / certain\n"
+            "    XCI->NSP conversions do this).\n"
+            f"Populate title.keys at {expected} (derived from --keys;\n"
+            "override the path with --titlekey) with the SMO entry and\n"
+            "rerun the extract. NXDumpTool's 'common ticket' option\n"
+            "produces an NSP that carries the .tik directly."
         )
     if other_errors:
         joined = "\n  ".join(other_errors)
         sys.exit(f"ERROR: hactool reported failures while extracting:\n  {joined}")
     if rc != 0:
-        sys.exit(f"ERROR: hactool exited {rc}")
+        # hactool prints things like "Failed to read file!" before exiting
+        # non-zero on a truncated PFS0 entry — these aren't prefixed with
+        # "Error:" so they don't land in `other_errors`. The exit code tells
+        # us the run was unsuccessful regardless. Surface an actionable
+        # diagnostic so the user knows to re-dump rather than chase the
+        # generic exit code.
+        sys.exit(
+            f"ERROR: hactool failed (exit code {rc}). This usually means the\n"
+            "  dump is damaged, truncated, or has been modified (e.g. an\n"
+            "  incomplete download or an XCI→NSP conversion that broke the\n"
+            "  PFS0 layout). Re-dump SMO 1.0.0 with NXDumpTool from a clean\n"
+            "  retail source and rerun the extract."
+        )
     return _HactoolResult(section_corrupt_lines=section_corrupt, returncode=rc)
 
 
