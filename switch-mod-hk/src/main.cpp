@@ -146,13 +146,12 @@ extern "C" void hkMain() {
     SMOAP_LOG_INFO("resolving M6-phase-D getPayShineNum lookup");
     smoap::game::installPayShineSnapshotSymbol();
 
-    // BISECT phase 6: phase 5 crashed -> culprit in {Scenario, MoonGet,
-    // Death, SaveLoad}. Splitting in half: Scenario + MoonGet enabled,
-    // Death + SaveLoad disabled.
-    SMOAP_LOG_INFO("BISECT phase 6: Scenario + MoonGet only (Death + SaveLoad off)");
+    // BISECT phase 7: phase 6 stable -> culprit in {Death, SaveLoad}.
+    // Enabling Death alone; SaveLoad stays off.
+    SMOAP_LOG_INFO("BISECT phase 7: + Death (SaveLoad still off)");
     smoap::hooks::installScenarioFlagHook();
     smoap::hooks::installMoonGetHook();
-    // smoap::hooks::installDeathHook();
+    smoap::hooks::installDeathHook();
     smoap::hooks::installShineNumGetHook();
     smoap::hooks::installShineNumByWorldGetHook();
     smoap::game::installCaptureGrantSymbols();
