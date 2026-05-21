@@ -351,12 +351,15 @@ void ApClient::requestRehello() {
 }
 
 void ApClient::deferSaveLoadStatusBubble() {
-    save_load_announce_deadline_ms_.store(
-        ApState::nowMs() + kSaveLoadAnnounceWaitMs,
-        std::memory_order_relaxed);
-    SMOAP_LOG_INFO("[bubble] deferring save-load status announcement "
-                   "(wait %lldms for AP handshake to settle)",
-                   static_cast<long long>(kSaveLoadAnnounceWaitMs));
+    // BISECT phase 13: don't arm the deadline. Want to prove that the
+    // worker-thread enqueueSystem path (fired when the deadline expires)
+    // is the crash trigger, not the call to deferSaveLoadStatusBubble
+    // itself. If stable -> issue is worker calling CappyMessenger; fix is
+    // to move the enqueue to frame thread via a flag.
+    SMOAP_LOG_INFO("[bubble] deferSaveLoadStatusBubble NEUTERED (bisect)");
+    // save_load_announce_deadline_ms_.store(
+    //     ApState::nowMs() + kSaveLoadAnnounceWaitMs,
+    //     std::memory_order_relaxed);
 }
 
 void ApClient::threadMain() {

@@ -75,9 +75,11 @@ HkTrampoline<void, GameDataFile*> saveLoadHook =
                            drained);
         }
         st.save_was_loaded.store(true, std::memory_order_release);
-        // BISECT phase 12: requestRehello ON, deferSaveLoadStatusBubble OFF.
         smoap::ap::ApClient::instance().requestRehello();
-        // smoap::ap::ApClient::instance().deferSaveLoadStatusBubble();
+        // BISECT phase 13: defer call back on but the underlying impl is
+        // neutered (see ApClient::deferSaveLoadStatusBubble — atomic store
+        // commented out so worker never fires the deferred-bubble path).
+        smoap::ap::ApClient::instance().deferSaveLoadStatusBubble();
     });
 
 }  // namespace
