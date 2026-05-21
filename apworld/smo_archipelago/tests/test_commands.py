@@ -107,6 +107,12 @@ class _StubSwitch:
     async def push_talkatoo_pool(self) -> None:
         self.push_talkatoo_calls += 1
 
+    async def drain_pending_snapshot(self) -> None:
+        """M6 phase C reconcile path — Connected calls this. The real
+        SwitchServer drains snapshot entries buffered during the AP
+        handshake window; for unit tests there's nothing to drain."""
+        pass
+
 
 @pytest.mark.asyncio
 async def test_cmd_inject_deathlink_routes_killmsg_to_switch():
@@ -307,6 +313,73 @@ async def test_connected_handler_honors_slot_data_talkatoo_mode_on():
     # itself happened.
     assert kingdoms == {}
     assert sw.push_talkatoo_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_connected_handler_filters_progression_moons_from_talkatoo_pool():
+    """Gap #1: progression-flagged moons (Multi Moons, scenario bosses,
+    Seaside seals, Bowser's chain) MUST NOT appear in the per-kingdom
+    talkatoo_pool the bridge ships to the Switch.
+
+    Phase 4's MoonGetHook always lets these through via the
+    isProgressionShine bypass, so naming one in Talkatoo's bubble would
+    waste a hint slot. The DataPackage knows which locations carry the
+    flag (loaded from locations.json); _derive_and_push_talkatoo_pool
+    drops them before grouping by kingdom."""
+    ctx = SMOContext(
+        server_address=None, password=None,
+        state=BridgeState(),
+        datapackage=DataPackage(apworld_data_dir=_APWORLD_DATA),
+        shine_map=ShineMap(),
+        capture_map=CaptureMap(),
+    )
+    ctx.auth = "Mario"
+    sw = _StubSwitch()
+    ctx.switch = sw  # type: ignore[assignment]
+
+    # Wire synthetic loc_ids -> known names. The handler walks
+    # missing_locations + checked_locations through dp.location_id_to_name,
+    # so loc_id values don't have to match real AP ids — they just have
+    # to map onto the apworld's location names so classify_location +
+    # is_progression_location find them.
+    fixtures = {
+        # Progression: 2 Cascade entries (1 opener + 1 Multi Moon).
+        1001: "Cascade: Our First Power Moon",
+        1002: "Cascade: Multi Moon Atop the Falls",
+        # Progression: a Seaside seal + Bowser's chain entry.
+        1003: "Seaside: The Stone Pillar Seal",
+        1004: "Bowser's: Showdown at Bowser's Castle",
+        # Non-progression: regular Cascade moons. These MUST survive.
+        2001: "Cascade: Chomp Through the Rocks",
+        2002: "Cascade: Behind the Waterfall",
+        # Non-moon: capture entries are skipped earlier in the loop
+        # (classify_location returns CAPTURE, not MOON) — make sure
+        # they don't sneak in.
+        3001: "Capture: Goomba",
+    }
+    for loc_id, name in fixtures.items():
+        ctx.dp.location_id_to_name[loc_id] = name
+        ctx.dp.location_name_to_id[name] = loc_id
+    ctx.missing_locations = set(fixtures.keys())  # type: ignore[assignment]
+
+    await ctx._handle_ap_package("Connected", {
+        "slot_data": {"talkatoo_mode": 1},
+    })
+
+    assert len(sw.talkatoo_pool_calls) == 1
+    enabled, kingdoms = sw.talkatoo_pool_calls[0]
+    assert enabled is True
+    # Cascade kept ONLY the non-progression moons; the 2 progression
+    # entries (Our First Power Moon, Multi Moon Atop the Falls) are gone.
+    assert "Cascade" in kingdoms
+    cascade_pool = set(kingdoms["Cascade"])
+    assert cascade_pool == {"Chomp Through the Rocks", "Behind the Waterfall"}
+    # Seaside had ONLY a progression moon → kingdom absent from the pool.
+    assert "Seaside" not in kingdoms
+    # Bowser's likewise.
+    assert "Bowser's" not in kingdoms
+    # Capture didn't sneak in as a "kingdom" either.
+    assert "Capture" not in kingdoms
 
 
 @pytest.mark.asyncio

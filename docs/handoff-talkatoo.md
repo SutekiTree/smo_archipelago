@@ -20,7 +20,19 @@ the relevant gap section below.
 
 ## Gap #1 — Bridge-side filter of progression moons
 
-### What's wrong today
+**Status: closed 2026-05-21.** Implemented as a filter in
+[client/context.py](../apworld/smo_archipelago/client/context.py)'s
+`_derive_and_push_talkatoo_pool`, backed by a new
+`DataPackage.is_progression_location` query that loads the flag from
+locations.json on construction (both filesystem and zipped-package
+paths). Tests added in
+[test_datapackage.py](../apworld/smo_archipelago/tests/test_datapackage.py)
+(loader spot-check + degenerate fallbacks) and
+[test_commands.py](../apworld/smo_archipelago/tests/test_commands.py)
+(end-to-end Connected handler pushes a Cascade pool with the 2
+progression entries dropped and the 2 non-progression entries kept).
+
+### What was wrong
 
 The bridge ships every uncollected AP-pool moon to the Switch as part of
 `TalkatooPool`, including the 22 moons flagged `progression: true` in

@@ -826,12 +826,21 @@ class SMOContext(CommonContext):
             return
         kingdoms: dict[str, list[str]] = {}
         loc_ids = (self.missing_locations or set()) | (self.checked_locations or set())
+        progression_filtered = 0
         for loc_id in loc_ids:
             name = self.dp.location_id_to_name.get(loc_id)
             if not name:
                 continue
             cl = self.dp.classify_location(name)
             if cl.kind != ItemKind.MOON or not cl.kingdom or not cl.shine_id:
+                continue
+            # Gap #1: progression-flagged moons (Multi Moons, scenario-advance
+            # bosses, Seaside seals, Bowser's chain) bypass the Talkatoo block
+            # via isProgressionShine on the Switch side — naming them in
+            # Talkatoo's bubble would waste a hint slot on a moon the player
+            # gets free anyway.
+            if self.dp.is_progression_location(name):
+                progression_filtered += 1
                 continue
             kingdoms.setdefault(cl.kingdom, []).append(cl.shine_id)
         # Sort each kingdom's list deterministically so the Switch sees a
@@ -842,9 +851,10 @@ class SMOContext(CommonContext):
             kingdoms[k].sort()
         self.switch.set_talkatoo_pool(self.talkatoo_mode, kingdoms)
         log.info(
-            "[talkatoo] mode=%s pool=%s",
+            "[talkatoo] mode=%s pool=%s progression_filtered=%d",
             self.talkatoo_mode,
             {k: len(v) for k, v in sorted(kingdoms.items())},
+            progression_filtered,
         )
         await self.switch.push_talkatoo_pool()
 
