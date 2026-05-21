@@ -47,6 +47,15 @@ NINJA_BIN = os.environ.get(
 # WinLibs portable install; the default keeps a hand-installed msys2
 # working for repo devs.
 MINGW_BIN = os.environ.get("SMOAP_MINGW_BIN", r"C:\msys64\mingw64\bin")
+# Python interpreter dir. Hakkun's CMake shells out to bare `python` for
+# elf2nso.py / build_npdm.py — those scripts import `lz4` (and the wizard
+# pip-installs `lz4 pyelftools mmh3 --user` into a specific Python). PATH
+# must put that Python first so cmake's `python` resolves to the one that
+# has the packages — not whatever 3.x is first on the user's system PATH.
+# Default: the dir of the interpreter running this script, which is the
+# wizard's vendored Python 3.12 in wizard mode (py -3.12 was used by the
+# wizard's _python_invoker) and the dev's venv in source-checkout mode.
+PYTHON_BIN = os.environ.get("SMOAP_PYTHON_BIN", os.path.dirname(sys.executable))
 
 
 def ensure_hakkun_patched() -> None:
@@ -66,6 +75,57 @@ def ensure_hakkun_patched() -> None:
     result = subprocess.run([sys.executable, patch_script], env=patch_env)
     if result.returncode != 0:
         sys.exit("[build] patch_hakkun.py failed")
+
+
+def ensure_libstd_downloaded() -> None:
+    """Pre-download LibHakkun's aarch64 stdlib (musl libc + LLVM libc++ +
+    compiler-rt) before cmake configures.
+
+    Upstream `sys/cmake/toolchain.cmake` notices a missing `lib/std/*.a`
+    and invokes `python3 sys/tools/setup_libcxx_prepackaged.py` to fetch
+    the tarball. On Windows, bare `python3` typically resolves to the
+    Microsoft Store stub at `%LOCALAPPDATA%\\Microsoft\\WindowsApps\\
+    python3.exe`, which exits silently. cmake's `execute_process` captures
+    the result var but never checks it, so configure proceeds with
+    `STDLIB_FOUND=FALSE` and the clang link fails much later with cryptic
+    "no such file" errors against the empty `lib/std/*.a` paths.
+
+    Run the same script ourselves with the real Python interpreter
+    (`sys.executable` — same one the wizard's _python_invoker resolves)
+    BEFORE cmake gets a crack at it. The script's `subprocess.run(['curl',
+    ...])` doesn't `check=True` either, so we verify the .a files actually
+    landed afterward and surface a clear error if not (curl missing,
+    network blocked, etc.).
+    """
+    lib_std = os.path.join(SWITCH_MOD, "lib", "std")
+    required = (
+        "libc.a", "libc++.a", "libc++abi.a", "libm.a",
+        "libunwind.a", "libclang_rt.builtins-aarch64.a",
+    )
+    if all(os.path.exists(os.path.join(lib_std, name)) for name in required):
+        return
+
+    script = os.path.join(SWITCH_MOD, "sys", "tools", "setup_libcxx_prepackaged.py")
+    if not os.path.exists(script):
+        sys.exit(f"[build] {script} missing — sys submodule not checked out?")
+
+    print(f"[build] lib/std/*.a missing — pre-running setup_libcxx_prepackaged.py")
+    # cwd MUST be SWITCH_MOD: the script curls the tarball into cwd and
+    # `tarfile.extractall('.')` from cwd. Anything else and the libs land
+    # in the wrong place. sys.executable sidesteps the broken `python3`
+    # PATH lookup (Microsoft Store stub on Windows).
+    result = subprocess.run([sys.executable, script], cwd=SWITCH_MOD)
+    if result.returncode != 0:
+        sys.exit(f"[build] setup_libcxx_prepackaged.py exited {result.returncode}")
+
+    missing = [n for n in required if not os.path.exists(os.path.join(lib_std, n))]
+    if missing:
+        sys.exit(
+            f"[build] setup_libcxx_prepackaged.py returned 0 but did not "
+            f"produce {missing} under {lib_std}. The script's `curl` step "
+            f"may have failed silently (no `check=True` upstream). Check "
+            f"network connectivity and that `curl` is on PATH."
+        )
 
 
 def ensure_sail_built() -> None:
@@ -96,7 +156,7 @@ def ensure_sail_built() -> None:
 
 def configure_env() -> dict:
     env = os.environ.copy()
-    env["PATH"] = os.pathsep.join([LLVM_BIN, CMAKE_BIN, NINJA_BIN, MINGW_BIN, env.get("PATH", "")])
+    env["PATH"] = os.pathsep.join([PYTHON_BIN, LLVM_BIN, CMAKE_BIN, NINJA_BIN, MINGW_BIN, env.get("PATH", "")])
     env["CMAKE_GENERATOR"] = "Ninja"
     return env
 
@@ -106,6 +166,7 @@ def main() -> int:
         sys.exit(f"[build] {SWITCH_MOD} does not exist — phase 1 hasn't run yet")
 
     ensure_hakkun_patched()
+    ensure_libstd_downloaded()
     ensure_sail_built()
 
     env = configure_env()
