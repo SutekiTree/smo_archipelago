@@ -1,44 +1,68 @@
-// Strategy B port (per HAKKUN.md): trampoline StaffRollScene::init instead
-// of the exlaunch inline patch at +0x4C54A4. StaffRollScene is the credits-
-// only scene class per OdysseyDecomp; its init only fires when the post-
-// wedding cutscene chains into credits, never on Darker Side / portrait
-// warp / save load. Same goal-once latch semantics as the inline patch
-// (gated by ApState::goal_sent, cleared by SaveLoadHook on save reload).
+// Strategy A: inline-replace the BL inside StaffRollScene::init at
+// +0x4C54A4 (the call to al::Scene::initDrawSystemInfo). Verified by
+// Kgamer77/SMOO-Plus-Hakkun, the only other public Hakkun-based SMO
+// Archipelago project — same offset, same pattern, same Hakkun primitive.
 //
-// If Ryujinx / real-Switch validation reveals a false-positive (e.g.
-// credits-from-menu would also call StaffRollScene::init), fall back to
-// Strategy A: naked-trampoline @ 0x4C54A4 via Hakkun's writeBranchLinkAt
-// MainOffset. Not expected per spike Gate 3 analysis.
+// Why this beats Strategy B (trampoline on StaffRollScene::init's entry):
+//   - The credits scene's class registration sets up plenty of other init
+//     paths; trampolining the function entry would fire on EVERY init,
+//     including any future internal callers we don't want to catch.
+//   - 0x4C54A4 sits inside the function body, after the early-return paths
+//     for failed scenario state. By the time control reaches this BL, we
+//     KNOW the staff-roll cutscene is committed.
+//
+// hk::hook::writeBranchLinkAtMainOffset overwrites a single BL at the
+// given offset with a BL to our callback. The callback must reproduce
+// whatever the original BL was doing — here, calling Scene::
+// initDrawSystemInfo(info) — to avoid breaking SMO's init sequence.
+// Production exlaunch's HOOK_DEFINE_INLINE at the same offset intercepts
+// BEFORE the BL and lets the original run; we replace and re-call instead.
+// Both result in equivalent observable behavior.
 
-#include "hk/hook/Trampoline.h"
+#include "hk/hook/InstrUtil.h"
 #include "hk/types.h"
+
+#include "al/Library/Scene/Scene.h"
+#include "Project/Scene/SceneInitInfo.h"
 
 #include "../ap/ApFrameBridge.hpp"
 #include "../ap/ApState.hpp"
 #include "../util/Log.hpp"
 
-namespace al { class ActorInitInfo; }
-
 namespace smoap::hooks {
 
 namespace {
 
-HkTrampoline<void, void*, const al::ActorInitInfo*> creditsStartHook =
-    hk::hook::trampoline([](void* self, const al::ActorInitInfo* init_info) -> void {
-        creditsStartHook.orig(self, init_info);
-        auto& st = smoap::ap::ApState::instance();
-        if (st.goal_sent) return;
+inline constexpr ptrdiff_t kCreditsStartPatchOffset = 0x4C54A4;
+
+// Replaces the BL at +0x4C54A4. The original BL inside
+// StaffRollScene::init calls al::Scene::initDrawSystemInfo(info); we
+// intercept here, fire the AP goal once, then call through to
+// initDrawSystemInfo so the credits scene initializes normally.
+//
+// SceneInitInfo is 584 bytes (sizeof check in OdysseyHeaders); AArch64
+// AAPCS passes it by reference regardless of `&` vs by-value declaration,
+// so this signature is ABI-equivalent to Kgamer77's
+// `void onCreditsStart(al::Scene*, const al::SceneInitInfo)` form.
+void onCreditsStart(al::Scene* thisPtr, const al::SceneInitInfo& info) {
+    auto& st = smoap::ap::ApState::instance();
+    if (!st.goal_sent) {
         st.goal_sent = true;
-        SMOAP_LOG_INFO("[credits] StaffRollScene::init reached — reporting goal");
+        SMOAP_LOG_INFO("[credits] StaffRollScene::init reached BL @+0x%lx — "
+                       "reporting goal",
+                       static_cast<unsigned long>(kCreditsStartPatchOffset));
         smoap::ap::reportGoal();
-    });
+    }
+    thisPtr->initDrawSystemInfo(info);
+}
 
 }  // namespace
 
 void installCreditsStartHook() {
-    SMOAP_LOG_INFO("installing CreditsStartHook -> StaffRollScene::init (Strategy B)");
-    creditsStartHook.installAtSym<
-        "_ZN14StaffRollScene4initERKN2al13ActorInitInfoE">();
+    SMOAP_LOG_INFO("installing CreditsStartHook @ +0x%lx (Strategy A)",
+                   static_cast<unsigned long>(kCreditsStartPatchOffset));
+    hk::hook::writeBranchLinkAtMainOffset(kCreditsStartPatchOffset,
+                                           &onCreditsStart);
 }
 
 }  // namespace smoap::hooks

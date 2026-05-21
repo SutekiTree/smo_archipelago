@@ -202,19 +202,11 @@ extern "C" void hkMain() {
     SMOAP_LOG_INFO("resolving M6-phase-C snapshot enumeration symbols");
     smoap::game::installSnapshotSymbols();
 
-    // CreditsStartHook (Strategy B: trampoline on StaffRollScene::init).
-    // Deferred until after first real-Switch boot validation passes. Earlier
-    // boot validation showed hkMain hanging at this install; the hang may
-    // have been the IUseSceneObjHolder vtable mistranslation (since fixed),
-    // but conservatively keep it off so a hkMain hang here doesn't ruin a
-    // first hardware test. Effect: end-of-main-story goal detection
-    // (reportGoal()) is silent. Restore by uncommenting once we've confirmed
-    // the hook target's symbol resolves cleanly on SMO 1.0.0 main.nso (run
-    // scripts/check_nso_symbols.py with the StaffRollScene symbol added).
-    // Alternative: implement Strategy A (inline patch at +0x4C54A4) via a
-    // Hakkun equivalent of writeBranchLinkAtMainOffset.
-    SMOAP_LOG_INFO("CreditsStartHook DEFERRED (re-enable after first real-Switch boot)");
-    // smoap::hooks::installCreditsStartHook();
+    // CreditsStartHook is now Strategy A — inline BL patch at +0x4C54A4 via
+    // hk::hook::writeBranchLinkAtMainOffset. Matches Kgamer77/SMOO-Plus-Hakkun
+    // (the other public Hakkun-based SMO Archipelago project) verbatim.
+    SMOAP_LOG_INFO("installing CreditsStartHook (Strategy A: +0x4C54A4 BL inline)");
+    smoap::hooks::installCreditsStartHook();
 
     SMOAP_LOG_INFO("installing CappyMessenger text-lookup trampolines (4)");
     smoap::hooks::installCappyMessageTextHooks();
