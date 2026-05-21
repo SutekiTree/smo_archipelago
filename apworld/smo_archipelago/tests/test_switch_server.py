@@ -1322,6 +1322,44 @@ async def test_hello_skips_version_check_when_client_ver_unset():
         await sw.stop()
 
 
+@pytest.mark.asyncio
+async def test_accepted_socket_has_tcp_keepalive_enabled():
+    """SO_KEEPALIVE must be set on accepted Switch sockets so Windows'
+    2h default keepalive doesn't strand the same-host-takeover path
+    behind a half-open writer (see SMOClient_2026_05_21_09_46_11.txt).
+    """
+    import socket as _socket
+
+    state = BridgeState()
+
+    async def on_check(_): return None
+    async def on_goal(): ...
+
+    sw = SwitchServer("127.0.0.1", 0, state, on_check, on_goal)
+    server = await asyncio.start_server(sw._handle_client, "127.0.0.1", 0)
+    sw._server = server
+    port = server.sockets[0].getsockname()[1]
+
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        # Wait until _handle_client has assigned self._writer (post-keepalive).
+        for _ in range(50):
+            if sw._writer is not None:
+                break
+            await asyncio.sleep(0.01)
+        assert sw._writer is not None, "server never accepted the connection"
+        accepted_sock = sw._writer.get_extra_info("socket")
+        assert accepted_sock is not None
+        assert accepted_sock.getsockopt(_socket.SOL_SOCKET, _socket.SO_KEEPALIVE) == 1
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:
+            pass
+        await sw.stop()
+
+
 def test_compare_versions():
     """Helper used by the mismatch advice — must rank dotted-numeric
     components numerically, not lexicographically."""

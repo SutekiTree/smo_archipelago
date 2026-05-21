@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import socket
 import time
 from typing import Any, Awaitable, Callable
 
@@ -120,6 +121,46 @@ def _compare_versions(a: str, b: str) -> int:
     if pa > pb:
         return 1
     return 0
+
+
+def _enable_tcp_keepalive(writer: asyncio.StreamWriter) -> None:
+    """Force aggressive TCP keepalive on an accepted Switch socket.
+
+    Windows' default keepalive is 2h idle, which is far too slow for the
+    same-host-takeover path in `_handle_client` to detect a half-open
+    writer. When a Wi-Fi blip or Ryujinx pause leaves the PC's side of
+    a connection alive while the Switch's side is gone, `is_closing()`
+    stays False until the OS finally times out, and every new Switch
+    connection takes over from the previous live one in a self-sustaining
+    storm (see SMOClient_2026_05_21_09_46_11.txt). Shorten to idle=10s,
+    interval=2s, probes=5 so dead writers surface in ~20s.
+
+    Uses the TCP_KEEP{IDLE,INTVL,CNT} setsockopt surface — supported on
+    Linux, macOS (idle via TCP_KEEPALIVE), and Windows 10 1709+ with
+    Python 3.12+. asyncio's `TransportSocket` wrapper passes setsockopt
+    through but does NOT expose Windows' legacy `SIO_KEEPALIVE_VALS`
+    ioctl, so the modern path is the only viable one here.
+    """
+    sock = writer.get_extra_info("socket")
+    if sock is None:
+        return
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    except OSError:
+        return
+    for attr, value in (
+        ("TCP_KEEPIDLE", 10),
+        ("TCP_KEEPINTVL", 2),
+        ("TCP_KEEPCNT", 5),
+        ("TCP_KEEPALIVE", 10),  # macOS spelling for idle
+    ):
+        opt = getattr(socket, attr, None)
+        if opt is None:
+            continue
+        try:
+            sock.setsockopt(socket.IPPROTO_TCP, opt, value)
+        except OSError:
+            pass
 
 
 class SwitchServer:
@@ -359,6 +400,7 @@ class SwitchServer:
 
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         peer = writer.get_extra_info("peername")
+        _enable_tcp_keepalive(writer)
         if self._writer is not None and not self._writer.is_closing():
             # A Switch Wi-Fi blip can leave us with a half-open writer: the
             # Switch's TCP layer closed its side, but the FIN never reached
