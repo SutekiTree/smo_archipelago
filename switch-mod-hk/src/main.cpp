@@ -171,13 +171,11 @@ extern "C" void hkMain() {
     SMOAP_LOG_INFO("installing M6-phase-A.5 cutscene label hooks");
     smoap::hooks::installMoonLabelHook();
 
-    // ShineAppearanceHook re-enabled: scripts/patch_hakkun.py now applies an
-    // AArch64 prologue relocator to LibHakkun's TrampolineHook (patch 7a/b/c),
-    // so PC-relative first instructions (adrp/adr/b/bl/conditional/cbz/tbz)
-    // no longer crash on .orig(). If a boot crash recurs here, the relocator
-    // probably hit a case it doesn't handle yet — bisect by re-disabling.
-    SMOAP_LOG_INFO("installing ShineAppearanceHook (AP-classification moon color)");
-    smoap::hooks::installShineAppearanceHook();
+    // BISECT: ShineAppearanceHook disabled. Highest-frequency hook (fires per
+    // shine actor spawn at stage load); if the JIT crash is hook-related,
+    // disabling this removes a major source of .orig() invocations.
+    SMOAP_LOG_INFO("ShineAppearanceHook DISABLED (bisect)");
+    // smoap::hooks::installShineAppearanceHook();
 
     SMOAP_LOG_INFO("resolving M6-phase-C snapshot enumeration symbols");
     smoap::game::installSnapshotSymbols();
@@ -205,8 +203,13 @@ extern "C" void hkMain() {
     SMOAP_LOG_INFO("CreditsStartHook DISABLED (see main.cpp for rationale)");
     // smoap::hooks::installCreditsStartHook();
 
-    SMOAP_LOG_INFO("installing CappyMessenger text-lookup trampolines (4)");
-    smoap::hooks::installCappyMessageTextHooks();
+    // BISECT: CappyMessage text-lookup hooks (4) disabled. These intercept
+    // every al::isExistLabelIn{System,Stage}Message + getSystem/Stage
+    // MessageString call — SMO does many per frame for any UI text. Highest-
+    // frequency trampoline-with-orig surface in the build. If the JIT crash
+    // is hook-related, disabling this removes the dominant source.
+    SMOAP_LOG_INFO("CappyMessageTextHooks DISABLED (bisect)");
+    // smoap::hooks::installCappyMessageTextHooks();
     SMOAP_LOG_INFO("resolving CappyMessenger rs:: function pointers");
     smoap::hooks::installCappyMessengerSymbols();
 
