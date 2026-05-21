@@ -76,6 +76,92 @@ def test_trivial_all_reachable():
         order, oracle2.can_reach, oracle2.collect, window=3)
 
 
+def test_cross_kingdom_unlock_via_global_greedy():
+    """The validator runs a GLOBAL greedy across all kingdoms — it
+    must handle cases where a Cap moon's prerequisite is granted by a
+    Sand moon (because AP placed Paragoomba at Sand: ...).
+
+    Per-kingdom validation would falsely fail Cap (no Paragoomba in
+    Cap's sweep state). Global validation interleaves: collect Sand: X
+    first to get Paragoomba, THEN Cap: B becomes reachable.
+
+    User scenario (verbatim): 'A user has moons they cannot get in
+    Cap, so they keep going because they have enough, then they are
+    stuck in Sand but now unlocked Paragoomba, can make more progress
+    against Cap Talkatoo, which then lets them go back to Sand where
+    now Talkatoo there would have real moons for them.'
+    """
+    locs = {
+        # Reachable from start. Item: paragoomba (Cap-internal cap,
+        # but in this scenario AP placed it at a Sand pool moon).
+        "Sand: Bullet Bill Maze Break Through!": (set(), {"paragoomba"}),
+        # Reachable from start. Item: chain_chomp.
+        "Cap: Frog-Jumping Above the Fog":  (set(), {"chain_chomp"}),
+        # Needs paragoomba — only available after collecting Sand: X.
+        "Cap: Bonneter Cap Coin":           ({"paragoomba"}, set()),
+        # Needs chain_chomp — only available after collecting Cap: Frog.
+        "Sand: Chomp Through the Sand Wall": ({"chain_chomp"}, set()),
+    }
+    oracle = _Oracle(locs)
+    order = find_safe_permutation_with_oracle(
+        list(locs), random.Random(0), oracle.can_reach, oracle.collect)
+    assert order is not None, (
+        "Global greedy should resolve the cross-kingdom dependency: "
+        "the two 'free' moons (one per kingdom) come first in some "
+        "order, then the two gated moons can follow."
+    )
+    # Cross-kingdom invariant: by the time the paragoomba-needing Cap
+    # moon is placed, the Sand moon that grants paragoomba must come
+    # before it. Same for the other direction.
+    bonneter_idx = order.index("Cap: Bonneter Cap Coin")
+    bullet_idx = order.index("Sand: Bullet Bill Maze Break Through!")
+    chomp_wall_idx = order.index("Sand: Chomp Through the Sand Wall")
+    frog_idx = order.index("Cap: Frog-Jumping Above the Fog")
+    assert bullet_idx < bonneter_idx, (
+        "Sand: Bullet Bill must precede Cap: Bonneter (which needs paragoomba)"
+    )
+    assert frog_idx < chomp_wall_idx, (
+        "Cap: Frog-Jumping must precede Sand: Chomp Wall (which needs chain_chomp)"
+    )
+
+
+def test_progress_anywhere_invariant_holds_across_global_order():
+    """At every step in the global greedy, AT LEAST ONE remaining moon
+    (across all kingdoms) is reachable. This is the runtime 'progress
+    anywhere' invariant the validator guarantees: the player is never
+    stuck because the global order is a topological sort.
+    """
+    locs = {
+        "Cap: A":  (set(), {"k1"}),
+        "Cap: B":  ({"k2"}, set()),
+        "Cap: C":  ({"k3"}, set()),
+        "Sand: X": (set(), {"k2"}),
+        "Sand: Y": ({"k1"}, {"k3"}),
+        "Sand: Z": ({"k3"}, set()),
+    }
+    oracle = _Oracle(locs)
+    order = find_safe_permutation_with_oracle(
+        list(locs), random.Random(42), oracle.can_reach, oracle.collect)
+    assert order is not None
+
+    # Independent verifier: walk the order and confirm each step had at
+    # least one reachable from the remaining set.
+    verify = _Oracle(locs)
+    placed = set()
+    for i, picked in enumerate(order):
+        remaining = [n for n in locs if n not in placed]
+        reachable = [n for n in remaining if verify.can_reach(n)]
+        assert reachable, (
+            f"step {i}: no reachable moon anywhere — "
+            f"validator should have raised TalkatooOrderError"
+        )
+        assert picked in reachable, (
+            f"step {i}: picked {picked} but it wasn't reachable"
+        )
+        verify.collect(picked)
+        placed.add(picked)
+
+
 def test_capture_gated_chain_resolves_in_order():
     """Linear capture chain: M2 needs cap_A (granted by M1), M3 needs
     cap_B (granted by M2). Greedy must pick M1 first to unlock M2 to

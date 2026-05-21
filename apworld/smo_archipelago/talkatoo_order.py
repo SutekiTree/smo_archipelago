@@ -25,25 +25,39 @@ and it ALWAYS finds an order when one exists (vs a retry budget that
 caps out probabilistically). The randomness lives in the tie-break, so
 different seeds still produce different orders.
 
-Reachability model
-~~~~~~~~~~~~~~~~~~
-The validator does a per-kingdom sweep:
+Reachability model — global (cross-kingdom) sphere-safety
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The validator does a single greedy pass across ALL pool moons (every
+kingdom combined), not per-kingdom. Steps:
 
   1. Build a fresh CollectionState (starting inventory applied).
-  2. Run `sweep_for_advancements` over all of this slot's locations
-     EXCEPT the kingdom's non-progression pool. This represents
-     "player has done everything else they can reach" — other kingdoms,
-     captures elsewhere, plus the kingdom's own progression-flagged
-     moons (Multi Moons, scenario clears, seals) which always collect
-     via isProgressionShine. The result is the state the player would
-     have when first interacting with Talkatoo in this kingdom.
-  3. Greedy over the kingdom's pool from that swept state.
+  2. Run `sweep_for_advancements` over all of this slot's NON-pool
+     locations. That's the player's items "before they do any pool
+     moon" — captures, progression moons, and any items at locations
+     reachable without engaging Talkatoo% picks.
+  3. Greedy: at each step pick any reachable moon from any kingdom
+     (random tie-break); collect its item to advance state; repeat
+     until all pool moons are placed.
+  4. Project the resulting global order to per-kingdom lists by
+     filtering: kingdom K's order = global order positions whose moon
+     is in K. Preserves relative order within each kingdom.
 
-This is the right pessimism level: NOT "start from scratch" (over-
-strict; Bowser's depends on earlier kingdoms' moons), NOT "fully end-
-game advanced" (over-optimistic; would auto-collect this kingdom's
-own non-progression moons before validating). Sphere-safe under this
-model matches the player's actual experience.
+Why global: per-kingdom would falsely fail seeds where one kingdom's
+pool moons depend on items the AP placed in another kingdom. Example:
+Cap has 2 moons that need Paragoomba; AP placed Paragoomba at a Sand
+location. Per-kingdom validation can't satisfy Cap's order. Global
+validation handles it naturally — the player progresses in Sand first
+(picking up Paragoomba), then returns to Cap. At runtime the Phase 4
+block + bridge cursor-window mechanic enforces "progress anywhere"
+sphere-safety: at any state, at least one kingdom's window contains
+a reachable moon. See TALKATOO.md "Cross-kingdom progression" for the
+full reasoning.
+
+Validator raises TalkatooOrderError only when GLOBAL greedy gets stuck
+(no remaining moon anywhere is reachable). Indicates a genuine closed
+cycle of inaccessibility in the seed — the option set or apworld rules
+need adjustment, not the validator.
 
 The sweep is bounded to this slot's locations (`multiworld.get_locations(player)`).
 Other slots' items don't enter our state — they'd need to be sent to us
@@ -266,37 +280,82 @@ def build_talkatoo_order(
 ) -> dict[str, list[str]]:
     """Top-level entry: returns {kingdom: [shine_id, ...]} sphere-safe.
 
-    Raises TalkatooOrderError when some kingdom's pool can't be ordered
-    sphere-safely on this slot's option set (typically: a kingdom whose
-    only-reachable moons are pinned behind a Capture/Cap item the slot
-    has neither in starting inventory nor at any of its own locations
-    that could be collected first).
+    Sphere-safety is GLOBAL (cross-kingdom), not per-kingdom. The
+    validator runs a single greedy pass over ALL pool moons across all
+    kingdoms — at each step it picks any reachable moon (random tie-
+    break), collects its item, repeats. Per-kingdom orders are then
+    the projection of the global topological order onto each kingdom.
 
-    Single-kingdom failure aborts the whole build — the per-kingdom
-    description in the error narrows the diagnosis.
+    Why global: the player CAN make progress in one kingdom even when
+    another kingdom is stuck. Example — Cap has pool moons that need
+    Paragoomba, AP placed Paragoomba at a Sand location. Per-kingdom
+    sphere-safety would fail Cap's validation (Paragoomba not in Cap's
+    sweep state). Global sphere-safety treats Cap and Sand together:
+    the player progresses in Sand first (collecting Paragoomba), then
+    returns to Cap with the item. The Talkatoo% block path naturally
+    enforces this — at any state, at least one kingdom's first-
+    uncollected moon is reachable, so Talkatoo there can suggest a
+    moon the player can act on.
+
+    Raises TalkatooOrderError ONLY when the GLOBAL greedy gets stuck:
+    no remaining moon across any kingdom is reachable from current
+    state. This means the seed has a closed cycle of inaccessibility
+    (e.g. all remaining moons need items only obtainable from each
+    other in a loop). Genuine generation failure; surface as actionable.
     """
     pool_per_kingdom = collect_pool_per_kingdom(
         world, multiworld, player, progression_names)
-    rng = random.Random(world.random.getrandbits(64))
+    if not pool_per_kingdom:
+        return {}
 
-    result: dict[str, list[str]] = {}
-    for kingdom in sorted(pool_per_kingdom):
-        locs = pool_per_kingdom[kingdom]
-        if not locs:
-            continue
-        order = _find_safe_permutation_for_kingdom(
-            multiworld, player, locs, rng)
-        if order is None:
-            raise TalkatooOrderError(
-                f"talkatoo_mode: kingdom {kingdom!r} has no sphere-safe "
-                f"ordering for its {len(locs)} AP-pool moons (window={WINDOW}). "
-                "This means none of the moons here are reachable from the "
-                "slot's starting inventory — typically because captures or "
-                "cap items the kingdom depends on were excluded by option "
-                "toggles. Enable more captures (capturesanity: true), allow "
-                "more peace moon toggles, or relax the kingdom's "
-                "annoying-cluster filters."
-            )
-        result[kingdom] = [_shine_id_for(loc) for loc in order]
-        log.info("[talkatoo-order] kingdom=%s ordered %d moons", kingdom, len(order))
-    return result
+    # Flat list of all pool moons across kingdoms — input to the global
+    # greedy. Order within each kingdom is location-table order
+    # initially; rng.shuffle in find_safe_permutation_with_oracle's
+    # tie-break gives variety across seeds.
+    all_pool: list[str] = []
+    for locs in pool_per_kingdom.values():
+        all_pool.extend(locs)
+
+    # State seeded with everything reachable BEFORE doing any pool moons.
+    # That's the player's "start of game" baseline: precollected items +
+    # advancement items at non-pool locations the rules can reach without
+    # collecting any pool moon (captures with no item gate, progression
+    # moons, etc.).
+    can_reach, collect = _make_ap_oracles(
+        multiworld, player, exclude_pool=set(all_pool))
+
+    rng = random.Random(world.random.getrandbits(64))
+    global_order = find_safe_permutation_with_oracle(
+        all_pool, rng, can_reach, collect)
+    if global_order is None:
+        # The greedy got stuck — at least one moon remains that's not
+        # reachable from the player's collected-pool items + sweep state.
+        # Stuck moons indicate a closed cycle of inaccessibility or a
+        # genuinely unreachable region. Surface enough info for the seed
+        # owner to diagnose option toggles vs apworld-level rules.
+        raise TalkatooOrderError(
+            f"talkatoo_mode: global sphere-safety failed across the "
+            f"{len(all_pool)} pool moons (across {len(pool_per_kingdom)} "
+            f"kingdoms). The greedy validator could not find a topological "
+            f"order in which every step has at least one reachable moon. "
+            "Likely causes: (a) capturesanity off plus tight peace toggles "
+            "stripped key items; (b) an apworld rule references an item "
+            "the current option set doesn't generate. Inspect TALKATOO.md "
+            "'Diagnostics → Unbeatable seeds' for the triage checklist."
+        )
+
+    # Project the global order to per-kingdom orders. Preserves the
+    # relative ordering within each kingdom — i.e. each kingdom's first
+    # entry is its earliest-in-global-sphere moon (reachable earliest
+    # when playing the seed top-to-bottom).
+    per_kingdom: dict[str, list[str]] = {k: [] for k in pool_per_kingdom}
+    for loc_name in global_order:
+        split = _split_kingdom_prefix(loc_name)
+        assert split is not None, f"unreachable: pool entry without prefix: {loc_name!r}"
+        kingdom, shine_id = split
+        per_kingdom[kingdom].append(shine_id)
+
+    for kingdom, order in sorted(per_kingdom.items()):
+        log.info("[talkatoo-order] kingdom=%s ordered %d moons",
+                 kingdom, len(order))
+    return per_kingdom
