@@ -146,27 +146,37 @@ extern "C" void hkMain() {
     SMOAP_LOG_INFO("resolving M6-phase-D getPayShineNum lookup");
     smoap::game::installPayShineSnapshotSymbol();
 
-    // BISECT phase 7: phase 6 stable -> culprit in {Death, SaveLoad}.
-    // Enabling Death alone; SaveLoad stays off.
-    SMOAP_LOG_INFO("BISECT phase 7: + Death (SaveLoad still off)");
+    // All hooks re-enabled. Page-alignment fix in patch_hakkun.py 7a (each
+    // TrampolineBackup is now `alignas(0x1000)`) prevents nested trampolines
+    // from sharing an ARMeilleure JIT translation page, which the bisect
+    // identified as the root cause of the SaveLoadHook crash.
+    SMOAP_LOG_INFO("installing 5 game-event hooks");
     smoap::hooks::installScenarioFlagHook();
     smoap::hooks::installMoonGetHook();
     smoap::hooks::installDeathHook();
     smoap::hooks::installShineNumGetHook();
     smoap::hooks::installShineNumByWorldGetHook();
-    smoap::game::installCaptureGrantSymbols();
-    // smoap::hooks::installAddHackDictionaryHook();
-    // smoap::hooks::installAddPayShineHook();
-    // smoap::hooks::installAddPayShineAllHook();
-    // smoap::hooks::installCaptureStartHook();
-    // smoap::hooks::installWorldMapSelectHook();
-    // smoap::hooks::installMoonLabelHook();
 
-    // BISECT: ShineAppearanceHook disabled. Highest-frequency hook (fires per
-    // shine actor spawn at stage load); if the JIT crash is hook-related,
-    // disabling this removes a major source of .orig() invocations.
-    SMOAP_LOG_INFO("ShineAppearanceHook DISABLED (bisect)");
-    // smoap::hooks::installShineAppearanceHook();
+    SMOAP_LOG_INFO("resolving M6-phase-B capture-grant symbols");
+    smoap::game::installCaptureGrantSymbols();
+    SMOAP_LOG_INFO("installing AddHackDictionaryHook (Capture List AP gate)");
+    smoap::hooks::installAddHackDictionaryHook();
+
+    SMOAP_LOG_INFO("installing M6-phase-D deposit hooks");
+    smoap::hooks::installAddPayShineHook();
+    smoap::hooks::installAddPayShineAllHook();
+
+    SMOAP_LOG_INFO("installing CaptureStartHook (capture lock + AP check)");
+    smoap::hooks::installCaptureStartHook();
+
+    SMOAP_LOG_INFO("installing WorldMapSelectHook (M7 Path A)");
+    smoap::hooks::installWorldMapSelectHook();
+
+    SMOAP_LOG_INFO("installing M6-phase-A.5 cutscene label hooks");
+    smoap::hooks::installMoonLabelHook();
+
+    SMOAP_LOG_INFO("installing ShineAppearanceHook (AP-classification moon color)");
+    smoap::hooks::installShineAppearanceHook();
 
     SMOAP_LOG_INFO("resolving M6-phase-C snapshot enumeration symbols");
     smoap::game::installSnapshotSymbols();
@@ -194,18 +204,13 @@ extern "C" void hkMain() {
     SMOAP_LOG_INFO("CreditsStartHook DISABLED (see main.cpp for rationale)");
     // smoap::hooks::installCreditsStartHook();
 
-    // BISECT: CappyMessage text-lookup hooks (4) disabled. These intercept
-    // every al::isExistLabelIn{System,Stage}Message + getSystem/Stage
-    // MessageString call — SMO does many per frame for any UI text. Highest-
-    // frequency trampoline-with-orig surface in the build. If the JIT crash
-    // is hook-related, disabling this removes the dominant source.
-    SMOAP_LOG_INFO("CappyMessageTextHooks DISABLED (bisect)");
-    // smoap::hooks::installCappyMessageTextHooks();
+    SMOAP_LOG_INFO("installing CappyMessenger text-lookup trampolines (4)");
+    smoap::hooks::installCappyMessageTextHooks();
     SMOAP_LOG_INFO("resolving CappyMessenger rs:: function pointers");
     smoap::hooks::installCappyMessengerSymbols();
 
-    SMOAP_LOG_INFO("SaveLoadHook DISABLED (bisect phase 6)");
-    // smoap::hooks::installSaveLoadHook();
+    SMOAP_LOG_INFO("installing SaveLoadHook (session-state reset + re-HELLO)");
+    smoap::hooks::installSaveLoadHook();
 
     SMOAP_LOG_INFO("=== hkMain END (waiting for GameSystem::init to fire) ===");
 }
