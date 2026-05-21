@@ -90,8 +90,12 @@ public:
     // when tryPump fires), the wallclock counter blocks if the game runs
     // faster than 60fps in catch-up mode. The MAX of the two is correct in
     // both cases.
-    static constexpr std::uint32_t kSceneSettleFrames = 600;     // ~10s @ 60fps
-    static constexpr std::int64_t  kSceneSettleMs     = 10000;   // 10s wallclock
+    // BISECT: phase 19 with kSceneSettleFrames=1M was stable. Current build
+    // with 600+wallclock crashes. Bump frames threshold to 1M to test whether
+    // the threshold value itself somehow influences JIT translation of this
+    // comparison.
+    static constexpr std::uint32_t kSceneSettleFrames = 1000000;
+    static constexpr std::int64_t  kSceneSettleMs     = 10000;
 
     // On-screen duration. Passed as the THIRD positional arg to
     // rs::tryShowCapMessagePriorityLow (which the decompiler signature
