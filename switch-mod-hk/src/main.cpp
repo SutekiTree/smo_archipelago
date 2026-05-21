@@ -8,6 +8,9 @@
 #include "hk/hook/Trampoline.h"
 #include "hk/types.h"
 
+#include "al/Library/Scene/IUseSceneObjHolder.h"
+#include "al/Library/Scene/Scene.h"
+
 #include "ap/ApClient.hpp"
 #include "ap/ApConfig.hpp"
 #include "ap/ApState.hpp"
@@ -96,29 +99,34 @@ HkTrampoline<void, const HakoniwaSequence*> drawMainHook =
 
         if (self) {
             // M6 phase B + Cappy Messenger: cache curScene + GameDataHolder
-            // pointers from HakoniwaSequence's known field offsets. The cast
-            // through al::Scene* with the IUseSceneObjHolder static_cast
-            // adjustment was load-bearing for the production exlaunch build —
-            // here we read the raw curScene pointer and store as void*; the
-            // multiple-inheritance adjustment offset doesn't matter for our
-            // rs:: callers since we hand the pointer through unchanged
-            // (CappyMessenger's tryPump passes it to rs::isActiveCapMessage
-            // which expects an IUseSceneObjHolder*; SMO's CapMessage director
-            // is found by the rs:: function via the holder's vtable, not by
-            // pointer arithmetic).
+            // pointers from HakoniwaSequence's known field offsets.
             //
-            // TODO(phase-3b): once OdysseyHeaders is fully wired, restore the
-            // static_cast<IUseSceneObjHolder*>(al::Scene*) adjustment for
-            // type safety + correctness if any rs:: call site relies on it.
+            // CRITICAL: al::Scene multiply-inherits from NerveExecutor,
+            // IUseAudioKeeper, IUseCamera, IUseSceneObjHolder. The
+            // IUseSceneObjHolder subobject sits at a non-zero offset within
+            // Scene (after the other three bases' subobjects). rs::
+            // isActiveCapMessage and rs::tryShowCapMessagePriorityLow take
+            // const al::IUseSceneObjHolder*, and they do vtable dispatch on
+            // that pointer. Passing a raw al::Scene* without the static_cast
+            // adjustment makes them read the wrong vtable -> NULL-deref,
+            // surfacing as an ARMeilleure JIT translator fault under Ryujinx.
+            // Production exlaunch always did this adjustment; the phase-3b
+            // port skipped it on the assumption that "the pointer passes
+            // through unchanged" — which is wrong for multiple inheritance.
             constexpr std::size_t kCurSceneOffset       = 0xB0;
             constexpr std::size_t kGameDataHolderOffset = 0xB8;
             const auto* base = reinterpret_cast<const std::uint8_t*>(self);
-            void* scene_obj = *reinterpret_cast<void* const*>(
+            auto* scene_obj = *reinterpret_cast<al::Scene* const*>(
                 base + kCurSceneOffset);
             void* gdh = *reinterpret_cast<void* const*>(
                 base + kGameDataHolderOffset);
+            void* scene_holder = nullptr;
+            if (scene_obj) {
+                auto* holder = static_cast<al::IUseSceneObjHolder*>(scene_obj);
+                scene_holder = static_cast<void*>(holder);
+            }
             auto& st = smoap::ap::ApState::instance();
-            st.scene_cache.store(scene_obj, std::memory_order_relaxed);
+            st.scene_cache.store(scene_holder, std::memory_order_relaxed);
             st.game_data_holder_cache.store(gdh, std::memory_order_relaxed);
         }
 
