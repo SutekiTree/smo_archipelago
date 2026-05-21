@@ -139,16 +139,15 @@ void CappyMessenger::tryPump(const void* scene) {
     // construction races with SceneObjHolder child registration; calling
     // rs::isActiveCapMessage before the director registers NULL-derefs.
     if (settle_frames_ < kSceneSettleFrames) {
-        // Throttle the log so we don't spam every frame — once at the start
-        // is plenty for diagnostics.
-        if (settle_frames_ == 0) {
-            SMOAP_LOG_INFO("[cappy] waiting for scene settle (%u/%u frames) "
-                           "before first dispatch; queue=%u scene=%p",
-                           static_cast<unsigned>(settle_frames_),
-                           static_cast<unsigned>(kSceneSettleFrames),
-                           static_cast<unsigned>(live_count_),
-                           scene);
-        }
+        // BISECT phase 17: log commented out
+        // if (settle_frames_ == 0) {
+        //     SMOAP_LOG_INFO("[cappy] waiting for scene settle (%u/%u frames) "
+        //                    "before first dispatch; queue=%u scene=%p",
+        //                    static_cast<unsigned>(settle_frames_),
+        //                    static_cast<unsigned>(kSceneSettleFrames),
+        //                    static_cast<unsigned>(live_count_),
+        //                    scene);
+        // }
         return;
     }
 

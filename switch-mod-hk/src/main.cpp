@@ -128,9 +128,10 @@ HkTrampoline<void, const HakoniwaSequence*> drawMainHook =
         smoap::hooks::tickPendingUncapture();
         smoap::ui::drawHudFrame();
 
-        // BISECT phase 16: drain restored so Cappy.queue_ gets entries;
-        // tryPump itself is SKIPPED so we never run the read-side path that
-        // exposed the JIT crash in phase 14.
+        // BISECT phase 17: drain on, tryPump on, but CappyMessenger.cpp's
+        // settle-gate log is commented out (see CappyMessenger.cpp line ~145).
+        // Phase 16 (tryPump skipped) survived. If phase 17 also survives,
+        // the SMOAP_LOG_INFO inside the settle gate is the trigger.
         {
             smoap::ap::ApState::SystemBubble bubble;
             while (smoap::ap::ApState::instance()
@@ -139,10 +140,9 @@ HkTrampoline<void, const HakoniwaSequence*> drawMainHook =
             }
         }
 
-        // smoap::ui::CappyMessenger::instance().tryPump(
-        //     smoap::ap::ApState::instance().scene_cache.load(
-        //         std::memory_order_relaxed));
-        SMOAP_LOG_DEBUG("[cappy] tryPump skipped (bisect phase 16)");
+        smoap::ui::CappyMessenger::instance().tryPump(
+            smoap::ap::ApState::instance().scene_cache.load(
+                std::memory_order_relaxed));
     });
 
 }  // namespace
