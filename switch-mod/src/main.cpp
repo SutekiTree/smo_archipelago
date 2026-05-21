@@ -190,6 +190,22 @@ HOOK_DEFINE_TRAMPOLINE(DrawMainHook) {
         smoap::ap::ApState::instance().flushPendingCaptureGrants();
         smoap::hooks::tickPendingUncapture();
         smoap::ui::drawHudFrame();
+
+        // Drain worker-thread system-bubble pushes BEFORE tryPump so a freshly
+        // arrived "Connected/Disconnected/Not connected to Archipelago" lands
+        // in CappyMessenger's queue in time for this frame's dispatch attempt.
+        // The worker thread can't call CappyMessenger::enqueueSystem directly:
+        // queue_[]/tail_/live_count_ are non-atomic and race with frame-thread
+        // tryPump. ApClient.cpp's worker-side helper enqueueSystemBubble()
+        // pushes onto inbound_system_bubbles instead; we drain here.
+        {
+            smoap::ap::ApState::SystemBubble bubble;
+            while (smoap::ap::ApState::instance()
+                       .inbound_system_bubbles.pop(bubble)) {
+                smoap::ui::CappyMessenger::instance().enqueueSystem(bubble.text);
+            }
+        }
+
         // Pump the Cappy-speech queue. Reads the freshly-cached scene; no-op
         // when null (boot scene) or when SMO is already showing a CapMessage.
         smoap::ui::CappyMessenger::instance().tryPump(

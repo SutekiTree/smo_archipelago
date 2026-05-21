@@ -12,10 +12,19 @@ Pages (sequenced; each calls `next_page()` when its work completes):
   2. PrereqPage        — runs `_setup.prereqs.check_all()`, surfaces ✓/✗
   3. DumpPickerPage    — file dialog for the user's SMO 1.0.0 NSP or XCI
   4. ExtractPage       — runs the extractor in a worker thread, streams log
-  5. BridgeIpPage      — text field prefilled with `detect_lan_ip()`
-  6. BuildPage         — runs sync_capture_table → cmake configure → cmake build
-  7. DeployPage        — radio: SD card vs Ryujinx, with auto-detect
-  8. DonePage          — "Launch SMOClient" button (if a .meatballsap was passed)
+  5. BuildPage         — runs sync_capture_table → cmake configure → cmake build.
+                         The bridge IP is captured silently via detect_lan_ip()
+                         and baked in as a fallback; the Switch mod's runtime
+                         UDP discovery (DiscoveryResponder) handles the common
+                         case where the LAN IP changes after the build.
+  6. DeployPage        — radio: SD card vs Ryujinx, with auto-detect
+  7. DonePage          — "Launch SMOClient" button (if a .meatballsap was passed)
+
+The legacy `BridgeIpPage` (a TextInput where the user manually confirmed the
+LAN IP) was dropped in the discovery rework. The page's build function
+(`build_ip`) is retained so the screen can still be reached programmatically
+from a future Advanced override surface, but it is no longer registered in
+the navigation flow.
 
 Kivy is imported lazily INSIDE this module — never at apworld-import time —
 because AP generation hosts (Linux servers running `python ap_generate.py`)
@@ -48,6 +57,7 @@ from .build import (
     run_cmake_configure,
     run_extract_maps,
     run_sync_capture_table,
+    verify_map_hashes,
 )
 from .deploy import (
     DeployResult,
@@ -109,6 +119,60 @@ def wizard_log(line: str) -> None:
         pass  # best-effort; log losing a line shouldn't break the wizard
 
 
+# Cap how many times a single wizard page can re-run its worker before
+# we stop offering the Retry button. Picked so a flaky network or AV
+# scan can retry a handful of times without manual intervention, but a
+# persistently broken step (wrong NSP version, missing devkitPro, etc.)
+# eventually surfaces a clear "give up — fix the underlying cause"
+# message instead of letting the user click Retry forever. Counts reset
+# on a fresh page entry, so navigating Back→Forward gives a clean slate.
+MAX_STEP_ATTEMPTS = 5
+
+
+def _resolve_persisted_path(
+    state: dict[str, Any],
+    key: str,
+    on_line: Any = None,
+) -> Path | None:
+    """Pull a user-chosen tool path out of `setup_state.json` and verify
+    the file is still there.
+
+    The prereq page persists overrides for `hactool_path` and
+    `prodkeys_path` so the extract worker doesn't have to re-prompt on
+    each Retry. But the user can move those files between sessions
+    (re-mount their key drive, archive an old hactool build, etc.) —
+    passing a now-stale path to a subprocess produces a far less
+    actionable error than catching the staleness here and surfacing a
+    clear "this file is gone, re-check prereqs" message.
+
+    Returns the Path if it points at an existing file; None if the key
+    is unset, malformed, or the file is missing. The caller's normal
+    `None` codepath (PATH fallback for hactool, prod.keys default
+    location for keys) handles the "no override" case.
+    """
+    raw = state.get(key)
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not raw:
+        if on_line is not None:
+            on_line(
+                f"[wizard] ignored persisted {key}: expected a non-empty "
+                f"string in setup_state.json, got {type(raw).__name__}. "
+                f"Falling back to auto-detect."
+            )
+        return None
+    p = Path(raw)
+    if not p.is_file():
+        if on_line is not None:
+            on_line(
+                f"[wizard] persisted {key} no longer exists at {p}. "
+                f"Falling back to auto-detect — if extraction fails, "
+                f"re-run the prereq check to point at the new location."
+            )
+        return None
+    return p
+
+
 # ---------------------------------------------------------------------------
 # Wizard entry point
 # ---------------------------------------------------------------------------
@@ -146,6 +210,7 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
     from kivy.uix.checkbox import CheckBox
     from kivy.uix.gridlayout import GridLayout
     from kivy.uix.label import Label
+    from kivy.uix.popup import Popup
     from kivy.uix.progressbar import ProgressBar
     from kivy.uix.screenmanager import Screen, ScreenManager
     from kivy.uix.scrollview import ScrollView
@@ -296,6 +361,32 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
         root = BoxLayout(orientation="vertical", padding=20, spacing=12)
         root.add_widget(_h1("Prerequisites"))
 
+        # Mode toggle: "auto" silently installs missing prereqs via winget
+        # / direct installer; "manual" surfaces today's install-page links
+        # and Browse buttons. Both modes share the underlying detector +
+        # winget-path probing, so a manual-mode user who runs `winget
+        # install` in a separate terminal still has Re-check turn rows
+        # green without restarting the wizard. Default to auto; persist
+        # the choice across wizard restarts.
+        persisted_mode = saved_state.get("prereq_mode", "auto")
+        mode_state: dict[str, str] = {"mode": persisted_mode}
+        mode_row = BoxLayout(orientation="horizontal", size_hint_y=None,
+                             height=40, spacing=8)
+        auto_cb = CheckBox(group="prereq_mode",
+                           active=(persisted_mode == "auto"),
+                           size_hint_x=None, width=30)
+        mode_row.add_widget(auto_cb)
+        mode_row.add_widget(_label(
+            "Install them for me (recommended)",
+            size_hint_x=None, width=300,
+        ))
+        manual_cb = CheckBox(group="prereq_mode",
+                             active=(persisted_mode == "manual"),
+                             size_hint_x=None, width=30)
+        mode_row.add_widget(manual_cb)
+        mode_row.add_widget(_label("I'll install them myself"))
+        root.add_widget(mode_row)
+
         rows_box = BoxLayout(orientation="vertical", spacing=4, size_hint_y=None)
         rows_box.bind(minimum_height=rows_box.setter("height"))
         scroller = ScrollView()
@@ -303,6 +394,9 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
         root.add_widget(scroller)
 
         next_btn_holder: dict[str, Any] = {}
+        # Hold the most-recent results so a mode change can re-render
+        # without re-running the detectors (which can take ~1 s).
+        render_state: dict[str, Any] = {"last_results": []}
 
         def open_picker_for(r: PrereqResult) -> None:
             """Open the native file dialog for the given prereq via
@@ -324,8 +418,119 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
                 save_setup_state(state)
             do_check()
 
+        def run_installer_popup(keys: list[str], *, preflight: bool) -> None:
+            """Spawn a worker thread that runs `_setup.installers` for the
+            given prereq keys, streaming output into a modal popup.
+
+            `preflight=True` runs `check_internet` (always) and `check_winget`
+            (if any winget-installable key is in the batch) before kicking
+            off the first installer. Used by the "Install all missing"
+            button. Per-row Auto-install bypasses preflight to keep the
+            single-tool case snappy."""
+            log_widget = TextInput(text="", readonly=True, size_hint=(1, 1))
+            popup_box = BoxLayout(orientation="vertical", spacing=8)
+            popup_box.add_widget(log_widget)
+            close_btn = Button(text="Installing... (close button enabled when done)",
+                               size_hint_y=None, height=40, disabled=True)
+            popup_box.add_widget(close_btn)
+            popup = Popup(
+                title=f"Installing {', '.join(keys)}",
+                content=popup_box,
+                size_hint=(0.9, 0.85),
+                auto_dismiss=False,
+            )
+            close_btn.bind(on_release=lambda _i: popup.dismiss())
+            popup.open()
+
+            log_lines: list[str] = []
+
+            def append_log(line: str) -> None:
+                log_lines.append(line)
+                if len(log_lines) > 2000:
+                    del log_lines[:1000]
+                log_widget.text = "\n".join(log_lines[-400:])
+
+            def on_line(line: str) -> None:
+                from kivy.clock import Clock as _Clock
+                _Clock.schedule_once(lambda dt: append_log(line))
+
+            def worker() -> None:
+                # Lazy-import installers — pulls in urllib + ctypes + the
+                # GitHub-API JSON parser, none of which the apworld layer
+                # should drag onto a headless gen host.
+                from .installers import (
+                    INSTALLERS, check_internet, check_winget,
+                )
+                if preflight:
+                    on_line("[wizard] preflight: checking internet...")
+                    r = check_internet(on_line)
+                    if not r.ok:
+                        on_line("[wizard] preflight failed; aborting.")
+                        from kivy.clock import Clock as _Clock
+                        _Clock.schedule_once(
+                            lambda dt: (
+                                setattr(close_btn, "disabled", False),
+                                setattr(close_btn, "text", "Close (install failed)"),
+                            ),
+                        )
+                        return
+                    if any(k in {"cmake", "ninja", "python312"} for k in keys):
+                        on_line("[wizard] preflight: checking winget...")
+                        r = check_winget(on_line)
+                        if not r.ok:
+                            on_line("[wizard] preflight failed; aborting.")
+                            from kivy.clock import Clock as _Clock
+                            _Clock.schedule_once(
+                                lambda dt: (
+                                    setattr(close_btn, "disabled", False),
+                                    setattr(close_btn, "text", "Close (install failed)"),
+                                ),
+                            )
+                            return
+                any_failed = False
+                for key in keys:
+                    fn = INSTALLERS.get(key)
+                    if fn is None:
+                        on_line(f"[wizard] no installer registered for {key!r}; skipping")
+                        continue
+                    on_line(f"[wizard] === starting installer for {key!r} ===")
+                    try:
+                        result = fn(on_line)
+                    except Exception as e:  # pragma: no cover — surface to UI
+                        import traceback
+                        on_line(f"[wizard] installer for {key!r} crashed: "
+                                f"{type(e).__name__}: {e}")
+                        on_line(traceback.format_exc())
+                        any_failed = True
+                        break
+                    on_line(
+                        f"[wizard] installer {key!r}: ok={result.ok} "
+                        f"detail={result.detail!r}"
+                    )
+                    if not result.ok:
+                        any_failed = True
+                        on_line(f"[wizard] stopping install run after {key!r} failure")
+                        break
+                on_line("[wizard] === install run complete; re-running prereq check ===")
+                from kivy.clock import Clock as _Clock
+
+                def finish(_dt):
+                    close_btn.disabled = False
+                    close_btn.text = (
+                        "Close" if not any_failed
+                        else "Close (some installs failed — see log above)"
+                    )
+                    # Always re-check after install regardless of failure —
+                    # rows that DID succeed still need their green flip.
+                    do_check()
+                _Clock.schedule_once(finish)
+
+            threading.Thread(target=worker, daemon=True).start()
+
         def render(results: list[PrereqResult]) -> None:
+            render_state["last_results"] = results
             rows_box.clear_widgets()
+            current_mode = mode_state["mode"]
             for r in results:
                 row = BoxLayout(orientation="horizontal", size_hint_y=None, height=36, spacing=8)
                 mark = "[color=00aa00][b]OK[/b][/color]" if r.ok else "[color=cc0000][b]X[/b][/color]"
@@ -338,10 +543,26 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
                     row.add_widget(pick)
                 else:
                     row.add_widget(Label(text="", size_hint_x=0.1))
-                if not r.ok and r.install_url:
-                    link = Button(text="Install...", size_hint_x=0.1)
-                    link.bind(on_release=lambda _i, url=r.install_url: webbrowser.open(url))
-                    row.add_widget(link)
+                # Mode-dependent action button: Auto-install in auto mode
+                # (when the detector is auto-installable), Install link in
+                # manual mode or as a fallback when no auto-install path
+                # exists. The Browse button above is mode-independent —
+                # users can still drop a hand-installed binary into place.
+                if not r.ok:
+                    if current_mode == "auto" and r.auto_installable:
+                        auto_btn = Button(text="Auto-install", size_hint_x=0.1)
+                        auto_btn.bind(
+                            on_release=lambda _i, key=r.key: run_installer_popup(
+                                [key], preflight=False,
+                            ),
+                        )
+                        row.add_widget(auto_btn)
+                    elif r.install_url:
+                        link = Button(text="Install...", size_hint_x=0.1)
+                        link.bind(on_release=lambda _i, url=r.install_url: webbrowser.open(url))
+                        row.add_widget(link)
+                    else:
+                        row.add_widget(Label(text="", size_hint_x=0.1))
                 else:
                     row.add_widget(Label(text="", size_hint_x=0.1))
                 rows_box.add_widget(row)
@@ -405,8 +626,49 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
 
             threading.Thread(target=worker, daemon=True).start()
 
+        # "Install all missing" — auto mode only. Disabled (greyed out) in
+        # manual mode so the UI element stays visible (users can see it
+        # exists, understand what auto-mode would give them) without
+        # accidentally firing it.
+        def on_install_all_missing(_i) -> None:
+            from .installers import INSTALL_ORDER
+            results = render_state.get("last_results", [])
+            failed_keys = {
+                r.key for r in results if not r.ok and r.auto_installable
+            }
+            ordered = [k for k in INSTALL_ORDER if k in failed_keys]
+            if not ordered:
+                wizard_log("Install all missing: no failed auto-installable rows")
+                return
+            wizard_log(f"Install all missing: {ordered}")
+            run_installer_popup(ordered, preflight=True)
+
+        install_all_btn = Button(
+            text="Install all missing (requires UAC consent for devkitPro; ~700 MB total)",
+            size_hint_y=None, height=40,
+            disabled=(persisted_mode != "auto"),
+        )
+        install_all_btn.bind(on_release=on_install_all_missing)
+        root.add_widget(install_all_btn)
+
         recheck.bind(on_release=lambda _i: do_check())
         root.add_widget(recheck)
+
+        def on_mode_change(_inst, _val) -> None:
+            new_mode = "auto" if auto_cb.active else "manual"
+            if new_mode == mode_state["mode"]:
+                return
+            mode_state["mode"] = new_mode
+            state = load_setup_state()
+            state["prereq_mode"] = new_mode
+            save_setup_state(state)
+            install_all_btn.disabled = (new_mode != "auto")
+            # Re-render without re-running detectors so button swap is
+            # instant. The cached results are still authoritative because
+            # a mode change doesn't affect detection.
+            render(render_state.get("last_results", []))
+        auto_cb.bind(active=on_mode_change)
+        manual_cb.bind(active=on_mode_change)
 
         nav, _, next_btn = _nav_row(lambda: goto("welcome"), lambda: goto("nsp"))
         next_btn.disabled = True
@@ -507,7 +769,10 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
                             size_hint=(1, 1))
         root.add_widget(log_box)
 
-        nav, _, next_btn = _nav_row(lambda: goto("nsp"), lambda: goto("ip"))
+        # Bridge IP is now captured silently via detect_lan_ip() at startup
+        # and baked into the build as a fallback; runtime UDP discovery
+        # handles the common case. Skip straight to the build step.
+        nav, _, next_btn = _nav_row(lambda: goto("nsp"), lambda: goto("build"))
         next_btn.disabled = True
         retry_btn = Button(text="Retry", size_hint_y=None, height=40, disabled=True)
         root.add_widget(retry_btn)
@@ -523,6 +788,12 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
             "last_output_ts": None,      # float
             "worker_thread": None,
             "heartbeat_thread": None,
+            # Bounded-retry counter — incremented at start_worker, reset on
+            # fresh page entry (on_pre_enter resets it before kicking off
+            # the first attempt). Caps the user's Retry clicks so a
+            # persistently broken extract eventually surfaces a "stop and
+            # diagnose" message instead of looping forever.
+            "attempt_count": 0,
         }
 
         def _log_to_file(line: str) -> None:
@@ -590,11 +861,46 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
             _state["last_output_ts"] = time.monotonic()
             # Open file log fresh per run; "w" truncates so each Retry
             # gets a clean log instead of compounding across attempts.
+            # If the log can't be opened (APPDATA read-only, disk full),
+            # surface to status.text — the previous behaviour of logging
+            # only via on_line meant the warning landed in the log box
+            # but the user kept staring at a "Extracting..." status with
+            # no indication anything was wrong.
             try:
                 _state["log_file"] = open(extract_log_path, "w", encoding="utf-8")
             except OSError as e:
                 _state["log_file"] = None
-                on_line(f"[wizard] could not open {extract_log_path}: {e}")
+                msg = (
+                    f"Could not open extract log at {extract_log_path}: {e}. "
+                    f"Extraction will still run, but output won't be "
+                    f"persisted to disk for later inspection. Check that "
+                    f"%APPDATA% is writable."
+                )
+                on_line(f"[wizard] {msg}")
+                from kivy.clock import Clock as _Clock
+                _Clock.schedule_once(
+                    lambda dt: status.setter("text")(status, msg)
+                )
+            # Validate the dump file still exists — the picker checked at
+            # the time of selection, but the user may have moved or
+            # deleted the file between then and clicking Start Extract,
+            # and otherwise the subprocess would fail far downstream with
+            # an opaque "couldn't read NSP" message.
+            if not dump.is_file():
+                msg = (
+                    f"Dump file no longer exists at {dump}. Go back to "
+                    f"the previous step and re-pick your NSP/XCI."
+                )
+                on_line(f"[wizard] {msg}")
+                from kivy.clock import Clock as _Clock
+                _Clock.schedule_once(
+                    lambda dt: status.setter("text")(status, msg)
+                )
+                _Clock.schedule_once(
+                    lambda dt: setattr(retry_btn, "disabled", False)
+                )
+                _close_log()
+                return
             status.text = f"Extracting from {dump.name}... (2-5 minutes typical)"
             on_line(f"[wizard] === extract run start: {time.strftime('%Y-%m-%d %H:%M:%S')} ===")
             on_line(f"[wizard] dump: {dump} (kind={dump.suffix.lstrip('.').lower() or 'nsp'})")
@@ -602,11 +908,11 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
                 # Use the user-picked hactool path if the wizard's prereq
                 # page persisted one; extractor falls back to PATH otherwise.
                 state = load_setup_state()
-                hactool_override = (
-                    Path(state["hactool_path"]) if state.get("hactool_path") else None
+                hactool_override = _resolve_persisted_path(
+                    state, "hactool_path", on_line
                 )
-                prod_keys_override = (
-                    Path(state["prodkeys_path"]) if state.get("prodkeys_path") else None
+                prod_keys_override = _resolve_persisted_path(
+                    state, "prodkeys_path", on_line
                 )
                 on_line(f"[wizard] hactool override: {hactool_override}")
                 on_line(f"[wizard] prod.keys override: {prod_keys_override}")
@@ -646,12 +952,68 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
                     "[wizard] subprocess returned 0 but shine_map.json / "
                     "capture_map.json are missing — treating as failure"
                 )
+            # Hash gate: the USen-locale extract is deterministic across
+            # every legitimate SMO 1.0.0 source (eShop NSP, cartridge,
+            # XCI, any valid ticket). A mismatch is a real "wrong dump"
+            # signal — typically a v1.1.0+ patched build, a different
+            # game, or a corrupted dump — so the wizard refuses to
+            # continue. If the user's source is genuinely 1.0.0 but
+            # produces different bytes, the fix is to dump cleanly with
+            # NXDumpTool from a clean retail source.
+            hash_ok = False
+            hash_hint = ""
+            if outputs_present:
+                try:
+                    checks = verify_map_hashes()
+                except Exception as e:  # pragma: no cover
+                    on_line(
+                        f"[wizard] hash check crashed: "
+                        f"{type(e).__name__}: {e} — treating as failure"
+                    )
+                    checks = []
+                    hash_hint = (
+                        "Hash check itself errored — re-run setup."
+                    )
+                if checks and all(c.match for c in checks):
+                    hash_ok = True
+                    on_line(
+                        "[wizard] hash check: maps match canonical "
+                        "SMO 1.0.0 USen fingerprint"
+                    )
+                else:
+                    mismatched = [c for c in checks if not c.match]
+                    for c in mismatched:
+                        on_line(
+                            f"[wizard] hash check: {c.filename} "
+                            f"differs from canonical "
+                            f"(expected {c.expected[:12]}…, "
+                            f"got {(c.actual or '<missing>')[:12]}…)"
+                        )
+                    if mismatched and not hash_hint:
+                        hash_hint = (
+                            "Maps don't match the canonical SMO 1.0.0 "
+                            "USen fingerprint. Confirm your dump is "
+                            "SMO 1.0.0 (not 1.1.0+ or a different game), "
+                            "then re-dump with NXDumpTool from a clean "
+                            "retail source and re-run Extract."
+                        )
             from kivy.clock import Clock as _Clock
             def finish(_dt):
-                if result.ok and outputs_present:
+                if result.ok and outputs_present and hash_ok:
                     status.text = "Extraction complete."
                     next_btn.disabled = False
                     retry_btn.disabled = True
+                elif result.ok and outputs_present and not hash_ok:
+                    # Files exist but don't match the canonical
+                    # fingerprint. Surface the actionable hint in the
+                    # status text so the user sees the fix without
+                    # scrolling the log.
+                    status.text = (
+                        hash_hint
+                        or "Extraction produced unexpected maps — "
+                           "see hash check lines above."
+                    )
+                    retry_btn.disabled = False
                 elif result.ok:
                     status.text = (
                         "Extraction reported success but output files are "
@@ -673,6 +1035,28 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
                     pass
 
         def start_worker() -> None:
+            # Refuse to spawn yet another subprocess after MAX_STEP_ATTEMPTS
+            # consecutive failures on this page. Surfaces an actionable
+            # "look at the log, diagnose, and re-run setup" message
+            # instead of letting the user click Retry indefinitely on a
+            # configuration problem that won't fix itself by retrying.
+            if _state["attempt_count"] >= MAX_STEP_ATTEMPTS:
+                msg = (
+                    f"Extract failed {_state['attempt_count']} times in a "
+                    f"row. Full log: {extract_log_path}. Common causes: "
+                    f"wrong SMO version (need 1.0.0), corrupt NSP/XCI "
+                    f"dump, missing hactool or prod.keys. Fix the "
+                    f"underlying issue and re-open the wizard."
+                )
+                status.text = msg
+                on_line(f"[wizard] {msg}")
+                retry_btn.disabled = True
+                return
+            _state["attempt_count"] += 1
+            on_line(
+                f"[wizard] === attempt "
+                f"{_state['attempt_count']}/{MAX_STEP_ATTEMPTS} ==="
+            )
             log_lines.clear()
             log_box.text = ""
             next_btn.disabled = True
@@ -682,8 +1066,14 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
             _state["worker_thread"] = t
             t.start()
 
+        def _reset_and_start(*_):
+            # Fresh page entry resets the attempt counter so navigating
+            # Back→Forward doesn't immediately hit the cap.
+            _state["attempt_count"] = 0
+            start_worker()
+
         retry_btn.bind(on_release=lambda _i: start_worker())
-        s.bind(on_pre_enter=lambda _i: start_worker())
+        s.bind(on_pre_enter=_reset_and_start)
         return s
 
     # --- 5. Bridge IP
@@ -731,7 +1121,7 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
         log_box = TextInput(text="", readonly=True, size_hint=(1, 1))
         root.add_widget(log_box)
 
-        nav, _, next_btn = _nav_row(lambda: goto("ip"), lambda: goto("deploy"))
+        nav, _, next_btn = _nav_row(lambda: goto("extract"), lambda: goto("deploy"))
         next_btn.disabled = True
         retry_btn = Button(text="Retry", size_hint_y=None, height=40, disabled=True)
         root.add_widget(retry_btn)
@@ -798,15 +1188,43 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
             from kivy.clock import Clock as _Clock
             _Clock.schedule_once(lambda dt: setattr(next_btn, "disabled", False))
 
+        # Bounded-retry counter for the build page. Same rationale as the
+        # extract page: a wedged cmake/ninja config issue (wrong devkitPro
+        # version, missing toolchain, etc.) won't fix itself by retrying,
+        # so eventually we surface a "diagnose and re-open setup" message
+        # instead of letting the user click Retry forever.
+        build_state: dict[str, Any] = {"attempt_count": 0}
+
         def start_worker() -> None:
+            if build_state["attempt_count"] >= MAX_STEP_ATTEMPTS:
+                msg = (
+                    f"Build failed {build_state['attempt_count']} times "
+                    f"in a row. Common causes: wrong devkitPro version, "
+                    f"missing Ninja in PATH, corrupt switch_mod sources. "
+                    f"Re-run the Re-check prereqs step, then re-open the "
+                    f"wizard."
+                )
+                update_status(msg)
+                on_line(f"[wizard] {msg}")
+                retry_btn.disabled = True
+                return
+            build_state["attempt_count"] += 1
+            on_line(
+                f"[wizard] === build attempt "
+                f"{build_state['attempt_count']}/{MAX_STEP_ATTEMPTS} ==="
+            )
             log_lines.clear()
             log_box.text = ""
             next_btn.disabled = True
             retry_btn.disabled = True
             threading.Thread(target=run_in_worker, daemon=True).start()
 
+        def _reset_and_start(*_):
+            build_state["attempt_count"] = 0
+            start_worker()
+
         retry_btn.bind(on_release=lambda _i: start_worker())
-        s.bind(on_pre_enter=lambda _i: start_worker())
+        s.bind(on_pre_enter=_reset_and_start)
         return s
 
     # --- 7. Deploy target
@@ -1110,7 +1528,9 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
     sm.add_widget(build_prereqs())
     sm.add_widget(build_nsp())
     sm.add_widget(build_extract())
-    sm.add_widget(build_ip())
+    # BridgeIpPage intentionally NOT registered — bridge IP is now
+    # captured silently via detect_lan_ip() (see wizard_state init above)
+    # and baked in as a fallback for the new runtime UDP discovery.
     sm.add_widget(build_build())
     sm.add_widget(build_deploy())
     sm.add_widget(build_done())

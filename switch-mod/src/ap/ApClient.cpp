@@ -30,6 +30,7 @@
 // links against the assembly stubs.
 #include "lib/nx/nx.h"
 
+#include "ApDiscovery.hpp"
 #include "ApProtocol.hpp"
 #include "ApState.hpp"
 #include "../game/CaptureGate.hpp"
@@ -73,6 +74,25 @@ constexpr std::int64_t kStableConnectMs = 1000;
 // live Connected) fires the Connected bubble when bridge was already up at
 // SMO boot. Worker-thread exclusive; no atomic needed.
 char s_last_ap_state[24] = "disconnected";
+
+// Worker-side system-bubble emitter. Pushes the text onto ApState's
+// inbound_system_bubbles SPSC ring; drawMain (frame thread) drains and
+// calls CappyMessenger::enqueueSystem from there. Direct worker-thread
+// calls into CappyMessenger race the non-atomic queue_[]/tail_/live_count_
+// state against frame-thread tryPump reads — production has tolerated this
+// on the user's setup, but the Hakkun-migration build crashes Ryujinx's
+// ARMeilleure JIT on the same race, which exposed it. Fix it at the source.
+void enqueueSystemBubble(const char* text) {
+    if (!text || !*text) return;
+    ApState::SystemBubble msg;
+    std::size_t i = 0;
+    while (i + 1 < sizeof(msg.text) && text[i] != '\0') {
+        msg.text[i] = text[i];
+        ++i;
+    }
+    msg.text[i] = '\0';
+    ApState::instance().inbound_system_bubbles.push(msg);
+}
 
 // Stack must be page-aligned; size must be a multiple of page size. nn::os
 // CreateThread takes the BASE address + size (svcCreateThread takes top).
@@ -278,8 +298,7 @@ void ApClient::threadMain() {
             deadline > 0 && ApState::nowMs() >= deadline) {
             SMOAP_LOG_INFO("[bubble] firing deferred 'Disconnected from "
                            "Archipelago' (grace expired)");
-            smoap::ui::CappyMessenger::instance()
-                .enqueueSystem("Disconnected from Archipelago");
+            enqueueSystemBubble("Disconnected from Archipelago");
             std::strcpy(s_last_ap_state, "disconnected");
             pending_disconnect_bubble_at_ms_.store(0, std::memory_order_relaxed);
         }
@@ -297,15 +316,13 @@ void ApClient::threadMain() {
             if (ready_now) {
                 SMOAP_LOG_INFO("[bubble] firing deferred save-load status "
                                "'Connected to Archipelago' (ap_state=ready)");
-                smoap::ui::CappyMessenger::instance()
-                    .enqueueSystem("Connected to Archipelago");
+                enqueueSystemBubble("Connected to Archipelago");
                 save_load_announce_deadline_ms_.store(0, std::memory_order_relaxed);
             } else if (expired) {
                 SMOAP_LOG_INFO("[bubble] firing deferred save-load status "
                                "'Not connected to Archipelago' (wait expired, "
                                "ap_state=%s)", s_last_ap_state);
-                smoap::ui::CappyMessenger::instance()
-                    .enqueueSystem("Not connected to Archipelago");
+                enqueueSystemBubble("Not connected to Archipelago");
                 save_load_announce_deadline_ms_.store(0, std::memory_order_relaxed);
             }
         }
@@ -340,6 +357,24 @@ void ApClient::threadMain() {
         if (socket_fd_ < 0) {
             connected_at_ms = 0;
             ApState::instance().conn.store(ConnState::Connecting);
+            // Runtime bridge discovery via UDP. On success, target_ is
+            // overwritten with the discovered host:port for this connect
+            // cycle. On failure (no UDP reply on any of loopback /
+            // broadcast / fallback-unicast), target_ retains whatever the
+            // wizard baked in as -DBRIDGE_HOST and the TCP connectOnce
+            // below tries that directly (step 4 — TCP-fallback).
+            //
+            // The discovery probe + reply round-trip is bounded by the
+            // probe timeouts in ApDiscovery.cpp (~3 sec worst case if
+            // every step fails); cheap relative to the existing
+            // exponential-backoff reconnect cadence.
+            {
+                BridgeTarget discovered{};
+                if (resolveBridge(discovered, target_)) {
+                    target_.host = discovered.host;
+                    target_.port = discovered.port;
+                }
+            }
             if (!connectOnce()) {
                 SMOAP_LOG_WARN("connect failed; sleeping %u ms before retry", backoff_ms);
                 svcSleepThread(static_cast<s64>(backoff_ms) * 1'000'000);  // ms -> ns
@@ -592,6 +627,14 @@ void ApClient::sendHello() {
     Hello hello;
     hello.mod_ver = SMO_AP_MOD_VERSION_STRING;
     hello.smo_ver = SMO_VERSION_STRING;
+    // hello.device_id is left empty in v1. The bridge synthesizes a
+    // disambiguator from the peer IPv4 (`sw-<last-octet>`) so the
+    // selector popup still shows distinct entries for two Switches on
+    // the same LAN. Future enhancement: wire `nn::settings::Get
+    // DeviceNickname` via HookSymbols.hpp + nn::ro::LookupSymbol so the
+    // user's Switch nickname shows up here (verify symbol with
+    // scripts/check_nso_symbols.py first — it may live in an SDK sysmod
+    // rather than main.nso).
     smoap::util::json::LineBuffer line;
     encodeHello(line, hello);
     SMOAP_LOG_INFO("[conn] sending HELLO (%zu bytes)", line.size());
@@ -1000,16 +1043,14 @@ void ApClient::handleLine(char* line, std::size_t line_len) {
                 SMOAP_LOG_INFO("[bubble] suppressing 'Connected to Archipelago' "
                                "(rehello window)");
             } else {
-                smoap::ui::CappyMessenger::instance()
-                    .enqueueSystem("Connected to Archipelago");
+                enqueueSystemBubble("Connected to Archipelago");
             }
         } else if (was_ready && now_disconnected) {
             if (bubble_suppressed) {
                 SMOAP_LOG_INFO("[bubble] suppressing 'Disconnected from Archipelago' "
                                "(rehello window, ap_state path)");
             } else {
-                smoap::ui::CappyMessenger::instance()
-                    .enqueueSystem("Disconnected from Archipelago");
+                enqueueSystemBubble("Disconnected from Archipelago");
             }
         }
         std::size_t i = 0;
@@ -1031,8 +1072,7 @@ void ApClient::handleLine(char* line, std::size_t line_len) {
                 SMOAP_LOG_INFO("[bubble] firing deferred save-load status "
                                "'Connected to Archipelago' (ap_state=ready "
                                "arrived inside wait window)");
-                smoap::ui::CappyMessenger::instance()
-                    .enqueueSystem("Connected to Archipelago");
+                enqueueSystemBubble("Connected to Archipelago");
                 save_load_announce_deadline_ms_.store(0, std::memory_order_relaxed);
             }
         }
@@ -1071,7 +1111,7 @@ void ApClient::handleLine(char* line, std::size_t line_len) {
         // route it straight into the speech-bubble queue. Empty text is
         // a no-op (enqueueSystem guards).
         SMOAP_LOG_INFO("[cappy] system bubble text='%s'", m.cappy.text);
-        smoap::ui::CappyMessenger::instance().enqueueSystem(m.cappy.text);
+        enqueueSystemBubble(m.cappy.text);
     } else if (eq(m.t, "shine_scouts")) {
         // AP-classification moon color. Bridge sends one or more chunks of
         // (shine_uid -> palette) after AP LocationInfo lands, and a full
