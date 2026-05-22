@@ -74,15 +74,57 @@ python scripts/install_apworld.py --bundle-mod --bundle-scripts
 python -c "import zipfile; zipfile.ZipFile('vendor/Archipelago/custom_worlds/meatballs.apworld').printdir()"
 ```
 
+## Pre-tag local audit
+
+The `clean-windows-audit` CI job that used to gate `publish-release` was
+disabled — cold-cache LLVM tar.xz downloads to `windows-2022` runners
+consistently exceeded the job timeout, and `actions/cache` never
+populated. The replacement is a local PowerShell harness that sandboxes
+`%APPDATA%\SMOArchipelago\` + the switch-mod build dirs, narrows PATH to
+the vendored toolchain, and runs `release_audit.py --all` against the
+result.
+
+**One-time setup** (after each fresh clone):
+
+```pwsh
+powershell -ExecutionPolicy Bypass -File scripts\install_hooks.ps1
+```
+
+This sets `core.hooksPath = .githooks` so the tracked `pre-push` hook is
+picked up.
+
+**What happens on tag push:** `git push origin v0.X.Y-alpha` triggers
+`.githooks/pre-push`, which detects the tag refspec, runs
+`scripts\local_release_audit.ps1`, and blocks the push if the audit
+fails. Wall time: ~5–10 min on a warm-build machine (no toolchain
+download; the build itself is the slow step).
+
+**Run standalone any time:**
+
+```pwsh
+powershell -ExecutionPolicy Bypass -File scripts\local_release_audit.ps1
+```
+
+**Bypass (use sparingly — only if you've already audited manually):**
+
+```pwsh
+git push --no-verify origin v0.X.Y-alpha
+```
+
+The harness expects the wizard's portable LLVM + WinLibs to already be
+installed at `%LOCALAPPDATA%\SMOArchipelago\{llvm,winlibs}\`. If either
+is missing, it exits with a clear error pointing at the wizard's prereq
+install step.
+
 ## Pre-release checklist
 
 Before pushing a release tag, verify:
 
 - `python -m pytest apworld/smo_archipelago/tests/` is green
 - `SMOAP_LIVE_AP=1 SMOAP_GEN_TEST_FAST=1 python -m pytest apworld/smo_archipelago/tests/test_apworld_generation.py` is green
-- The wizard actually runs end-to-end on a clean
-  `%APPDATA%/SMOArchipelago/` directory (the only path that can't be
-  unit-tested — needs real LLVM 19 + msys2 + hactool + NSP)
+- `scripts\local_release_audit.ps1` exits clean (the pre-push hook runs
+  this automatically; this line is for when you want to validate before
+  even tagging)
 - `docs/first-time-setup.md` reflects any prereq changes
 - `CLAUDE.md` and the active plan file have been updated if architecture
   shifted
