@@ -14,6 +14,7 @@
 #include "ap/ApClient.hpp"
 #include "ap/ApConfig.hpp"
 #include "ap/ApState.hpp"
+#include "ui/ApDebugConsole.hpp"
 #include "ui/ApHudOverlay.hpp"
 #include "ui/CappyMessenger.hpp"
 #include "util/Log.hpp"
@@ -140,13 +141,14 @@ HkTrampoline<void, GameSystem*> gameSystemInitHook =
 
         SMOAP_LOG_INFO("starting ApClient worker");
         smoap::ap::ApClient::instance().start(smoap::ap::BridgeTarget{
-            .host = cfg.bridge_host,
+            .host = cfg.bridge_host,  // seed; ApDiscovery overwrites with the actual reply sender
             .port = cfg.bridge_port,
             .retry_ms = cfg.retry_ms,
             .recv_timeout_ms = cfg.recv_timeout_ms,
         });
 
         smoap::ui::initHud();
+        smoap::ui::initDebugConsole();
 
         SMOAP_LOG_INFO("<<< GameSystem::init hook complete");
     });
@@ -203,6 +205,7 @@ HkTrampoline<void, const HakoniwaSequence*> drawMainHook =
         smoap::ap::ApState::instance().flushPendingCaptureGrants();
         smoap::hooks::tickPendingUncapture();
         smoap::ui::drawHudFrame();
+        smoap::ui::drawDebugConsole();
 
         // Drain worker-thread system-bubble pushes before tryPump so a freshly
         // arrived "Connected/Disconnected/Not connected to Archipelago" lands

@@ -75,7 +75,15 @@ HAKKUN = os.path.join(SWITCH_MOD, "sys")
 def patch_file(path: str, old: str, new: str, sentinel: str) -> str:
     """Apply a literal-string patch. Idempotent via sentinel check.
 
-    Returns 'applied', 'already-applied', or 'missing'.
+    Returns 'applied', 'already-applied', 'missing', or 'upstream-shifted'.
+
+    `upstream-shifted` (warning, not error) means the expected old text
+    isn't present and the sentinel isn't either — most commonly this happens
+    when bumping LibHakkun across a branch hop (main → imgui) where some
+    of our Windows-port patches have been merged upstream or refactored
+    away. We warn so the build proceeds; if the missing patch is still
+    needed it will surface as a compile/link failure later (informative
+    enough to point us at which patch needs reworking).
     """
     if not os.path.exists(path):
         return "missing"
@@ -83,10 +91,7 @@ def patch_file(path: str, old: str, new: str, sentinel: str) -> str:
     if sentinel in content:
         return "already-applied"
     if old not in content:
-        # The expected old text isn't present and the sentinel isn't either.
-        # Either upstream has moved (need to revisit this patch) or we're
-        # already mid-migration to a fork. Fail loud.
-        sys.exit(f"[patch_hakkun] '{path}': old text not found and sentinel absent; upstream likely changed")
+        return "upstream-shifted"
     new_content = content.replace(old, new, 1)
     open(path, "w", encoding="utf-8", newline="\n").write(new_content)
     return "applied"

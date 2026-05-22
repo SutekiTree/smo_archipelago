@@ -33,6 +33,15 @@ set(BAKE_SYMBOLS FALSE)
 # HeapSourceDynamic is essential — routes operator new / malloc / free to
 # SMO's own allocator (which is thread-safe; see spike Gate 4). Without this
 # addon, std::vector::push_back / std::string growth would call musl malloc
-# directly and NULL-deref on hk::os::Thread instances. No Nvn/DebugRenderer
-# in production — those are spike-only.
+# directly and NULL-deref on hk::os::Thread instances.
+#
+# Future: Nvn + ImGui addons (for on-Switch debug overlay) live on
+# LibHakkun's imgui branch which has a divergent code-structure that
+# breaks our trampoline relocator patches. Cherry-picking the addons onto
+# this stdlib pin is the path; setup_imgui_addons.py + the addon code
+# are in tree but compile-time-gated by SMOAP_HAS_IMGUI (defined only
+# when both sys/addons/ImGui/CMakeLists.txt AND lib/imgui/imgui.h exist).
+# Until that work lands, the on-Switch diagnostic surface is Cappy speech
+# bubbles + the always-on 16 KiB log ring (drained to SD when
+# -DSMOAP_DEBUG_SD_LOG=ON).
 set(HAKKUN_ADDONS HeapSourceDynamic)
