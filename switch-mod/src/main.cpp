@@ -56,20 +56,81 @@ void installCaptureGrantSymbols();
 void reconcileCaptureDictionary();
 }  // namespace smoap::game
 
+// Forward-declare nn::socket::Initialize so the GameSystem::init hook can
+// open our own bsd:u session before SMO's gets a chance. sail resolves
+// it against main.nso via syms/nn/socket.sym.
+namespace nn::socket {
+    unsigned int Initialize(void* pool, unsigned long poolSize,
+                            unsigned long allocPoolSize, int concurLimit);
+}
+
 namespace {
 
-// Hook 1: GameSystem::init runs during SMO startup. After Orig, kick off
-// the AP socket worker + HUD. Equivalent to production switch-mod's
-// GameSystemInitHook except via HkTrampoline.
+// Larger socket pool than SMO's stock setup — borrowed from Kgamer77/
+// SMOO-Plus-Hakkun's main.cpp pattern. 6 MB transfer pool + 128 KB
+// allocator pool, page-aligned. We need this because:
+//   1. nn::socket::Initialize can only be called ONCE per process; the
+//      first call wins. If SMO calls it first with its (smaller) pool,
+//      we either get a re-init assert (if we re-call) or are stuck with
+//      whatever SMO chose. Either way we lose pool control.
+//   2. Opening a parallel hk::socket client against bsd:u — our prior
+//      approach — fails on retail with `KernelResult_OutOfSessions`
+//      because svcConnectToNamedPort("sm:") exceeds the per-process
+//      session quota. See project_sail_missing_symbol_crashes_init's
+//      sibling memory about Kgamer's init pattern.
+//
+// Wired in below: pre-orig, we call Initialize ourselves with this pool,
+// then install a no-op HkTrampoline at nn::socket::Initialize so SMO's
+// later call is neutered.
+constexpr unsigned long kSocketPoolSize      = 0x600000;   // 6 MB
+constexpr unsigned long kSocketAllocPoolSize = 0x20000;    // 128 KB
+alignas(0x1000) char g_socket_pool[kSocketPoolSize + kSocketAllocPoolSize];
+
+// No-op trampoline used to disarm nn::socket::Initialize after our own
+// call lands. Has to be installed BEFORE orig fires so SMO's invocation
+// during GameSystem::init lands on the no-op.
+HkTrampoline<unsigned int, void*, unsigned long, unsigned long, int>
+    disableSocketInit = hk::hook::trampoline(
+        [](void*, unsigned long, unsigned long, int) -> unsigned int {
+            return 0;  // nn::Result success
+        });
+
+// Hook 1: GameSystem::init runs during SMO startup. We do the socket
+// bring-up BEFORE orig (so our pool wins the one-shot Initialize race),
+// then call orig, then start the AP worker.
 HkTrampoline<void, GameSystem*> gameSystemInitHook =
     hk::hook::trampoline([](GameSystem* self) -> void {
-        SMOAP_LOG_INFO(">>> GameSystem::init hook FIRED (calling orig)");
+        SMOAP_LOG_INFO(">>> GameSystem::init hook FIRED");
+
+        // Socket init MUST land before orig — SMO's startup path calls
+        // nn::socket::Initialize from inside GameSystem::init.orig, and
+        // the second call would either assert ("already initialized")
+        // or silently leave us stuck with SMO's pool. Pattern from
+        // Kgamer77/SMOO-Plus-Hakkun:main.cpp.
+        SMOAP_LOG_INFO("[init] nn::socket::Initialize (our pool, %lu+%lu bytes)",
+                       kSocketPoolSize, kSocketAllocPoolSize);
+        const unsigned int sock_rc = nn::socket::Initialize(
+            g_socket_pool, kSocketPoolSize, kSocketAllocPoolSize,
+            /*concurLimit=*/0xE);
+        if (sock_rc != 0) {
+            SMOAP_LOG_ERROR("[init] nn::socket::Initialize FAILED rc=0x%x",
+                            sock_rc);
+        } else {
+            SMOAP_LOG_INFO("[init] nn::socket::Initialize OK");
+        }
+        // Disarm SMO's eventual call so it can't double-init / clobber
+        // our pool. installAtSym requires the mangled name as a literal
+        // template arg.
+        disableSocketInit.installAtSym<"_ZN2nn6socket10InitializeEPvmmi">();
+
+        SMOAP_LOG_INFO(">>> calling GameSystem::init orig");
         gameSystemInitHook.orig(self);
         SMOAP_LOG_INFO(">>> GameSystem::init orig returned");
 
         const auto cfg = smoap::ap::loadApConfig();
 
-        // nifm + socket bring-up MUST happen on this (frame) thread.
+        // nifm bring-up MUST happen on this (frame) thread. Socket session
+        // is already up from our pre-orig Initialize above.
         smoap::ap::ApClient::instance().initNetworking();
 
         // Force ApState singleton construction now (same nn-singleton
@@ -99,7 +160,9 @@ HkTrampoline<void, const HakoniwaSequence*> drawMainHook =
             s_first = false;
             SMOAP_LOG_INFO(">>> drawMain hook FIRED (first frame)");
         }
-        smoap::util::drainPendingToFile();  // no-op stub post-Hakkun migration
+        // SD-card boot-log drain: no-op unless built with -DSMOAP_DEBUG_SD_LOG=ON.
+        // Drains the ring buffer once at frame ~300 (~5s).
+        smoap::util::drainPendingToFile();
         drawMainHook.orig(self);
 
         if (self) {

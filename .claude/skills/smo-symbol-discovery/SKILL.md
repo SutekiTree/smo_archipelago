@@ -65,7 +65,7 @@ To check one specific entry:
 & "C:/Program Files/LLVM/bin/llvm-nm.exe" --dynamic switch-mod/build/fakesymbols.so | Select-String "tryFindShineMessage"
 ```
 
-The runtime check is the actual smoke test, though — boot the build and watch for `lookupSymbol FAILED` lines in `smoap.log`. Those name the symbol that couldn't resolve and tell you which `.sym` entry is wrong.
+The runtime check is the actual smoke test, though — boot the build and watch for `lookupSymbol FAILED` lines in Ryujinx's log (`%APPDATA%\Ryujinx\Logs\Ryujinx_*.log`) or, if the bridge has connected, in `<Archipelago>/logs/SMOClient.txt`. Those name the symbol that couldn't resolve and tell you which `.sym` entry is wrong.
 
 ## Common reasons a symbol misses
 

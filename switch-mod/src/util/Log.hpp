@@ -1,14 +1,19 @@
 // Lightweight logging.
 //
-// Each SMOAP_LOG_* writes to svcOutputDebugString (Ryujinx-visible; on real
-// Switch goes to lm where binlog visibility is spotty).
+// Each SMOAP_LOG_* writes to hk::svc::OutputDebugString (Ryujinx-visible;
+// on real Switch routed into lm — see CAVEAT below).
 //
 // Optional: configure with -DSMOAP_DEBUG_SD_LOG=ON to additionally dump
 // the first ~5 seconds of log output as a one-shot file write to
-// sd:/smo_ap.txt at drawMain frame 300. This is purely a boot-time
-// diagnostic for cases where lm + svcOutputDebugString are both invisible
-// (e.g. real Switch with no PC monitor). Off by default; see
-// switch-mod/CMakeLists.txt SMOAP_DEBUG_SD_LOG option.
+// sd:/smo_ap.txt at drawMain frame ~300. This is purely a boot-time
+// diagnostic for cases where Ryujinx isn't running and lm isn't usable.
+// Off by default; see switch-mod/CMakeLists.txt SMOAP_DEBUG_SD_LOG option.
+//
+// CAVEAT (real Switch): Atmosphere's lm sink does NOT redirect per-title
+// debug-log output into a file at sd:/atmosphere/contents/<TID>/. Older
+// project docs that pointed users at `smoap.log` under that path were
+// wrong — there has never been a file at that path. Use SMOAP_DEBUG_SD_LOG
+// when you need on-device log capture without Ryujinx.
 //
 // log() is safe to call from any thread (init, worker, frame, hooks);
 // allocator-free, atomic_flag spinlock + memcpy when the ring is enabled.

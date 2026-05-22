@@ -1,17 +1,23 @@
-// TCP client to the PC bridge — Hakkun port (phase 3b residual).
+// TCP client to the PC bridge.
 //
-// Owns a single hk::socket TCP connection on a dedicated worker thread.
-// The frame thread (drawMain trampoline) only touches ApState's lock-free
-// SPSC rings; this thread does all blocking I/O.
+// Owns a single TCP connection on a dedicated worker thread. The frame
+// thread (drawMain trampoline) only touches ApState's lock-free SPSC
+// rings; this thread does all blocking I/O.
+//
+// Socket session: we use nn::socket::* directly (no parallel hk::socket
+// client + no parallel sm: session). main.cpp's GameSystemInit pre-orig
+// hook calls nn::socket::Initialize with our own 6MB+128KB pool and
+// installs a no-op trampoline at the SMO-side Initialize so the game
+// can't re-init / clobber the pool. By the time initNetworking() runs
+// post-orig, nn::socket is fully up. Pattern from Kgamer77/
+// SMOO-Plus-Hakkun:main.cpp — fixes KernelResult_OutOfSessions seen on
+// retail when opening a second sm: connection via hk::sm.
 //
 // Thread sequence:
 //   1. start() (called from frame thread inside GameSystemInit hook):
 //      saves target, spawns worker, returns immediately.
-//   2. initNetworking() (frame thread, before start): nn::nifm::Initialize +
-//      SubmitNetworkRequestAndWait then hk::socket::Socket::initialize<"bsd:u">.
-//      SMO has its own nn::socket::Initialize, but per the Hakkun spike Gate 2
-//      a parallel hk::socket::Socket client coexists without conflict
-//      (sm:: hands out an independent bsd:u handle).
+//   2. initNetworking() (frame thread, before start): nn::nifm bring-up
+//      only — socket session was already established pre-orig.
 //   3. threadMain() loop: connectOnce -> sendHello -> poll+recv read,
 //      pumpOnce drain outbound, error-on-disconnect with backoff retry.
 
@@ -22,11 +28,6 @@
 #include <new>
 
 #include "hk/os/Thread.h"
-#include "hk/services/sm.h"
-#include "hk/services/socket/address.h"
-#include "hk/services/socket/config.h"
-#include "hk/services/socket/poll.h"
-#include "hk/services/socket/service.h"
 #include "hk/svc/api.h"
 #include "hk/svc/cpu.h"
 #include "hk/types.h"
@@ -48,6 +49,39 @@ namespace nn::nifm {
     bool IsNetworkAvailable();
 }  // namespace nn::nifm
 
+// Nintendo bsd:u sockaddr layout. NOT POSIX. Names MUST be `sockaddr` /
+// `in_addr` / `pollfd` at file scope — the mangled symbols sail resolves
+// against main.nso (e.g. _ZN2nn6socket7ConnectEiPK8sockaddrj) encode these
+// literal type names. Layout per lunakit-vendor src/nn/socket.hpp.
+struct in_addr { u32 s_addr; };
+struct sockaddr {
+    u8 sa_len;
+    u8 sa_family;
+    u16 sa_port;   // network byte order
+    in_addr sa_addr;
+    u8 sa_zero[8];
+};
+struct pollfd { s32 fd; short events; short revents; };
+
+// nn::socket — sail resolves against SMO's dynsym. See syms/nn/socket.sym.
+// Initialize is NOT declared here (main.cpp owns it).
+namespace nn::socket {
+    s32 Socket(s32 domain, s32 type, s32 protocol);
+    u32 Connect(s32 socket, const ::sockaddr* addr, u32 addrLen);
+    s32 Send(s32 socket, const void* data, unsigned long len, s32 flags);
+    s32 Recv(s32 socket, void* out, unsigned long len, s32 flags);
+    s32 SendTo(s32 socket, const void* data, unsigned long len, s32 flags,
+               const ::sockaddr* addr, u32 addrLen);
+    s32 RecvFrom(s32 socket, void* out, unsigned long len, s32 flags,
+                 ::sockaddr* addr, u32* addrLen);
+    s32 SetSockOpt(s32 socket, s32 level, s32 option, const void* val, u32 len);
+    u32 Close(s32 socket);
+    s32 Poll(::pollfd* fds, unsigned long n, s32 timeout_ms);
+    u16 InetHtons(u16 val);
+    s32 InetAton(const char* str, ::in_addr* out);
+    s32 GetLastErrno();
+}  // namespace nn::socket
+
 namespace smoap::ap {
 
 namespace {
@@ -68,11 +102,6 @@ alignas(0x1000) u8 g_worker_stack[kWorkerStackSize];
 // placement new from start() rather than at file-static init time.
 alignas(hk::os::Thread) char g_worker_thread_storage[sizeof(hk::os::Thread)];
 hk::os::Thread* g_worker_thread = nullptr;
-
-// hk::socket::Socket transfer-memory pool. Page-aligned, sized via
-// ServiceConfig::calcTransferMemorySize() at init time.
-constexpr std::size_t kSocketBufferSize = 0x60000;  // ServiceConfig defaults
-alignas(0x1000) u8 g_socket_buffer[kSocketBufferSize];
 
 // Exponential backoff caps (ms): 1s, 2s, 5s, 10s, 30s.
 constexpr std::uint32_t kBackoffCapMs = 30 * 1000;
@@ -116,110 +145,93 @@ void enqueueSystemBubble(const char* text) {
     ApState::instance().inbound_system_bubbles.push(msg);
 }
 
-// Thin wrappers around hk::socket::Socket so the worker-loop call sites stay
-// close to the production code shape. Each wrapper unpacks the
-// ValueOrResult<Tuple<s32,s32>> envelope and returns BSD-style (ret, errno):
+// Thin wrappers around nn::socket so the worker-loop call sites stay
+// close to the production code shape. Each wrapper returns BSD-style
+// (ret, errno):
 //   ret >= 0  -> success, value depends on op (bytes / fd / 0)
 //   ret  < 0  -> failure, errno carries the reason
-// Hakkun's send/recv tuples are (return value, errno). IPC-level failures
-// (Socket::instance() being nullptr, service IPC error) collapse into
-// ret=-1, errno=ECONNRESET so the caller's "treat as socket dead" path
-// triggers and we reconnect.
 struct SockResult {
     s32 ret;
     s32 err;
 };
 
-SockResult sockSocket(hk::socket::AddressFamily fam,
-                      hk::socket::Type type,
-                      hk::socket::Protocol proto) {
-    auto* sock = hk::socket::Socket::instance();
-    if (!sock) return {-1, 104};  // ECONNRESET
-    auto vor = sock->socket(fam, type, proto);
-    if (!vor.hasValue()) return {-1, 104};
-    auto t = vor.getInnerValue();
-    return {t.a, t.b};
+constexpr s32 kAfInet      = 2;
+constexpr s32 kSockStream  = 1;
+constexpr s32 kSockDgram   = 2;
+constexpr s32 kIpprotoTcp  = 6;
+constexpr s32 kIpprotoUdp  = 17;
+
+constexpr s32 kPollIn      = 0x0001;  // POLLIN / POLLRDNORM
+constexpr s32 kPollErr     = 0x0008;
+constexpr s32 kPollHup     = 0x0010;
+
+SockResult sockSocketTcp() {
+    const s32 fd = nn::socket::Socket(kAfInet, kSockStream, kIpprotoTcp);
+    if (fd < 0) return {fd, nn::socket::GetLastErrno()};
+    return {fd, 0};
 }
 
-SockResult sockConnect(s32 fd, const hk::socket::SocketAddrIpv4& addr) {
-    auto* sock = hk::socket::Socket::instance();
-    if (!sock) return {-1, 104};
-    // hk::socket::Socket::connect's template signature has an unused second
-    // type parameter B which template-deduction can't infer from the args;
-    // provide it explicitly.
-    auto vor = sock->connect<hk::socket::SocketAddrIpv4, int>(fd, addr);
-    if (!vor.hasValue()) return {-1, 104};
-    auto t = vor.getInnerValue();
-    return {t.a, t.b};
+SockResult sockSocketUdp() {
+    const s32 fd = nn::socket::Socket(kAfInet, kSockDgram, kIpprotoUdp);
+    if (fd < 0) return {fd, nn::socket::GetLastErrno()};
+    return {fd, 0};
+}
+
+SockResult sockConnect(s32 fd, const ::sockaddr& addr) {
+    const u32 rc = nn::socket::Connect(fd, &addr, sizeof(addr));
+    if (rc != 0) return {-1, nn::socket::GetLastErrno()};
+    return {0, 0};
 }
 
 SockResult sockClose(s32 fd) {
-    auto* sock = hk::socket::Socket::instance();
-    if (!sock) return {-1, 104};
-    auto vor = sock->close(fd);
-    if (!vor.hasValue()) return {-1, 104};
-    auto t = vor.getInnerValue();
-    return {t.a, t.b};
+    const u32 rc = nn::socket::Close(fd);
+    if (rc != 0) return {-1, nn::socket::GetLastErrno()};
+    return {0, 0};
 }
 
 SockResult sockSend(s32 fd, const void* data, std::size_t len) {
-    auto* sock = hk::socket::Socket::instance();
-    if (!sock) return {-1, 104};
-    auto vor = sock->send(fd,
-                          hk::Span<const u8>(static_cast<const u8*>(data), len),
-                          0);
-    if (!vor.hasValue()) return {-1, 104};
-    auto t = vor.getInnerValue();
-    return {t.a, t.b};
+    const s32 n = nn::socket::Send(fd, data, len, 0);
+    if (n < 0) return {n, nn::socket::GetLastErrno()};
+    return {n, 0};
 }
 
 SockResult sockRecv(s32 fd, void* data, std::size_t len) {
-    auto* sock = hk::socket::Socket::instance();
-    if (!sock) return {-1, 104};
-    auto vor = sock->recv(fd,
-                          hk::Span<u8>(static_cast<u8*>(data), len),
-                          0);
-    if (!vor.hasValue()) return {-1, 104};
-    auto t = vor.getInnerValue();
-    return {t.a, t.b};
+    const s32 n = nn::socket::Recv(fd, data, len, 0);
+    if (n < 0) return {n, nn::socket::GetLastErrno()};
+    return {n, 0};
 }
 
 SockResult sockSetKeepalive(s32 fd) {
-    auto* sock = hk::socket::Socket::instance();
-    if (!sock) return {-1, 104};
-    // Use the explicit Span-taking overload — the templated convenience form
-    // `setSockOpt(fd, level, opt, T&)` fails to compile because its body
-    // constructs Span<const u8> directly from `&opt` which is `const s32*`,
-    // and Span's constructor wants `const u8*`.
     const s32 keepalive = 1;
-    auto vor = sock->setSockOpt(
-        fd, kSolSocket, kSoKeepAlive,
-        hk::Span<const u8>(reinterpret_cast<const u8*>(&keepalive),
-                           sizeof(keepalive)));
-    if (!vor.hasValue()) return {-1, 104};
-    auto t = vor.getInnerValue();
-    return {t.a, t.b};
+    const s32 rc = nn::socket::SetSockOpt(
+        fd, kSolSocket, kSoKeepAlive, &keepalive, sizeof(keepalive));
+    if (rc < 0) return {rc, nn::socket::GetLastErrno()};
+    return {0, 0};
 }
 
 // Returns >0 if socket is readable, 0 on timeout, <0 on error.
 int sockPollReadable(s32 fd, std::uint32_t timeout_ms) {
-    auto* sock = hk::socket::Socket::instance();
-    if (!sock) return -1;
-    hk::socket::PollFd pfd[1] = {
-        {.fd = fd,
-         .requestedEvents = hk::socket::PollEvents::CanRead,
-         .returnedEvents  = hk::socket::PollEvents::Default},
-    };
-    auto vor = sock->poll(hk::Span<hk::socket::PollFd>(pfd, 1),
-                          static_cast<s32>(timeout_ms));
-    if (!vor.hasValue()) return -1;
-    auto t = vor.getInnerValue();
-    if (t.a < 0) return -1;
-    if (t.a == 0) return 0;
-    using PE = hk::socket::PollEvents;
-    const auto re = pfd[0].returnedEvents;
-    if (re & (PE::Error | PE::HangUp)) return -1;
-    return (re & PE::CanRead) ? 1 : 0;
+    ::pollfd pfd{ .fd = fd, .events = kPollIn, .revents = 0 };
+    const s32 n = nn::socket::Poll(&pfd, 1, static_cast<s32>(timeout_ms));
+    if (n < 0) return -1;
+    if (n == 0) return 0;
+    if (pfd.revents & (kPollErr | kPollHup)) return -1;
+    return (pfd.revents & kPollIn) ? 1 : 0;
+}
+
+// Fill out a `sockaddr` with a dotted-IPv4 host + port. Returns false if
+// the host string isn't a valid IPv4 literal. We don't currently resolve
+// hostnames — all bridge targets are IPv4 (discovery / fallback / wizard
+// LAN IP); add InetPton or GetAddrInfo here if hostname targets land later.
+bool sockAddrFromIpv4(const char* host, std::uint16_t port, ::sockaddr& out) {
+    ::in_addr ia{};
+    if (nn::socket::InetAton(host, &ia) == 0) return false;
+    out = ::sockaddr{};
+    out.sa_len    = sizeof(out);
+    out.sa_family = kAfInet;
+    out.sa_port   = nn::socket::InetHtons(port);
+    out.sa_addr   = ia;
+    return true;
 }
 
 // M6 phase D — translate an ApState snapshot into the wire PaySnapshot,
@@ -256,6 +268,10 @@ ApClient& ApClient::instance() {
 }
 
 void ApClient::initNetworking() {
+    // nifm only — nn::socket bring-up happened in main.cpp's pre-orig
+    // GameSystem::init hook (with our 6MB+128KB pool) and SMO's later
+    // Initialize call was trampoline'd to a no-op. So by the time we get
+    // here, the socket session is live; no sm/socket setup needed.
     SMOAP_LOG_INFO("[frame] nn::nifm::Initialize");
     const u32 nifm_rc = nn::nifm::Initialize();
     if (nifm_rc != 0) {
@@ -266,47 +282,7 @@ void ApClient::initNetworking() {
     nn::nifm::SubmitNetworkRequestAndWait();
     const bool net_up = nn::nifm::IsNetworkAvailable();
     SMOAP_LOG_INFO("[frame] network available: %s", net_up ? "YES" : "NO");
-
-    // Bring up our own sm: connection FIRST. Hakkun's HK_SINGLETON pattern
-    // does NOT lazy-init — `sm::ServiceManager::instance()` returns an
-    // uninitialized pointer until `initialize()` runs, and the first
-    // getServiceHandle null-derefs (verified 2026-05-20 in Ryujinx — crash at
-    // PC subsdk+0x25ba0 with bsd:u name in X[8]). Spike Gate 2 didn't catch
-    // this because it only took the function address, never actually called
-    // Socket::initialize. Each Switch process can hold multiple sm: sessions,
-    // so opening our own alongside SMO's is fine.
-    SMOAP_LOG_INFO("[frame] hk::sm::ServiceManager::initialize");
-    auto sm_init = hk::sm::ServiceManager::initialize();
-    if (!sm_init.hasValue()) {
-        SMOAP_LOG_ERROR("[frame] sm::ServiceManager::initialize FAILED "
-                        "rc=0x%x — ApClient cannot connect",
-                        static_cast<unsigned>(hk::Result(sm_init).getValue()));
-        return;
-    }
-    SMOAP_LOG_INFO("[frame] sm::ServiceManager::registerClient");
-    if (const auto rc = hk::sm::ServiceManager::instance()->registerClient();
-        rc.failed()) {
-        SMOAP_LOG_ERROR("[frame] sm::registerClient FAILED rc=0x%x — "
-                        "ApClient cannot connect",
-                        static_cast<unsigned>(rc.getValue()));
-        return;
-    }
-
-    // Bring up Hakkun's hk::socket::Socket client against bsd:u. SMO has its
-    // own nn::socket::Initialize already in flight by the time GameSystem::init
-    // returns. Opening a parallel hk::socket client is safe because sm:: hands
-    // each new request an independent bsd:u handle + we supply our own
-    // per-client transfer memory pool.
-    hk::socket::ServiceConfig cfg{};
-    auto vor = hk::socket::Socket::initialize<"bsd:u">(
-        cfg, hk::Span<u8>(g_socket_buffer, kSocketBufferSize));
-    if (!vor.hasValue()) {
-        SMOAP_LOG_ERROR("[frame] hk::socket::Socket::initialize FAILED "
-                        "rc=0x%x — ApClient cannot connect",
-                        static_cast<unsigned>(hk::Result(vor).getValue()));
-        return;
-    }
-    SMOAP_LOG_INFO("[frame] hk::socket ready (parallel client to SMO's)");
+    SMOAP_LOG_INFO("[frame] nn::socket session ready (pool from main.cpp)");
 }
 
 void ApClient::start(const BridgeTarget& target) {
@@ -443,17 +419,37 @@ void ApClient::threadMain() {
             // Runtime bridge discovery via UDP. On success, target_ is
             // overwritten with the discovered host:port for this connect
             // cycle. On failure (no UDP reply on any of loopback /
-            // broadcast / fallback-unicast), target_ retains whatever the
-            // wizard baked in as -DBRIDGE_HOST and connectOnce below tries
-            // that directly (step 4 — TCP-fallback).
+            // broadcast / fallback-unicast), we walk a TCP-fallback chain:
+            //   (a) 127.0.0.1:<port> — covers Ryujinx-on-same-host, where
+            //       SMOClient binds 0.0.0.0:17777 on the PC and the guest
+            //       reaches it via loopback.
+            //   (b) BRIDGE_HOST_STRING:<port> — the wizard-baked LAN IP.
+            // First TCP success wins; connectOnceTo writes the winning
+            // host:port back into target_ so logs + subsequent recv stay
+            // coherent.
+            bool udp_ok = false;
             {
                 BridgeTarget discovered{};
                 if (resolveBridge(discovered, target_)) {
                     target_.host = discovered.host;
                     target_.port = discovered.port;
+                    udp_ok = true;
                 }
             }
-            if (!connectOnce()) {
+            bool connected = false;
+            if (udp_ok) {
+                connected = connectOnce();
+            } else {
+                SMOAP_LOG_INFO("[conn] UDP discovery missed; trying TCP "
+                               "fallback chain (127.0.0.1 -> %s)",
+                               BRIDGE_HOST_STRING);
+                if (connectOnceTo("127.0.0.1", target_.port)) {
+                    connected = true;
+                } else if (connectOnceTo(BRIDGE_HOST_STRING, target_.port)) {
+                    connected = true;
+                }
+            }
+            if (!connected) {
                 SMOAP_LOG_WARN("connect failed; sleeping %u ms before retry", backoff_ms);
                 hk::svc::SleepThread(static_cast<s64>(backoff_ms) * 1'000'000);
                 backoff_ms = backoff_ms < kBackoffCapMs ? backoff_ms * 2 : kBackoffCapMs;
@@ -541,10 +537,12 @@ void ApClient::threadMain() {
 }
 
 bool ApClient::connectOnce() {
-    SMOAP_LOG_INFO("[conn] socket(Ipv4, Stream, Ip)");
-    auto r = sockSocket(hk::socket::AddressFamily::Ipv4,
-                        hk::socket::Type::Stream,
-                        hk::socket::Protocol::Ip);
+    return connectOnceTo(target_.host.c_str(), target_.port);
+}
+
+bool ApClient::connectOnceTo(const char* host, std::uint16_t port) {
+    SMOAP_LOG_INFO("[conn] socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)");
+    auto r = sockSocketTcp();
     SMOAP_LOG_INFO("[conn] socket returned fd=%d errno=%d", r.ret, r.err);
     if (r.ret < 0) {
         SMOAP_LOG_WARN("[conn] socket() failed errno=%d", r.err);
@@ -553,23 +551,19 @@ bool ApClient::connectOnce() {
     }
     socket_fd_ = r.ret;
 
-    // hk::socket::SocketAddrIpv4 encapsulates Nintendo's 16-byte sockaddr
-    // layout (sa_length / sa_family / port / address). No manual workaround
-    // needed.
-    auto parsed = hk::socket::SocketAddrIpv4::parse(target_.host.c_str(), target_.port);
-    if (!parsed.hasValue()) {
-        SMOAP_LOG_WARN("[conn] SocketAddrIpv4::parse failed for %s", target_.host.c_str());
+    ::sockaddr addr{};
+    if (!sockAddrFromIpv4(host, port, addr)) {
+        SMOAP_LOG_WARN("[conn] InetAton failed for %s", host);
         sockClose(socket_fd_);
         socket_fd_ = -1;
         return false;
     }
-    const hk::socket::SocketAddrIpv4 addr = parsed.getInnerValue();
-    SMOAP_LOG_INFO("[conn] connecting to %s:%u", target_.host.c_str(), target_.port);
+    SMOAP_LOG_INFO("[conn] connecting to %s:%u", host, port);
 
     auto cr = sockConnect(socket_fd_, addr);
     if (cr.ret < 0) {
         SMOAP_LOG_WARN("[conn] connect FAILED ret=%d errno=%d (host=%s port=%u fd=%d)",
-                       cr.ret, cr.err, target_.host.c_str(), target_.port, socket_fd_);
+                       cr.ret, cr.err, host, port, socket_fd_);
         sockClose(socket_fd_);
         socket_fd_ = -1;
         return false;
@@ -577,8 +571,15 @@ bool ApClient::connectOnce() {
 
     sockSetKeepalive(socket_fd_);
 
+    // Persist whichever host:port actually landed so subsequent reads/writes
+    // + diagnostic logs stay consistent. Important for the TCP-fallback chain
+    // path where the caller probed multiple targets — without this, a fallback
+    // connect leaves target_ pointing at the failed candidate.
+    target_.host = host;
+    target_.port = port;
+
     SMOAP_LOG_INFO("[conn] CONNECTED to %s:%u (fd=%d)",
-                   target_.host.c_str(), target_.port, socket_fd_);
+                   host, port, socket_fd_);
     return true;
 }
 

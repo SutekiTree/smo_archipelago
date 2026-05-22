@@ -159,10 +159,11 @@ Copy-Item C:\Users\maxwe\Documents\smo_archipelago\.claude\worktrees\<name>\swit
 Copy-Item C:\Users\maxwe\Documents\smo_archipelago\.claude\worktrees\<name>\switch-mod\build\main.npdm $RYU\exefs\main.npdm
 ```
 
-Tail the mod log in another pane:
+Tail the mod log in another pane (Ryujinx surfaces our
+`svcOutputDebugString` output in its own log):
 
 ```pwsh
-Get-Content "$env:APPDATA\Ryujinx\sdcard\atmosphere\contents\0100000000010000\smoap.log" -Wait -Tail 80
+Get-Content (Get-ChildItem "$env:APPDATA\Ryujinx\Logs\Ryujinx_*.log" | Sort LastWriteTime -Desc | Select -First 1) -Wait -Tail 80
 ```
 
 **Validation cases**:

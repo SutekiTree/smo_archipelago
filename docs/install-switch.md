@@ -89,16 +89,22 @@ The M3 build delivers:
 **On-screen UI is deferred to M8.** For now, all status lives in:
 
 - The Tracker tab in SMOClient's Kivy window (received items, kingdom progress).
-- The mod log on the SD card at
-  `sd:/atmosphere/contents/0100000000010000/smoap.log` — every `[smoap …]`
-  line the mod produces. Tail it with your SD-card reader or via FTP.
-- Atmosphere's `lm` log captures the same lines via `svcOutputDebugString`
-  when enabled in `system_settings.ini`:
-  ```
-  [atmosphere]
-  enable_log_manager = u8!0x1
-  ```
-  Logs land in `sd:/atmosphere/logs/` after a session.
+- SMOClient's own log file: every `[smoap …]` line the mod emits is also
+  forwarded over the bridge and lands in
+  `<Archipelago>/logs/SMOClient.txt`. This is the easiest source on a real
+  Switch once the bridge connects.
+- Ryujinx's own log (when running under the emulator):
+  `%APPDATA%\Ryujinx\Logs\Ryujinx_*.log` captures the mod's
+  `svcOutputDebugString` output, plus `[rtld]` unresolved-symbol lines
+  and guest stack traces.
+- For pre-bridge on-device debugging (real Switch, no Ryujinx, bridge not
+  connecting): rebuild the mod with `-DSMOAP_DEBUG_SD_LOG=ON` and the mod
+  will drain its first ~5s of log output to `sd:/smo_ap.txt` once at
+  drawMain frame ~300. **Note**: Atmosphere's `lm` does NOT redirect
+  per-title debug-log output into a file at
+  `sd:/atmosphere/contents/<TID>/` — older docs that pointed users at a
+  `smoap.log` under that path were wrong. The `SMOAP_DEBUG_SD_LOG` route
+  is the supported on-device capture path.
 
 ## Bring-up
 

@@ -1,8 +1,9 @@
 // See ApDiscovery.hpp for the design rationale.
 //
-// Hakkun port of the exlaunch-era ApDiscovery.cpp. Maps nn::socket::*
-// (lunakit wrapper) → hk::socket::Socket::instance()->* and the manual
-// FreeBSD sockaddr workaround → hk::socket::SocketAddrIpv4::parse.
+// Talks to bsd:u via nn::socket::* directly (same session ApClient uses).
+// Migrated from hk::socket → nn::socket alongside ApClient when the parallel
+// hk::sm/hk::socket client started failing on retail with OutOfSessions.
+// See main.cpp's GameSystem::init pre-orig hook + Kgamer init pattern.
 
 #include "ApDiscovery.hpp"
 
@@ -10,25 +11,52 @@
 #include <cstdint>
 #include <cstring>
 
-#include "hk/container/Span.h"
-#include "hk/services/socket/address.h"
-#include "hk/services/socket/poll.h"
-#include "hk/services/socket/service.h"
 #include "hk/types.h"
 
 #include "../util/Json.hpp"
 #include "../util/Log.hpp"
 #include "ApProtocol.hpp"  // SMO_AP_MOD_VERSION_STRING is plumbed in via this TU
 
+// Match the layout / declarations ApClient.cpp uses — sail resolves
+// `_ZN2nn6socket…E…8sockaddr…` against main.nso, so the struct MUST be
+// named `sockaddr` at file scope.
+struct in_addr { u32 s_addr; };
+struct sockaddr {
+    u8 sa_len;
+    u8 sa_family;
+    u16 sa_port;
+    in_addr sa_addr;
+    u8 sa_zero[8];
+};
+struct pollfd { s32 fd; short events; short revents; };
+
+namespace nn::socket {
+    s32 Socket(s32, s32, s32);
+    s32 SendTo(s32, const void*, unsigned long, s32, const ::sockaddr*, u32);
+    s32 RecvFrom(s32, void*, unsigned long, s32, ::sockaddr*, u32*);
+    s32 SetSockOpt(s32, s32, s32, const void*, u32);
+    u32 Close(s32);
+    s32 Poll(::pollfd*, unsigned long, s32);
+    u16 InetHtons(u16);
+    s32 InetAton(const char*, ::in_addr*);
+    s32 GetLastErrno();
+}
+
 namespace smoap::ap {
 
 namespace {
 
-// Socket-option levels and names. hk::socket doesn't re-export the BSD
-// constants; values match Nintendo's bsd:u service (FreeBSD-derived).
-// Mirrors the matching block in ApClient.cpp.
+// Socket constants. nn::socket doesn't re-export BSD constants; values
+// match Nintendo's bsd:u service (FreeBSD-derived). Mirrors the matching
+// block in ApClient.cpp.
 constexpr s32 kSolSocket   = 0xffff;
 constexpr s32 kSoBroadcast = 0x0020;
+constexpr s32 kAfInet      = 2;
+constexpr s32 kSockDgram   = 2;
+constexpr s32 kIpprotoUdp  = 17;
+constexpr s32 kPollIn      = 0x0001;
+constexpr s32 kPollErr     = 0x0008;
+constexpr s32 kPollHup     = 0x0010;
 
 // Probe timeouts (ms).
 constexpr std::uint32_t kLoopbackProbeMs  = 250;
@@ -56,28 +84,14 @@ std::size_t buildProbe(char* dst, std::size_t cap) {
 }
 
 // Open a UDP socket, optionally enabling SO_BROADCAST. Returns -1 on
-// failure. Caller closes via hk::socket::Socket::close.
+// failure. Caller closes via nn::socket::Close.
 s32 openUdpSocket(bool enable_broadcast) {
-    auto* sock = hk::socket::Socket::instance();
-    if (!sock) return -1;
-    auto vor = sock->socket(hk::socket::AddressFamily::Ipv4,
-                            hk::socket::Type::Datagram,
-                            hk::socket::Protocol::Udp);
-    if (!vor.hasValue()) return -1;
-    auto t = vor.getInnerValue();
-    const s32 fd = t.a;
+    const s32 fd = nn::socket::Socket(kAfInet, kSockDgram, kIpprotoUdp);
     if (fd < 0) return -1;
     if (enable_broadcast) {
-        // Use the explicit Span-taking overload — the templated convenience
-        // form `setSockOpt(fd, level, opt, T&)` fails to compile because its
-        // body constructs Span<const u8> directly from `&opt` (an `s32*`),
-        // and Span's constructor wants `const u8*`. Same trap ApClient hit.
         const s32 on = 1;
-        auto _ = sock->setSockOpt(
-            fd, kSolSocket, kSoBroadcast,
-            hk::Span<const u8>(reinterpret_cast<const u8*>(&on),
-                               sizeof(on)));
-        (void)_;
+        (void)nn::socket::SetSockOpt(
+            fd, kSolSocket, kSoBroadcast, &on, sizeof(on));
     }
     return fd;
 }
@@ -85,20 +99,10 @@ s32 openUdpSocket(bool enable_broadcast) {
 // Wait up to `timeout_ms` for incoming data on `fd`. Returns true when
 // data is readable, false on timeout / poll error.
 bool waitReadable(s32 fd, std::uint32_t timeout_ms) {
-    auto* sock = hk::socket::Socket::instance();
-    if (!sock) return false;
-    hk::socket::PollFd pfd[1] = {
-        {.fd = fd,
-         .requestedEvents = hk::socket::PollEvents::CanRead,
-         .returnedEvents  = hk::socket::PollEvents::Default},
-    };
-    auto vor = sock->poll(hk::Span<hk::socket::PollFd>(pfd, 1),
-                          static_cast<s32>(timeout_ms));
-    if (!vor.hasValue()) return false;
-    const auto t = vor.getInnerValue();
-    if (t.a <= 0) return false;
-    using PE = hk::socket::PollEvents;
-    return (pfd[0].returnedEvents & PE::CanRead) != 0;
+    ::pollfd pfd{ .fd = fd, .events = kPollIn, .revents = 0 };
+    const s32 n = nn::socket::Poll(&pfd, 1, static_cast<s32>(timeout_ms));
+    if (n <= 0) return false;
+    return (pfd.revents & kPollIn) != 0;
 }
 
 // Parse a `{"t":"bridge","host":"<ip>","port":<int>,...}` reply into out.
@@ -159,54 +163,36 @@ bool parseReply(const char* data, std::size_t len, BridgeTarget& out) {
 bool oneProbe(s32 fd, const char* probe_data, std::size_t probe_len,
               const char* host, std::uint16_t port,
               std::uint32_t timeout_ms, BridgeTarget& out) {
-    auto* sock = hk::socket::Socket::instance();
-    if (!sock) return false;
-    // SocketAddrIpv4::parse encapsulates the Nintendo 16-byte sockaddr
-    // layout that production exlaunch had to construct by hand.
-    auto parsed = hk::socket::SocketAddrIpv4::parse(host, port);
-    if (!parsed.hasValue()) {
-        SMOAP_LOG_WARN("[discover] SocketAddrIpv4::parse failed for %s", host);
+    ::in_addr ia{};
+    if (nn::socket::InetAton(host, &ia) == 0) {
+        SMOAP_LOG_WARN("[discover] InetAton failed for %s", host);
         return false;
     }
-    const hk::socket::SocketAddrIpv4 addr = parsed.getInnerValue();
-    // Explicit <A, T>: recvFrom's T is unused in the parameter list (Span<u8>
-    // is hardcoded), so the compiler cannot deduce it. We specify both here on
-    // sendTo too for consistency with the recvFrom call below. Same phantom-
-    // 2nd-template-param shape as Socket::connect.
-    auto send_vor = sock->sendTo<hk::socket::SocketAddrIpv4, u8>(
-        fd,
-        hk::Span<const u8>(reinterpret_cast<const u8*>(probe_data), probe_len),
-        0, addr);
-    if (!send_vor.hasValue()) {
-        SMOAP_LOG_WARN("[discover] sendTo %s:%u failed (IPC error)", host, port);
+    ::sockaddr addr{};
+    addr.sa_len = sizeof(addr);
+    addr.sa_family = kAfInet;
+    addr.sa_port = nn::socket::InetHtons(port);
+    addr.sa_addr = ia;
+
+    const s32 sent = nn::socket::SendTo(
+        fd, probe_data, probe_len, 0, &addr, sizeof(addr));
+    if (sent < 0) {
+        SMOAP_LOG_WARN("[discover] sendTo %s:%u failed errno=%d",
+                       host, port, nn::socket::GetLastErrno());
         return false;
-    }
-    {
-        const auto t = send_vor.getInnerValue();
-        if (t.a < 0) {
-            SMOAP_LOG_WARN("[discover] sendTo %s:%u failed errno=%d",
-                           host, port, t.b);
-            return false;
-        }
     }
     if (!waitReadable(fd, timeout_ms)) return false;
     char buf[kReplyBufBytes];
-    hk::socket::SocketAddrIpv4 from{};
-    auto recv_vor = sock->recvFrom<hk::socket::SocketAddrIpv4, u8>(
-        fd,
-        hk::Span<u8>(reinterpret_cast<u8*>(buf), sizeof(buf)),
-        0, from);
-    if (!recv_vor.hasValue()) return false;
-    const auto rt = recv_vor.getInnerValue();
-    if (rt.a <= 0) return false;
-    return parseReply(buf, static_cast<std::size_t>(rt.a), out);
+    ::sockaddr from{};
+    u32 from_len = sizeof(from);
+    const s32 got = nn::socket::RecvFrom(
+        fd, buf, sizeof(buf), 0, &from, &from_len);
+    if (got <= 0) return false;
+    return parseReply(buf, static_cast<std::size_t>(got), out);
 }
 
 void closeSocket(s32 fd) {
-    auto* sock = hk::socket::Socket::instance();
-    if (!sock) return;
-    auto _ = sock->close(fd);
-    (void)_;
+    (void)nn::socket::Close(fd);
 }
 
 }  // namespace

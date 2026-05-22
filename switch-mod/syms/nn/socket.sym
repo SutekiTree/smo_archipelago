@@ -1,0 +1,53 @@
+// nn::socket — BSD-style socket API exposed by nnSdk. We reuse SMO's
+// existing nn::socket session (initialized via our own pool from main.cpp's
+// GameSystem::init pre-orig hook) instead of opening a parallel hk::socket
+// client against bsd:u. That parallel-client approach failed on retail with
+// `KernelResult_OutOfSessions` because `hk::sm::ServiceManager::initialize`'s
+// `svcConnectToNamedPort("sm:")` exceeded the per-process named-port session
+// quota. See project_kgamer_socket_init_pattern.md.
+//
+// Mangled via aarch64-none-elf-g++ + aarch64-none-elf-nm against the
+// lunakit-vendor signatures. s64/u64 use the SDK `long`/`unsigned long`
+// (`l`/`m`) mangling, not `long long`/`unsigned long long` (`x`/`y`) — see
+// project_aarch64_s64_mangling_trap.md.
+
+@smo:100
+
+// nn::Result Initialize(void* pool, ulong poolSize, ulong allocPoolSize, int concurLimit)
+_ZN2nn6socket10InitializeEPvmmi
+
+// s32 Socket(s32 domain, s32 type, s32 protocol)
+_ZN2nn6socket6SocketEiii
+
+// nn::Result Connect(s32 socket, const sockaddr*, u32 addressLen)
+_ZN2nn6socket7ConnectEiPK8sockaddrj
+
+// s32 Send(s32 socket, const void* data, ulong dataLen, s32 flags)
+_ZN2nn6socket4SendEiPKvmi
+
+// s32 Recv(s32 socket, void* out, ulong outLen, s32 flags)
+_ZN2nn6socket4RecvEiPvmi
+
+// s32 SendTo(int, const void*, ulong, int, const sockaddr*, u32)
+_ZN2nn6socket6SendToEiPKvmiPK8sockaddrj
+
+// s32 RecvFrom(int, void*, ulong, int, sockaddr*, u32*)
+_ZN2nn6socket8RecvFromEiPvmiP8sockaddrPj
+
+// s32 SetSockOpt(s32 socket, s32 socketLevel, s32 option, const void*, u32 len)
+_ZN2nn6socket10SetSockOptEiiiPKvj
+
+// nn::Result Close(s32 socket)
+_ZN2nn6socket5CloseEi
+
+// s32 Poll(pollfd*, ulong, int)
+_ZN2nn6socket4PollEP6pollfdmi
+
+// u16 InetHtons(u16 val)
+_ZN2nn6socket9InetHtonsEt
+
+// s32 InetAton(const char* addressStr, in_addr* addressOut)
+_ZN2nn6socket8InetAtonEPKcP7in_addr
+
+// s32 GetLastErrno()
+_ZN2nn6socket12GetLastErrnoEv

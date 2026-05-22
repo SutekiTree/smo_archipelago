@@ -23,10 +23,20 @@ Rerun this whenever `apworld/smo_archipelago/data/items.json` changes (the table
 
 ## Step 1: build (~30s)
 
+**You MUST pass `-DBRIDGE_HOST=<this-machine's-LAN-IP>` on every manual build.** `CMakeLists.txt` has no default — configure aborts with FATAL_ERROR if it's missing. The reason: when UDP discovery misses (firewall, broadcast-dropping router, slow SMOClient boot), the TCP fallback chain probes `127.0.0.1` and then this baked `BRIDGE_HOST`. A stale or made-up default silently produces a binary that can't reach the bridge on a real Switch.
+
+Get this machine's LAN IP and build in one shot:
+
 ```pwsh
 cd C:\Users\maxwe\Documents\smo_archipelago
-python scripts\build_switchmod.py
+$LAN_IP = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
+    $_.IPAddress -notlike '169.254.*' -and $_.IPAddress -ne '127.0.0.1' -and
+    ($_.PrefixOrigin -eq 'Dhcp' -or $_.PrefixOrigin -eq 'Manual')
+}).IPAddress
+python scripts\build_switchmod.py -DBRIDGE_HOST=$LAN_IP
 ```
+
+If the user has multiple NICs (Wi-Fi + Ethernet, VPN adapter, Hyper-V virtual switch), confirm which interface the Switch reaches the PC on before picking an address — the snippet above can return multiple results. Standard rule of thumb: pick the one whose `/24` matches the Switch's IP.
 
 That single command:
 
@@ -34,15 +44,14 @@ That single command:
 2. Builds `sail.exe` (the host-side symbol-DB resolver) via `scripts/setup_sail_winpath.py` if it doesn't already exist (one-time per machine; uses msys2 mingw64 g++ since aarch64-clang can't link a host binary).
 3. Configures + builds `switch-mod/` via Windows-native CMake + LLVM 19 + Ninja, producing `switch-mod/build/sd/atmosphere/contents/0100000000010000/exefs/subsdk9`.
 
-Override the bridge target at configure time:
+Other configurables (all optional, defaults baked in CMakeLists.txt):
+- `-DBRIDGE_PORT=17777` — bridge TCP port.
+- `-DDISCOVERY_PORT=17776` — UDP discovery probe port.
+- `-DSMOAP_DEBUG_SD_LOG=ON` — boot-time SD-card log capture to `sd:/smo_ap.txt`.
 
-```pwsh
-python scripts\build_switchmod.py -DBRIDGE_HOST=192.168.1.42 -DBRIDGE_PORT=17777
-```
+The runtime `ApDiscovery` UDP probe chain (loopback → broadcast → unicast-fallback against the baked `BRIDGE_HOST`) is the primary path. The baked value is the TCP fallback when UDP misses; it MUST be correct or the fallback chain is useless.
 
-Defaults baked from `switch-mod/CMakeLists.txt`:
-- `-DBRIDGE_HOST=192.168.1.187`, `-DBRIDGE_PORT=17777`, `-DDISCOVERY_PORT=17776`.
-- The runtime `ApDiscovery` UDP probe chain (loopback → broadcast → unicast-fallback) overrides this at connect time when SMOClient is reachable, so the baked value is just a last-resort fallback. Edit it only if the discovery chain consistently fails on this LAN.
+**Don't reuse the cmake cache across machines / LAN changes.** CMake caches `BRIDGE_HOST`. If you copy a worktree to a new machine or your LAN IP changes, `rm -rf switch-mod/build` (or pass `-DBRIDGE_HOST=<new-ip>` to override) — otherwise the old IP stays baked.
 
 ## Prereqs (one-time per machine)
 
@@ -81,14 +90,27 @@ User boots SMO in Ryujinx manually (`cd C:\Users\maxwe\Documents\ryujinx-1.3.3 &
 ## Step 3: tail logs
 
 ```pwsh
-# Mod's smoap.log (most useful — its own structured output):
-Get-Content "$env:APPDATA\Ryujinx\sdcard\atmosphere\contents\0100000000010000\smoap.log" -Wait -Tail 80
+# Ryujinx's log (catches everything: mod's [smoap …] svcOutputDebugString
+# output, [rtld] unresolved symbols, guest stack traces with demangled names,
+# register dumps):
+Get-Content (Get-ChildItem "$env:APPDATA\Ryujinx\Logs\Ryujinx_*.log" | Sort LastWriteTime -Descending | Select -First 1) -Tail 80 -Wait
 
-# Ryujinx's own log (catches [rtld] unresolved symbols + guest stack traces with demangled names):
-Get-Content (Get-ChildItem "$env:APPDATA\Ryujinx\Logs\Ryujinx_*.log" | Sort LastWriteTime -Descending | Select -First 1) -Tail 80
+# SMOClient's bridge-forwarded view (once the Switch connects).
+# Path is wherever Archipelago's Utils.init_logging writes — for in-tree
+# dev that's vendor/Archipelago/logs/SMOClient.txt; for an end-user
+# install, under the Archipelago install dir's logs/.
+Get-Content "vendor\Archipelago\logs\SMOClient.txt" -Wait -Tail 80
 ```
 
 Ryujinx's log is gold — `[rtld]` unresolved-symbol lines, guest stack traces with C++ demangled names, register dumps. **Far** more useful than the Switch's binary erpts. Always iterate here.
+
+**On real Switch**: Atmosphere's `lm` does NOT redirect `svcOutputDebugString`
+output into a file on the SD card (older docs that pointed at
+`sd:/atmosphere/contents/<TID>/smoap.log` were wrong — no such file is
+written). For on-device boot-time capture without Ryujinx, configure with
+`-DSMOAP_DEBUG_SD_LOG=ON`; the mod will dump its first ~5s of log output
+to `sd:/smo_ap.txt` once at drawMain frame ~300. Bridge-side logs (once
+SMOClient connects) remain the primary source for everything past boot.
 
 ## Step 4: real-Switch deploy (only after Ryujinx clean)
 

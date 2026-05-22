@@ -160,14 +160,19 @@ LLVM.LLVM --version 19.1.7` and `winget install MSYS2.MSYS2` (plus
 
 ### Switch boots SMO but the mod doesn't load
 
-Check the mod log on the SD card / Ryujinx sd folder at
-`atmosphere/contents/0100000000010000/smoap.log`. Most often the cause is
-your PC's firewall blocking inbound TCP 17777 or UDP 17776 (the discovery
-probe port). The mod tries discovery first (UDP probe on loopback, then
-LAN broadcast); if discovery fails, it falls back to the IP baked in at
-setup time. If your LAN IP has changed AND discovery is broken (e.g.
-firewall is dropping UDP), re-run `/setup` to rebuild with the current
-fallback IP.
+Under Ryujinx, check `%APPDATA%\Ryujinx\Logs\Ryujinx_*.log` — the mod's
+`svcOutputDebugString` output and any `[rtld]` symbol-resolution failures
+land there. On real hardware, Atmosphere's `lm` does NOT redirect those
+debug-log lines into a file on the SD card, so for on-device debugging
+rebuild the mod with `-DSMOAP_DEBUG_SD_LOG=ON` and read `sd:/smo_ap.txt`
+after boot (it captures the first ~5s of log output).
+
+Most often the cause is your PC's firewall blocking inbound TCP 17777 or
+UDP 17776 (the discovery probe port). The mod tries discovery first (UDP
+probe on loopback, then LAN broadcast); if discovery fails, it falls
+back to the IP baked in at setup time. If your LAN IP has changed AND
+discovery is broken (e.g. firewall is dropping UDP), re-run `/setup` to
+rebuild with the current fallback IP.
 
 ### "Wizard launched but window doesn't show up"
 

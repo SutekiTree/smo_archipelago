@@ -402,7 +402,7 @@ indicates the slot_data shipped `talkatoo_order` correctly. If you see
 `fallback pool=` instead, the apworld didn't ship `talkatoo_order` —
 old apworld build, regenerate the seed.
 
-**Switch log (smoap.log)**:
+**Switch log** (Ryujinx log, or SMOClient log once the bridge connects):
 ```
 [talkatoo] applied kingdom=Cascade moons=3
 [talkatoo] substituting: world_id=1 kingdom_bit=1 shine_index=N mode=1 -> AP pick 0/3 'Moon Name'
