@@ -131,20 +131,19 @@ def ensure_libstd_downloaded() -> None:
 def ensure_sail_built() -> None:
     """Sail is a Windows-native host binary built once per machine.
 
-    `sail.cmake` looks for the binary at `switch-mod/hakkun/sys/sail/build/sail`
-    (no .exe). If it doesn't exist, cmake re-runs setup_sail.py during
-    configure, which rmtree's the build dir — meaning even a freshly-built
-    sail.exe disappears on the next configure unless the no-extension copy
-    exists.
+    `sys/cmake/sail.cmake` looks for the binary at
+    `switch-mod/sys/sail/build/sail` (no .exe). If it doesn't exist we
+    shell out to `scripts/setup_sail_winpath.py`, which builds sail via
+    cmake + ninja with mingw64 g++. After the build we copy sail.exe to
+    `sail` (no extension) because that's the literal filename baked into
+    sail.cmake's `SAIL_BIN` variable.
 
-    The cmake fallback in `sys/cmake/sail.cmake:18` invokes bare `python3
-    sys/tools/setup_sail.py` with RESULT_VARIABLE captured-but-unchecked
-    — same shape as the libstd bug, silent on the Microsoft Store stub.
-    Pre-running here with sys.executable sidesteps that, and the
-    postcondition check below mirrors `ensure_libstd_downloaded()`: the
-    upstream setup_sail.py script doesn't use `check=True` on its own
-    cmake/ninja subprocess calls, so a returncode of 0 plus an empty
-    output dir is a real failure mode worth surfacing explicitly.
+    Pin note: when sys is at LibHakkun main HEAD (9892726+) sail lives at
+    `sys/sail/`. The 2026-05-22 imgui-dev-branch pin (e92ac56) briefly
+    relocated it to `sys/hakkun/sail/`; that bump was reverted because
+    the imgui branch lacked features (devkitPro-free NPDM, the upstream
+    trampoline relocator) that main has. If you re-pin to a branch that
+    moves sail again, audit this script + setup_sail_winpath.py together.
     """
     sail_dir = os.path.join(SWITCH_MOD, "sys", "sail", "build")
     sail_exe = os.path.join(sail_dir, "sail.exe")
@@ -161,10 +160,10 @@ def ensure_sail_built() -> None:
         if not os.path.exists(sail_exe):
             sys.exit(
                 f"[build] setup_sail_winpath.py returned 0 but did not "
-                f"produce {sail_exe}. The upstream setup_sail.py invokes "
-                f"cmake/ninja without check=True, so a silent toolchain "
-                f"failure (mingw g++ missing, generator mismatch) can "
-                f"leave the dir empty. Check the build log above."
+                f"produce {sail_exe}. The cmake/ninja subprocess in that "
+                f"wrapper can leave the dir empty on silent toolchain "
+                f"failure (mingw g++ missing, ninja not on PATH). Check "
+                f"the build log above."
             )
 
     if not os.path.exists(sail_noext) and os.path.exists(sail_exe):

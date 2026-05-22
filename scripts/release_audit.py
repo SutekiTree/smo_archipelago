@@ -177,9 +177,9 @@ REQUIRED_ARTIFACTS: tuple[str, ...] = (
 # at large — those files are git-tracked and predate the build run; only
 # the OUTPUTS the build produced are in scope.
 SWITCH_MOD_OUTPUT_ROOTS: tuple[str, ...] = (
-    "build",         # cmake / ninja build tree
-    "sys/sail/build",  # sail.cmake host-binary build dir
-    "lib/std",       # aarch64 stdlib drop from setup_libcxx_prepackaged.py
+    "build",            # cmake / ninja build tree
+    "sys/sail/build",   # sail.cmake host-binary build dir
+    "lib/std",          # aarch64 stdlib drop from setup_libcxx_prepackaged.py
 )
 
 # The source-tree files the build is allowed to (re)write. Both are

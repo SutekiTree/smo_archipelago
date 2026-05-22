@@ -12,25 +12,19 @@ If a PR review stalls > 1 week, the migration plan calls for forking
 LibHakkun to mdietz94/LibHakkun-smo and re-pinning the submodule — at which
 point this script becomes obsolete.
 
-Patches applied:
-  1. sys/sail/CMakeLists.txt — drop hardcoded clang/clang++ compiler.
-  2. sys/sail/src/main.cpp — std::filesystem::path::c_str() is wchar_t* on Windows.
-  3. sys/sail/src/fakelib.cpp — quote clangBinary path in popen cmdline.
-  4. sys/cmake/sail.cmake — expand sys/addons/*/syms glob (cmd.exe doesn't).
-  5. sys/cmake/generate_exefs.cmake — prefix elf2nso.py with `python`.
-  6. (env only) Copy sys/sail/build/sail.exe → sys/sail/build/sail (no ext).
+Patches applied (paths are inside switch-mod/sys/, the LibHakkun submodule):
+  2. sail/src/main.cpp — std::filesystem::path::c_str() is wchar_t* on Windows.
+  3. sail/src/fakelib.cpp — quote clangBinary path in popen cmdline.
+  4. cmake/sail.cmake — expand sys/addons/*/syms glob (cmd.exe doesn't).
+  6. (env only) Copy sail/build/sail.exe → sail/build/sail (no ext).
      Handled by scripts/build_switchmod.py.
 
-  7. (correctness) include/hk/hook/Trampoline.h + src/hk/hook/Trampoline.cpp:
-     Add AArch64 PC-relative prologue relocation to TrampolineHook. Upstream
-     copies the first instruction verbatim into the trampoline pool (TODO at
-     Trampoline.h:67 says "Relocate instruction, or at least abort if
-     instruction needs to be relocated"); when the original is
-     adrp/adr/b/bl/b.cond/cbz/cbnz/tbz/tbnz, calling .orig() executes the
-     instruction at the wrong PC and the guest crashes — observed in
-     Ryujinx ARMeilleure 0xC0000005 on SMO 1.0.0 stage load. Patch expands
-     TrampolineBackup to 8 slots and emits movz/movk + indirect/direct
-     branch sequences as needed. Worth upstreaming to fruityloops1/LibHakkun.
+Retired at the current pin (9892726b, LibHakkun main HEAD as of 2026-05-22):
+  1.  sail CMakeLists clang/clang++ removal  → fruityloops1/LibHakkun PR #71 (a1ae290c2d)
+  5.  generate_exefs.cmake python prefix     → PR #75 (de915fb55b)
+  5b. generate_exefs.cmake non-baked variant → PR #75 (de915fb55b)
+  7.  AArch64 prologue relocator             → upstream commit 9892726b "Trampoline: relocate first instruction"
+These re-activate only if the pin ever rolls back to a tree that predates them.
 
   8. (correctness) include/hk/services/socket/service.h:
      Drop `const` on `Socket::recvFrom`'s `address` parameter. recvFrom is the
@@ -107,9 +101,10 @@ def main() -> int:
 
     print(f"[patch_hakkun] applying Windows-port patches to {HAKKUN}")
 
-    # Patch 1 retired 2026-05-22: upstreamed as fruityloops1/LibHakkun
+    # Patch 1 retired at pin 9892726b — upstreamed as fruityloops1/LibHakkun
     # commit a1ae290c2d "sail: don't hardcode clang/clang++ as the host
-    # compiler" (PR #71). Switch-mod/sys pin >= 9892726 contains it.
+    # compiler" (PR #71). Re-activate if the pin rolls back to a tree
+    # that predates it.
 
     report(
         "sail main.cpp filesystem::path wchar_t fix",
@@ -141,27 +136,16 @@ def main() -> int:
         ),
     )
 
-    # Patch 5 + 5b retired 2026-05-22: upstreamed as fruityloops1/LibHakkun
-    # commit de915fb55b "generate_exefs: invoke elf2nso.py via explicit
-    # `python`" (PR #75). switch-mod/sys pin >= 9892726 contains it.
+    # Patch 5 + 5b retired at pin 9892726b — upstreamed as fruityloops1/LibHakkun
+    # commit de915fb55b "generate_exefs: invoke elf2nso.py via explicit `python`"
+    # (PR #75). Re-activate if the pin rolls back to a tree that predates it.
 
-    # ------------------------------------------------------------------
-    # Patch 7 retired 2026-05-22: upstreamed as fruityloops1/LibHakkun
-    # commit 9892726b "Trampoline: relocate first instruction" (which IS
-    # the current main HEAD). switch-mod/sys pin >= 9892726 contains it.
-    #
-    # Upstream's relocator differs from ours:
-    #   - 5-slot packed TrampolineBackup (~24 bytes) instead of our 8-slot
-    #     page-aligned (4 KiB). 168x smaller pool footprint.
-    #   - Uses a64::assemble<"…">() constexpr DSL instead of hand-written
-    #     instruction encoding.
-    #   - Uses adrp+add for absolute address loading instead of our
-    #     movz/movk×4 sequence.
-    # We swapped to it because our patched relocator was the prime suspect
-    # in addon-link-time failures (DebugRenderer + ImGui addons hung on
-    # first NVN draw with our trampoline at nvnBootstrapLoader installed).
-    # See memory: project_addon_static_init_pre_hkmain.
-    # ------------------------------------------------------------------
+    # Patch 7 retired at pin 9892726b — upstream's relocator IS the pin
+    # itself ("Trampoline: relocate first instruction"). Structurally
+    # different from the relocator we used to ship locally (upstream uses
+    # a 5-slot packed TrampolineBackup + constexpr a64::assemble<> DSL vs
+    # our 8-slot page-aligned + hand-encoded), functionally equivalent.
+    # Re-activate if the pin rolls back to a tree that predates it.
 
 
     # ------------------------------------------------------------------

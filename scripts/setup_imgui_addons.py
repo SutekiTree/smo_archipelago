@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Initialise + pin the LibHakkun imgui branch + ocornut/imgui submodules.
+"""Initialise + pin LibHakkun (main HEAD) + ocornut/imgui submodules.
 
 The on-Switch debug overlay (ui::ApDebugConsole) depends on two upstream
 components that ship outside the main LibHakkun tree:
 
-  * `switch-mod/sys` — LibHakkun on its `imgui` branch (not `main`).
-    Provides `addons/ImGui/` (NVN backend + shaders) and `addons/DebugRenderer/`
+  * `switch-mod/sys` — LibHakkun on its `main` branch. Provides
+    `addons/ImGui/` (NVN backend + shaders) and `addons/DebugRenderer/`
     (lightweight text rendering, currently unused but harmless to compile).
 
   * `switch-mod/lib/imgui` — Dear ImGui itself. Vendored upstream.
@@ -13,8 +13,8 @@ components that ship outside the main LibHakkun tree:
 Both are listed in `.gitmodules`, but the pinned commit + first-time init
 need a one-shot dance because:
 
-  * Bumping `switch-mod/sys` to the imgui branch from whatever commit it
-    was last pinned at requires checkout-then-restage.
+  * Bumping `switch-mod/sys` from whatever commit it was last pinned at
+    requires checkout-then-restage.
   * `lib/imgui` is a brand-new submodule path — `git submodule update --init`
     won't populate it unless it's in the index (which it won't be until
     after `git submodule add` or this script does the equivalent).
@@ -23,10 +23,12 @@ Run after `git pull` + `git submodule update --init --recursive`. Idempotent:
 re-running on a tree that's already pinned to the right commits is a no-op
 besides a small `git fetch`.
 
-Both pins are intentionally targets-of-branches rather than tags:
-fruityloops1/LibHakkun's `imgui` branch is the live development line for the
-addon, and we want to follow it. The user can `git -C switch-mod/sys log`
-to inspect what they're getting.
+History note: this script briefly pointed at LibHakkun's `imgui` dev branch
+(2026-05-22) because that's where the addon work was first prototyped.
+After upstream merged the addons to main — along with the upstreamed
+Windows-port patches and a working AArch64 trampoline relocator — we
+moved the pin to main. PR #208 documents the gaps the imgui-branch pin
+exposed; pinning to main HEAD avoids all of them.
 """
 
 import os
@@ -36,11 +38,16 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# Pinned references — bump these when LibHakkun's imgui branch / ocornut/imgui
-# release a fix we want.
+# Pinned references — bump these when LibHakkun upstream or ocornut/imgui
+# release a fix we want. We track upstream's `main` branch (not the
+# `imgui` dev branch): main has the same Nvn/ImGui/DebugRenderer addons
+# the dev branch carried, PLUS the upstreamed Windows-port patches
+# (PR #71 + #75), PLUS the AArch64 trampoline relocator, PLUS a pure-
+# CMake bin2s and pure-Python NPDM (no devkitPro dependency). Pinning
+# to `imgui` briefly on 2026-05-22 caused the gaps PR #208 chased down.
 HAKKUN_REMOTE = "https://github.com/fruityloops1/LibHakkun.git"
-HAKKUN_BRANCH = "imgui"
-HAKKUN_PIN    = "e92ac56466102d3692fb98170dcb62f185070849"  # imgui branch HEAD 2026-05
+HAKKUN_BRANCH = "main"
+HAKKUN_PIN    = "9892726b611704dcfd607ae159e9bd8656ccac8b"  # main HEAD 2026-05
 
 IMGUI_REMOTE  = "https://github.com/ocornut/imgui.git"
 IMGUI_PIN     = "8936b58fe26e8c3da834b8f60b06511d537b4c63"  # v1.92.8

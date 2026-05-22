@@ -237,21 +237,25 @@ jobs:
           submodules: false
 
       - name: Initialize LibHakkun submodule (shallow)
-        run: git submodule update --init --depth 1 switch-mod/sys
+        run: git submodule update --init --recursive --depth 1 switch-mod/sys
 
       - name: Count bare-name COMMAND invocations
         run: |
-          # Defended occurrences in the current pin (e92ac56...):
-          #   deploy.cmake:4        -> add_custom_command, defended by
-          #                            configure_env() PATH-prepend
-          #   generate_exefs.cmake  -> add_custom_command, defended by
-          #                            configure_env() PATH-prepend
-          # The 2026-05-22 pin bump retired the prior configure-time
-          # execute_process pair (defended by ensure_sail_built() /
-          # ensure_libstd_downloaded()); both ensure_*() helpers stay
-          # in build_switchmod.py as backstops in case upstream
-          # restructures back.
-          EXPECTED=2
+          # Defended occurrences in the current pin (9892726b, LibHakkun
+          # main HEAD as of 2026-05-22):
+          #   deploy.cmake:13           -> add_custom_command, defended by
+          #                                configure_env() PATH-prepend
+          #   generate_exefs.cmake:5    -> add_custom_command (NPDM gen)
+          #   generate_exefs.cmake:11   -> add_custom_command (bake_hashes)
+          #   generate_exefs.cmake:16   -> add_custom_command (elf2nso, baked)
+          #   generate_exefs.cmake:21   -> add_custom_command (elf2nso, non-baked)
+          #   sail.cmake:18             -> execute_process, defended by
+          #                                ensure_sail_built()
+          #   toolchain.cmake:111       -> execute_process, defended by
+          #                                ensure_libstd_downloaded()
+          # PR #208 reverted the 2026-05-22 pin slip to e92ac56 (imgui dev
+          # branch, EXPECTED was briefly 2); back to main HEAD = EXPECTED=7.
+          EXPECTED=7
           ACTUAL=$(grep -rnE '\bCOMMAND[[:space:]]+(python3|python|curl|wget|bash|sh)\b' switch-mod/sys/cmake/ | wc -l)
           if [ "$ACTUAL" -ne "$EXPECTED" ]; then
             echo "::error::Bare-name cmake COMMAND count changed: expected $EXPECTED, found $ACTUAL"

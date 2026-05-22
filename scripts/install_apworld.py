@@ -211,9 +211,17 @@ def main(argv: list[str] | None = None) -> int:
         odyssey_sentinel = (
             mod_root / "lib" / "OdysseyHeaders" / "CMakeLists.txt"
         )
+        # senobi is a NESTED submodule under switch-mod/sys/tools/; the
+        # wizard's bundled tree has no git infrastructure, so the only
+        # way build_npdm.py reaches end users is via this bundle step.
+        # Plain `git submodule update --init switch-mod/sys` does NOT
+        # pull it — only `--recursive` does. Sentinel keeps that mistake
+        # visible at bundle time instead of at user-build time.
+        senobi_sentinel = mod_root / "sys" / "tools" / "senobi" / "build_npdm.py"
         for sentinel, label in (
             (hakkun_sentinel, "LibHakkun (switch-mod/sys)"),
             (odyssey_sentinel, "OdysseyHeaders (switch-mod/lib/OdysseyHeaders)"),
+            (senobi_sentinel, "senobi (switch-mod/sys/tools/senobi, nested under sys)"),
         ):
             if not sentinel.exists():
                 print(
