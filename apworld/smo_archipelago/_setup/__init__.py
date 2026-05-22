@@ -26,6 +26,10 @@ The packages here are organized so each step is independently testable:
   - `deploy.py`      — copy outputs to SD card or Ryujinx
   - `wizard.py`      — Kivy multi-page UI (imports Kivy lazily so the rest
                        of the package stays importable on AP-gen hosts)
+  - `wizard_cli.py`  — Headless orchestrator + JSON-event CLI. Same
+                       probe -> install -> extract -> build -> deploy
+                       sequencing as the Kivy wizard, but stateless and
+                       callable from pytest / CI without Kivy.
 
 Output destinations on the user's machine (all under %APPDATA%, off-repo so
 nothing accidentally enters version control):
