@@ -648,6 +648,121 @@ def install_hactool(on_line: ProgressFn | None = None) -> InstallResult:
 
 
 # ---------------------------------------------------------------------------
+# Microsoft Visual C++ 2015-2022 x64 Redistributable.
+#
+# Required by oead (the extractor's BYML/MSBT parser) and lz4 (sail dep).
+# winget primary because it's already in the installer's wheelhouse and
+# integrates with Windows Update for auto-patching; direct-download
+# fallback for environments where winget isn't available (LTSC, stripped
+# images). Microsoft's `aka.ms/vs/17/release/vc_redist.x64.exe` always
+# redirects to the latest VS2022 redist build — no SHA pin because the
+# upstream artifact rotates with every patch Tuesday and Microsoft signs
+# it, so a stale hash would refuse a legitimately-updated installer.
+# ---------------------------------------------------------------------------
+
+_VCREDIST_URL = "https://aka.ms/vs/17/release/vc_redist.x64.exe"
+_VCREDIST_DOWNLOAD_BYTES = 28 * 1024 * 1024  # ~25 MB — used for disk precheck only
+
+
+def install_msvc_runtime(on_line: ProgressFn | None = None) -> InstallResult:
+    """Install the MSVC 2015-2022 x64 redistributable.
+
+    Strategy:
+      1. winget `Microsoft.VCRedist.2015+.x64` — silent, declines EULA,
+         integrates with Windows Update. This is the preferred path.
+      2. If winget is unavailable OR the winget install fails (LTSC
+         images can have a broken App Installer, etc.), fall back to
+         downloading vc_redist.x64.exe directly and running it with
+         `/install /quiet /norestart`.
+
+    No SHA-256 pin: Microsoft rotates the artifact monthly and signs
+    it with their cert; a stale hash would block legitimate updates.
+    The download URL is the official always-latest aka.ms redirect.
+
+    Returns InstallResult mirroring the other installers. The wizard's
+    next `check_msvc_runtime()` will flip the prereq row green once the
+    DLLs land in C:\\Windows\\System32\\ (which the installer handles).
+    """
+    def emit(msg: str) -> None:
+        if on_line:
+            on_line(msg)
+
+    if sys.platform != "win32":
+        msg = "install_msvc_runtime is Windows-only."
+        emit(f"[vcredist] {msg}")
+        return InstallResult(ok=False, returncode=1, log=msg, detail=msg)
+
+    # Strategy 1: winget.
+    wg = shutil.which("winget")
+    if wg is not None:
+        emit("[vcredist] trying winget Microsoft.VCRedist.2015+.x64")
+        r = winget_install("Microsoft.VCRedist.2015+.x64", on_line=on_line)
+        if r.ok:
+            emit("[vcredist] winget install succeeded")
+            return InstallResult(
+                ok=True, returncode=0, log=r.log,
+                detail="installed via winget Microsoft.VCRedist.2015+.x64",
+            )
+        # winget exit codes: 0x8A150061 (-1978335135) means "already installed,
+        # nothing to do" on some winget versions. Treat as success.
+        if r.returncode in (-1978335135, 0x8A150061 & 0xFFFFFFFF):
+            emit("[vcredist] winget reports already installed; treating as success")
+            return InstallResult(
+                ok=True, returncode=0, log=r.log,
+                detail="already installed (per winget)",
+            )
+        emit(f"[vcredist] winget failed (rc={r.returncode}); falling back to direct download")
+    else:
+        emit("[vcredist] winget unavailable; using direct download")
+
+    # Strategy 2: direct download + /install /quiet /norestart.
+    try:
+        _check_disk_space(Path(tempfile.gettempdir()),
+                          int(_VCREDIST_DOWNLOAD_BYTES * 1.10))
+    except InsufficientDiskError as e:
+        emit(f"[vcredist] {e}")
+        return InstallResult(ok=False, returncode=1, log=str(e), detail=str(e))
+
+    with tempfile.TemporaryDirectory(prefix="smoap-vcredist-") as td:
+        exe_path = Path(td) / "vc_redist.x64.exe"
+        emit(f"[vcredist] downloading {_VCREDIST_URL} (~{_VCREDIST_DOWNLOAD_BYTES / (1024**2):.0f} MB)")
+        # No SHA pin — see module-level comment. timeout=180 because slow
+        # corporate proxies sometimes throttle Microsoft CDNs.
+        r = _download(_VCREDIST_URL, exe_path,
+                      on_line=on_line, timeout=180.0)
+        if not r.ok:
+            return r
+        emit("[vcredist] running installer (silent, no reboot)")
+        # Exit codes per Microsoft's redist installer docs:
+        #   0     — success
+        #   1638  — newer version already installed (success)
+        #   3010  — success, reboot required (we passed /norestart so the
+        #           caller's wizard run is unaffected; user reboots later)
+        result = _stream_subprocess(
+            [str(exe_path), "/install", "/quiet", "/norestart"],
+            on_line=on_line,
+        )
+        if result.returncode in (0, 1638, 3010):
+            detail = {
+                0:    "installed via direct download",
+                1638: "newer version already installed",
+                3010: "installed (pending reboot to fully activate)",
+            }[result.returncode]
+            emit(f"[vcredist] {detail}")
+            return InstallResult(
+                ok=True, returncode=0, log=result.log, detail=detail,
+            )
+        msg = (
+            f"vc_redist.x64.exe failed (exit {result.returncode}). "
+            f"Install manually from {_VCREDIST_URL}."
+        )
+        emit(f"[vcredist] {msg}")
+        return InstallResult(
+            ok=False, returncode=result.returncode, log=result.log, detail=msg,
+        )
+
+
+# ---------------------------------------------------------------------------
 # LLVM 19.1.7 — direct tar.xz extract to %LOCALAPPDATA%\SMOArchipelago\llvm\
 # ---------------------------------------------------------------------------
 
@@ -965,6 +1080,7 @@ def install_sail_python_deps(on_line: ProgressFn | None = None) -> InstallResult
 # ---------------------------------------------------------------------------
 
 INSTALLERS: dict[str, Callable[[ProgressFn | None], InstallResult]] = {
+    "msvc_runtime": install_msvc_runtime,
     "llvm19": install_llvm19,
     "winlibs": install_winlibs,
     "sail_python_deps": install_sail_python_deps,
@@ -974,11 +1090,15 @@ INSTALLERS: dict[str, Callable[[ProgressFn | None], InstallResult]] = {
     "hactool": install_hactool,
 }
 
-# Order the wizard's "Install all missing" walker uses. The two big
-# downloads first while attention is fresh — LLVM is the largest (~806
-# MB) so it goes first to fail-fast on disk-space / network issues.
-# Python 3.12 goes before sail_python_deps because pip install needs it.
+# Order the wizard's "Install all missing" walker uses. MSVC runtime first:
+# it's small (~25 MB), foundational for the lz4/oead native wheels installed
+# downstream, and a fail-fast signal — if winget is broken AND the direct
+# download fails, the user wants to know now rather than after 800 MB of
+# LLVM has been pulled. Then the two big downloads while attention is
+# fresh (LLVM largest, so first to fail-fast on disk/network). Python 3.12
+# goes before sail_python_deps because pip install needs it.
 INSTALL_ORDER: tuple[str, ...] = (
+    "msvc_runtime",
     "llvm19",
     "winlibs",
     "cmake",

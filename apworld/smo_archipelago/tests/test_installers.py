@@ -692,13 +692,21 @@ def test_INSTALLERS_registry_covers_every_auto_installable_detector(
 
 
 def test_INSTALL_ORDER_runs_heavy_downloads_first() -> None:
-    """LLVM is the heaviest (~806 MB) so it goes first to fail-fast on
-    disk-space / network issues while user attention is fresh.
+    """MSVC runtime first (small + foundational + cheapest fail-fast for
+    a broken winget); then LLVM, the heaviest at ~806 MB, which fails
+    fast on disk-space / network issues while user attention is fresh.
     sail_python_deps requires Python 3.12, so Python must precede it."""
     order = installers.INSTALL_ORDER
-    assert order[0] == "llvm19", (
-        f"LLVM should be installed first (heaviest, fail-fast on disk space); "
-        f"got order[0]={order[0]!r}"
+    assert order[0] == "msvc_runtime", (
+        f"MSVC runtime should be installed first (small + foundational dep "
+        f"for native wheels — oead, lz4); got order[0]={order[0]!r}"
+    )
+    # LLVM is the heaviest download — should run early so we fail-fast on
+    # disk-space / network. It must precede sail's pip-install and the
+    # smaller winget installs.
+    assert order.index("llvm19") < order.index("sail_python_deps"), (
+        "LLVM should be downloaded before sail_python_deps (fail-fast on "
+        "the big download while user attention is fresh)"
     )
     # Order is total over only the keys present. Python 3.12 install
     # must come before sail's pip install --user step.

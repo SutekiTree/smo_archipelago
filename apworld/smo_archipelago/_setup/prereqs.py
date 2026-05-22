@@ -102,6 +102,13 @@ INSTALL_URLS = {
     "ninja": "https://github.com/ninja-build/ninja/releases",
     "hactool": "https://github.com/SciresM/hactool/releases",
     "prodkeys": "",
+    # Microsoft's always-redirects-to-latest URL for the VS2022 x64 redist.
+    # Installs vcruntime140.dll + msvcp140.dll + vcruntime140_1.dll, which
+    # oead's _oead.pyd dynamically links. Without those three the extractor's
+    # `import oead` fails with "DLL load failed" and the moon-map step can't
+    # run; the loader error is opaque, so we surface this prereq explicitly
+    # rather than letting users hit it inside the venv bootstrap.
+    "msvc_runtime": "https://aka.ms/vs/17/release/vc_redist.x64.exe",
 }
 
 
@@ -295,6 +302,86 @@ def _ensure_python3_shim(python_exe: Path) -> None:
         # build_switchmod.py's explicit pre-runs still cover the known
         # cmake call sites. The shim is belt-and-braces, not load-bearing.
         pass
+
+
+# ---------------------------------------------------------------------------
+# Microsoft Visual C++ 2015-2022 x64 Redistributable.
+#
+# Required by every native-code Python wheel built with MSVC — most relevantly
+# `oead` (the moon/capture extractor's BYML/MSBT parser) and `lz4` (one of
+# sail's three host-Python deps). Both dynamically link vcruntime140.dll /
+# msvcp140.dll, and oead additionally needs vcruntime140_1.dll (VS2019+
+# exception-handling addendum, x64 only).
+#
+# Without the redist, `import oead` fails with the cryptic loader message
+# `ImportError: DLL load failed while importing _oead: The specified module
+# could not be found.`, and the extract step's venv bootstrap used to spin
+# forever re-launching itself (see the recursion guard in extract_shine_map.py).
+# Catching it as an explicit prereq turns that into a clean wizard row.
+#
+# Probe is ctypes.WinDLL on each of the three DLL names — same loader path
+# Python uses when it imports oead's .pyd, so a green here means oead will
+# load (modulo the wheel itself being installed in the venv, which is a
+# separate concern handled by the extract bootstrap).
+# ---------------------------------------------------------------------------
+
+# Module-level cache so tests can monkeypatch the loader probe without
+# touching ctypes globals. Tests set this to a fake callable; production
+# leaves it None and the detector uses ctypes.WinDLL directly.
+_msvc_runtime_probe: object = None
+
+
+def _default_msvc_runtime_probe(dll_name: str) -> None:
+    """Try to load `dll_name` via the Windows loader. Returns on success,
+    raises `OSError` on failure (matches `ctypes.WinDLL`'s behavior).
+
+    Isolated as a module-level function so tests can swap in a fake without
+    monkeypatching ctypes itself.
+    """
+    import ctypes  # win32 only; imported lazily so non-Windows test runs don't break
+    ctypes.WinDLL(dll_name)
+
+
+def check_msvc_runtime() -> PrereqResult:
+    """Microsoft Visual C++ 2015-2022 x64 Redistributable.
+
+    Non-Windows shortcut: returns ok=True with a "not applicable" detail so
+    cross-platform test harnesses don't see a perma-red row. The wizard
+    itself is Windows-only, so this branch is only exercised by tests.
+    """
+    import sys as _sys
+    if _sys.platform != "win32":
+        return PrereqResult(
+            "msvc_runtime", "MSVC 2015-2022 x64 runtime", True,
+            "not applicable (non-Windows)",
+        )
+    probe = _msvc_runtime_probe or _default_msvc_runtime_probe
+    required = ("vcruntime140.dll", "msvcp140.dll", "vcruntime140_1.dll")
+    missing: list[str] = []
+    for dll in required:
+        try:
+            probe(dll)  # type: ignore[operator]
+        except OSError:
+            missing.append(dll)
+    if not missing:
+        return PrereqResult(
+            "msvc_runtime", "MSVC 2015-2022 x64 runtime", True,
+            "vcruntime140 + msvcp140 + vcruntime140_1 loadable",
+            auto_installable=True,
+        )
+    return PrereqResult(
+        "msvc_runtime", "MSVC 2015-2022 x64 runtime", False,
+        f"missing DLL(s): {', '.join(missing)} (required by oead's _oead.pyd)",
+        INSTALL_URLS["msvc_runtime"],
+        note=(
+            "oead (the moon-data extractor's BYML/MSBT parser) needs the "
+            "Microsoft Visual C++ 2015-2022 x64 Redistributable to load. "
+            "Without it the extract step fails with 'DLL load failed while "
+            "importing _oead'. Auto-install uses winget "
+            "Microsoft.VCRedist.2015+.x64 (with a direct-download fallback)."
+        ),
+        auto_installable=True,
+    )
 
 
 def check_python312() -> PrereqResult:
@@ -1073,9 +1160,17 @@ def check_all(
     flows from `prodkeys_path`. Pass None on first invocation or when
     the user has not yet picked a custom location for that prereq."""
     return [
+        # MSVC runtime first: it's the cheapest probe (one ctypes.WinDLL
+        # per DLL, ~1 ms total) AND the foundational dep for every native
+        # Python wheel downstream (oead, lz4). A green here sets the right
+        # expectation for the user before the heavier toolchain checks
+        # start; a red here explains a class of mysterious "DLL load
+        # failed" errors that would otherwise surface inside the extract
+        # step's venv bootstrap.
+        check_msvc_runtime(),
         # Cross-compile toolchain (replaces devkitPro since the 2026-05-21
         # Hakkun cutover) — these two are the heaviest and most likely to be
-        # missing, so they go first.
+        # missing, so they go first among the downloads.
         check_llvm19(),
         check_winlibs(),
         check_sail_python_deps(),

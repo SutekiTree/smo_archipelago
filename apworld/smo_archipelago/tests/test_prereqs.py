@@ -26,6 +26,7 @@ from _setup.prereqs import (
     check_cmake,
     check_hactool,
     check_llvm19,
+    check_msvc_runtime,
     check_ninja,
     check_prod_keys,
     check_python312,
@@ -163,6 +164,96 @@ def test_python312_caches_resolved_bin_dir(
     # launcher dir. Build PATH-prepends this, so we want the real
     # python.exe to land first.
     assert prereqs.resolved_python312_bin() == str(interp_dir)
+
+
+# ---------- check_msvc_runtime ----------
+
+@pytest.fixture
+def fake_msvc_probe(monkeypatch):
+    """Replace `prereqs._msvc_runtime_probe` with a scripted responder.
+
+    Usage:
+        fake_msvc_probe({"vcruntime140.dll": True, "msvcp140.dll": False, ...})
+        # True = loads successfully; False = raises OSError (i.e. missing).
+    """
+    def install(dll_to_ok: dict[str, bool]):
+        def _impl(name: str) -> None:
+            if not dll_to_ok.get(name, False):
+                raise OSError(f"fake: could not load {name}")
+        monkeypatch.setattr(prereqs, "_msvc_runtime_probe", _impl)
+    yield install
+    monkeypatch.setattr(prereqs, "_msvc_runtime_probe", None)
+
+
+def test_msvc_runtime_all_dlls_present(fake_msvc_probe, monkeypatch) -> None:
+    """All three DLLs load → green row, auto_installable, no install URL."""
+    monkeypatch.setattr("sys.platform", "win32")
+    fake_msvc_probe({
+        "vcruntime140.dll": True,
+        "msvcp140.dll": True,
+        "vcruntime140_1.dll": True,
+    })
+    r = check_msvc_runtime()
+    assert r.ok
+    assert r.key == "msvc_runtime"
+    assert r.auto_installable
+    # Detail names the DLLs so a confused user can search/verify.
+    assert "vcruntime140" in r.detail
+
+
+def test_msvc_runtime_missing_dll(fake_msvc_probe, monkeypatch) -> None:
+    """Missing vcruntime140_1.dll (the VS2019+ x64 addendum, common on
+    machines that have a pre-2019 redist) → red row pointing the user
+    at the redistributable download."""
+    monkeypatch.setattr("sys.platform", "win32")
+    fake_msvc_probe({
+        "vcruntime140.dll": True,
+        "msvcp140.dll": True,
+        "vcruntime140_1.dll": False,
+    })
+    r = check_msvc_runtime()
+    assert not r.ok
+    assert "vcruntime140_1.dll" in r.detail
+    assert r.install_url.startswith("https://aka.ms/")
+    assert r.auto_installable
+    # Note explains WHY oead needs this — the user-facing context is what
+    # the new prereq exists to surface in the first place.
+    assert "oead" in r.note.lower()
+
+
+def test_msvc_runtime_all_missing(fake_msvc_probe, monkeypatch) -> None:
+    """Bare Windows install — none of the redist DLLs loadable. Detail
+    enumerates all three so the user can see the install is fully absent
+    (not a partial corruption)."""
+    monkeypatch.setattr("sys.platform", "win32")
+    fake_msvc_probe({})  # nothing loads
+    r = check_msvc_runtime()
+    assert not r.ok
+    for dll in ("vcruntime140.dll", "msvcp140.dll", "vcruntime140_1.dll"):
+        assert dll in r.detail
+
+
+def test_msvc_runtime_non_windows_short_circuits(monkeypatch) -> None:
+    """Non-Windows platforms see ok=True with a 'not applicable' detail
+    instead of trying to call ctypes.WinDLL (which would fail at import).
+    The wizard itself is Windows-only, but cross-platform test harnesses
+    exercise this branch."""
+    monkeypatch.setattr("sys.platform", "linux")
+    r = check_msvc_runtime()
+    assert r.ok
+    assert "not applicable" in r.detail.lower()
+
+
+def test_check_all_includes_msvc_runtime(
+    isolated_portable_roots, fake_run, monkeypatch,
+) -> None:
+    """check_all() surfaces the new row. Position in the list isn't part
+    of the test (UI ordering is mutable), but presence with the right
+    key is the wizard's contract."""
+    monkeypatch.setattr("sys.platform", "linux")  # non-Windows short-circuit
+    fake_run({})
+    keys = [r.key for r in check_all()]
+    assert "msvc_runtime" in keys
 
 
 # ---------- check_llvm19 ----------

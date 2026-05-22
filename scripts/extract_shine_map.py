@@ -169,9 +169,72 @@ def _bootstrap_and_reexec() -> None:
 print("[extract] starting; checking for oead Python package...",
       file=sys.stderr, flush=True)
 
+def _diagnose_oead_import_failure(
+    err: BaseException,
+    current_executable: str,
+    venv_py: Path,
+    venv_dir: Path,
+) -> str | None:
+    """Return a FATAL error string if we should NOT bootstrap, else None.
+
+    The recursion guard. If `current_executable` is the venv Python we'd
+    normally relaunch into, returning None would cause `_bootstrap_and_reexec`
+    to relaunch the same venv Python that just failed to import oead —
+    infinite loop. Returning a non-None string causes the caller to sys.exit
+    with a real diagnostic instead.
+
+    Pure function (no side effects, no globals) so the unit test can drive
+    it directly without subprocessing the whole script.
+    """
+    try:
+        self_is_venv = Path(current_executable).resolve() == venv_py.resolve()
+    except OSError:
+        self_is_venv = False
+    if not self_is_venv:
+        return None
+
+    head = (
+        f"FATAL: running under venv Python ({current_executable}) but "
+        f"`import oead` still failed:\n"
+        f"  {type(err).__name__}: {err}\n\n"
+    )
+    # "DLL load failed" is what Python's loader prints on Windows when a
+    # .pyd's transitive dependency (here: vcruntime140 / msvcp140) can't
+    # be resolved. The 99% case for an oead import that gets this far.
+    if "DLL load failed" in str(err):
+        return head + (
+            "This is almost certainly a missing Microsoft Visual C++\n"
+            "2015-2022 x64 Redistributable. Install it from:\n"
+            "  https://aka.ms/vs/17/release/vc_redist.x64.exe\n"
+            "(or run the setup wizard's auto-install for 'MSVC runtime'),\n"
+            "then re-run this extract step.\n\n"
+            "To confirm the diagnosis directly, run:\n"
+            f'  & "{current_executable}" -c "import oead"\n'
+            "and inspect the loader error.\n"
+        )
+    return head + (
+        "Possible causes:\n"
+        "  - pip-installed oead wheel is broken (delete\n"
+        f"    {venv_dir} and re-run to reinstall)\n"
+        "  - venv Python ABI mismatch\n"
+        "  - antivirus quarantined _oead.pyd\n\n"
+        "To inspect directly, run:\n"
+        f'  & "{current_executable}" -c "import oead"\n'
+    )
+
+
 try:
     import oead  # type: ignore
-except ImportError:
+except ImportError as _oead_err:
+    # Recursion guard: if we're already running under the bootstrapped venv
+    # Python and oead STILL fails, do not relaunch — the bootstrap path only
+    # installs oead when CREATING the venv, so re-execing into an existing-
+    # but-broken venv produces an infinite re-exec loop (seen in the field).
+    _diag = _diagnose_oead_import_failure(
+        _oead_err, sys.executable, VENV_PY, VENV_DIR,
+    )
+    if _diag is not None:
+        sys.exit(_diag)
     _bootstrap_and_reexec()
     sys.exit("unreachable")  # pragma: no cover
 
