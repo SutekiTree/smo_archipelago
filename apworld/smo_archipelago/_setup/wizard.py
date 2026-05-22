@@ -118,6 +118,87 @@ def wizard_log(line: str) -> None:
         pass  # best-effort; log losing a line shouldn't break the wizard
 
 
+class BufferedLogStreamer:
+    """Coalesces line events from worker threads into batched Kivy updates.
+
+    Why: extract / build subprocesses stream hundreds of lines/sec (the build
+    page measured 336 lines/sec, ~19k lines in 57s). Scheduling a separate
+    Clock.schedule_once per line saturates the UI thread because each callback
+    reassigns log_box.text, which forces a TextInput retokenize+relayout of
+    the full visible tail. The Windows window then goes "not responding"
+    until the queue drains. The fix is to detach line *production* (worker
+    thread, lock-protected list append — O(1) and no UI work) from line
+    *display* (one Clock.schedule_interval tick that drains the batch and
+    does ONE log_box.text reassignment).
+
+    File writes still happen synchronously on the worker thread, so the log
+    is durable even if the wizard process dies before the next drain tick.
+    """
+
+    def __init__(
+        self,
+        log_box,
+        *,
+        max_buffer: int = 2000,
+        tail_size: int = 400,
+        drain_interval: float = 0.1,
+        file_writer=None,
+    ) -> None:
+        self._log_box = log_box
+        self._max_buffer = max_buffer
+        self._tail_size = tail_size
+        self._drain_interval = drain_interval
+        self._file_writer = file_writer
+        self._visible: list[str] = []
+        self._pending: list[str] = []
+        self._lock = threading.Lock()
+        self._event = None
+        self._start()
+
+    def _start(self) -> None:
+        from kivy.clock import Clock as _Clock
+        if self._event is None:
+            self._event = _Clock.schedule_interval(
+                self._drain, self._drain_interval,
+            )
+
+    def on_line(self, line: str) -> None:
+        """Worker-thread entry point. Safe to call from any thread."""
+        if self._file_writer is not None:
+            try:
+                self._file_writer(line)
+            except Exception:
+                pass
+        with self._lock:
+            self._pending.append(line)
+
+    def _drain(self, _dt) -> None:
+        with self._lock:
+            if not self._pending:
+                return
+            batch = self._pending
+            self._pending = []
+        self._visible.extend(batch)
+        if len(self._visible) > self._max_buffer:
+            del self._visible[: len(self._visible) - self._max_buffer]
+        self._log_box.text = "\n".join(self._visible[-self._tail_size:])
+
+    def clear(self) -> None:
+        """UI-thread reset between worker attempts. Drops pending lines, the
+        visible buffer, and the widget text in one shot."""
+        with self._lock:
+            self._pending.clear()
+        self._visible.clear()
+        self._log_box.text = ""
+
+    def stop(self) -> None:
+        """Cancel the drain interval. Optional — Kivy reaps the binding when
+        the widget is garbage-collected, so most callers can ignore this."""
+        if self._event is not None:
+            self._event.cancel()
+            self._event = None
+
+
 # Cap how many times a single wizard page can re-run its worker before
 # we stop offering the Retry button. Picked so a flaky network or AV
 # scan can retry a handful of times without manual intervention, but a
@@ -348,7 +429,50 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
         m = Label(text=msg, halign="left", valign="top", text_size=(600, None))
         m.bind(size=lambda inst, val: setattr(inst, "text_size", (val[0], None)))
         root.add_widget(m)
-        nav, _, next_btn = _nav_row(None, lambda: goto("prereq_mode"), next_text="Begin")
+
+        # On Begin, run check_all() in a worker. If every prereq is
+        # already satisfied, skip the prereq_mode + prereqs screens
+        # (which exist to ask "how should we install?" and "keep
+        # portable toolchain after build?") and jump straight to the
+        # NSP picker. If anything is missing, fall through to the
+        # normal prereq_mode → prereqs path.
+        def on_begin() -> None:
+            popup_box = BoxLayout(orientation="vertical", padding=12, spacing=8)
+            popup_box.add_widget(Label(text="Checking prerequisites..."))
+            popup = Popup(
+                title="Setup",
+                content=popup_box,
+                size_hint=(0.5, 0.25),
+                auto_dismiss=False,
+            )
+            popup.open()
+
+            def worker() -> None:
+                state = load_setup_state()
+                hactool_override = (
+                    Path(state["hactool_path"]) if state.get("hactool_path") else None
+                )
+                prod_keys_override = (
+                    Path(state["prodkeys_path"]) if state.get("prodkeys_path") else None
+                )
+                results = check_all(
+                    hactool_override=hactool_override,
+                    prod_keys_override=prod_keys_override,
+                )
+
+                def finish(_dt):
+                    popup.dismiss()
+                    if all_ok(results):
+                        wizard_log("welcome→Begin: all prereqs OK, skipping prereq screens")
+                        goto("nsp")
+                    else:
+                        goto("prereq_mode")
+                from kivy.clock import Clock as _Clock
+                _Clock.schedule_once(finish)
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        nav, _, next_btn = _nav_row(None, on_begin, next_text="Begin")
         root.add_widget(nav)
         s.add_widget(root)
         return s
@@ -494,7 +618,6 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
             close_btn.bind(on_release=lambda _i: popup.dismiss())
             popup.open()
 
-            log_lines: list[str] = []
             # File mirror so installer output survives the popup being
             # dismissed. Previously the full transcript only lived in the
             # Kivy widget and was lost on close, leaving wizard.log with
@@ -506,13 +629,7 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
             except OSError as e:
                 wizard_log(f"could not open install.log: {e}")
 
-            def append_log(line: str) -> None:
-                log_lines.append(line)
-                if len(log_lines) > 2000:
-                    del log_lines[:1000]
-                log_widget.text = "\n".join(log_lines[-400:])
-
-            def on_line(line: str) -> None:
+            def _install_log_to_file(line: str) -> None:
                 # Synchronous file write on the worker thread so the
                 # line is durable even if the wizard dies mid-install.
                 if install_log_file is not None:
@@ -524,8 +641,14 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
                         install_log_file.flush()
                     except Exception:
                         pass
-                from kivy.clock import Clock as _Clock
-                _Clock.schedule_once(lambda dt: append_log(line))
+
+            streamer = BufferedLogStreamer(
+                log_widget,
+                max_buffer=2000,
+                tail_size=400,
+                file_writer=_install_log_to_file,
+            )
+            on_line = streamer.on_line
 
             def _worker_body() -> None:
                 # Lazy-import installers — pulls in urllib + ctypes + the
@@ -1016,7 +1139,6 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
             height=64,
         )
         root.add_widget(status)
-        log_lines: list[str] = []
         log_box = TextInput(text="", readonly=True, font_name="RobotoMono-Regular"
                             if False else "Roboto",
                             size_hint=(1, 1))
@@ -1059,31 +1181,27 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
                 except Exception:
                     pass
 
-        def append_line(line: str) -> None:
-            log_lines.append(line)
-            # Cap the visible log so 5000 lines of compiler output don't
-            # OOM the Kivy text widget.
-            if len(log_lines) > 1000:
-                del log_lines[:500]
-            log_box.text = "\n".join(log_lines[-300:])
+        # Cap the visible log so 5000 lines of compiler output don't OOM the
+        # Kivy text widget. Batched via BufferedLogStreamer so a fast-streaming
+        # subprocess (extractor emits hundreds of lines/sec) doesn't saturate
+        # the UI thread one schedule_once at a time.
+        streamer = BufferedLogStreamer(
+            log_box,
+            max_buffer=1000,
+            tail_size=300,
+            file_writer=_log_to_file,
+        )
 
         def on_line(line: str) -> None:
             """Worker-thread callback: invoked from `_stream_subprocess`'s
-            stdout-reader loop once per child-process line. Two destinations:
-
-              1. The file log, immediately + synchronously, so the line is
-                 durable even if the wizard process dies before the next
-                 Kivy frame.
-              2. The Kivy text widget, via Clock.schedule_once because we're
-                 on a worker thread and direct UI mutation is unsafe.
-
-            Also updates the heartbeat timestamp so the watcher knows the
-            subprocess is still producing output."""
+            stdout-reader loop once per child-process line. Updates the
+            heartbeat timestamp (so the watcher knows the subprocess is still
+            producing output) and forwards the line to the buffered streamer,
+            which handles the file write + the UI-thread-batched widget
+            update internally."""
             import time
             _state["last_output_ts"] = time.monotonic()
-            _log_to_file(line)
-            from kivy.clock import Clock as _Clock
-            _Clock.schedule_once(lambda dt: append_line(line))
+            streamer.on_line(line)
 
         def _heartbeat() -> None:
             """Emit "still running" lines to BOTH the file log and the
@@ -1309,8 +1427,7 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
                 f"[wizard] === attempt "
                 f"{_state['attempt_count']}/{MAX_STEP_ATTEMPTS} ==="
             )
-            log_lines.clear()
-            log_box.text = ""
+            streamer.clear()
             next_btn.disabled = True
             retry_btn.disabled = True
             import threading as _threading
@@ -1369,7 +1486,6 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
         root.add_widget(_h1("Build Switch module"))
         status = _label("Preparing...")
         root.add_widget(status)
-        log_lines: list[str] = []
         log_box = TextInput(text="", readonly=True, size_hint=(1, 1))
         root.add_widget(log_box)
 
@@ -1382,7 +1498,7 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
 
         # File-log mirror so the build screen's output survives the
         # popup-style Kivy widget being cleared (each retry calls
-        # log_lines.clear() and resets log_box.text). When the user
+        # streamer.clear() and resets log_box.text). When the user
         # reports "the build failed", build.log has the full subprocess
         # transcript across every attempt of this wizard run.
         build_log_path = appdata_root() / "build.log"
@@ -1398,20 +1514,13 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
                 except Exception:
                     pass
 
-        def append_line(line: str) -> None:
-            log_lines.append(line)
-            if len(log_lines) > 2000:
-                del log_lines[:1000]
-            log_box.text = "\n".join(log_lines[-400:])
-
-        def on_line(line: str) -> None:
-            # Synchronous file write happens on the worker thread so the
-            # line is durable even if the wizard process dies before the
-            # next Kivy frame. The widget update is scheduled on the UI
-            # thread.
-            _build_log_to_file(line)
-            from kivy.clock import Clock as _Clock
-            _Clock.schedule_once(lambda dt: append_line(line))
+        streamer = BufferedLogStreamer(
+            log_box,
+            max_buffer=2000,
+            tail_size=400,
+            file_writer=_build_log_to_file,
+        )
+        on_line = streamer.on_line
 
         def update_status(text: str) -> None:
             from kivy.clock import Clock as _Clock
@@ -1517,8 +1626,7 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
                 f"[wizard] === build attempt "
                 f"{build_state['attempt_count']}/{MAX_STEP_ATTEMPTS} ==="
             )
-            log_lines.clear()
-            log_box.text = ""
+            streamer.clear()
             next_btn.disabled = True
             retry_btn.disabled = True
             threading.Thread(target=run_in_worker, daemon=True).start()
