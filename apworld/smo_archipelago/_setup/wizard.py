@@ -48,24 +48,14 @@ from pathlib import Path
 from typing import Any
 
 from . import appdata_root, build_dir, data_dir, setup_state_path
-from .build import (
-    BuildResult,
-    bundled_switch_mod,
-    collect_build_outputs,
-    maps_ready,
-    run_build_switchmod,
-    run_extract_maps,
-    run_sync_capture_table,
-    verify_map_hashes,
-)
-from .deploy import (
-    DeployResult,
-    deploy_to_custom_folder,
-    deploy_to_ryujinx,
-    deploy_to_sd,
-    detect_ryujinx_path,
-    detect_sd_candidates,
-)
+# Build / deploy primitives the wizard touches directly. The page workers
+# delegate ORCHESTRATION (probe -> install -> extract -> build -> deploy
+# sequencing) to `wizard_cli`; what's imported here is only the helpers
+# whose results the UI page widgets read pre-orchestration (e.g.
+# `collect_build_outputs` for the deploy page's pre-flight, the deploy
+# autodetect functions for input-field defaults).
+from .build import collect_build_outputs
+from .deploy import detect_ryujinx_path, detect_sd_candidates
 from .net import detect_lan_ip, is_plausible_ipv4
 from .prereqs import PrereqResult, all_ok, check_all
 from .smoap_file import SmoapFile, parse_smoap, smoap_to_launch_args
@@ -650,64 +640,50 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
             )
             on_line = streamer.on_line
 
-            def _worker_body() -> None:
-                # Lazy-import installers — pulls in urllib + ctypes + the
-                # GitHub-API JSON parser, none of which the apworld layer
-                # should drag onto a headless gen host.
-                from .installers import (
-                    INSTALLERS, check_internet, check_winget,
-                )
-                if preflight:
-                    on_line("[wizard] preflight: checking internet...")
-                    r = check_internet(on_line)
-                    if not r.ok:
+            def _on_event(payload: dict[str, Any]) -> None:
+                """Marshal wizard_cli.run_install events to the install
+                popup's log widget + add wizard-side breadcrumbs that
+                mirror the pre-refactor `[wizard]` lines. Final
+                close-button state is set from the InstallOutcome
+                dataclass below, not per-event."""
+                evt = payload.get("event")
+                if evt == "log":
+                    on_line(payload.get("line", ""))
+                elif evt == "preflight":
+                    if not payload.get("ok"):
                         on_line("[wizard] preflight failed; aborting.")
-                        from kivy.clock import Clock as _Clock
-                        _Clock.schedule_once(
-                            lambda dt: (
-                                setattr(close_btn, "disabled", False),
-                                setattr(close_btn, "text", "Close (install failed)"),
-                            ),
-                        )
-                        return
-                    if any(k in {"cmake", "ninja", "python312"} for k in keys):
-                        on_line("[wizard] preflight: checking winget...")
-                        r = check_winget(on_line)
-                        if not r.ok:
-                            on_line("[wizard] preflight failed; aborting.")
-                            from kivy.clock import Clock as _Clock
-                            _Clock.schedule_once(
-                                lambda dt: (
-                                    setattr(close_btn, "disabled", False),
-                                    setattr(close_btn, "text", "Close (install failed)"),
-                                ),
-                            )
-                            return
-                any_failed = False
-                for key in keys:
-                    fn = INSTALLERS.get(key)
-                    if fn is None:
-                        on_line(f"[wizard] no installer registered for {key!r}; skipping")
-                        continue
-                    on_line(f"[wizard] === starting installer for {key!r} ===")
-                    try:
-                        result = fn(on_line)
-                    except Exception as e:  # pragma: no cover — surface to UI
-                        import traceback
-                        on_line(f"[wizard] installer for {key!r} crashed: "
-                                f"{type(e).__name__}: {e}")
-                        on_line(traceback.format_exc())
-                        any_failed = True
-                        break
+                elif evt == "install_start":
                     on_line(
-                        f"[wizard] installer {key!r}: ok={result.ok} "
-                        f"detail={result.detail!r}"
+                        f"[wizard] === starting installer for "
+                        f"{payload.get('key')!r} ==="
                     )
-                    if not result.ok:
-                        any_failed = True
-                        on_line(f"[wizard] stopping install run after {key!r} failure")
-                        break
-                on_line("[wizard] === install run complete; re-running prereq check ===")
+                elif evt == "install_end":
+                    on_line(
+                        f"[wizard] installer {payload.get('key')!r}: "
+                        f"ok={payload.get('ok')} "
+                        f"detail={payload.get('detail')!r}"
+                    )
+                    if not payload.get("ok"):
+                        on_line(
+                            f"[wizard] stopping install run after "
+                            f"{payload.get('key')!r} failure"
+                        )
+
+            def _worker_body() -> None:
+                # Delegate to wizard_cli.run_install — same INSTALL_ORDER
+                # reordering, same preflight, same stop-on-first-failure.
+                # Single source of truth shared with `python -m
+                # _setup.wizard_cli`, so the GUI's button can't behave
+                # differently from the CLI's --auto-install path.
+                from . import wizard_cli
+                outcome = wizard_cli.run_install(
+                    keys, preflight=preflight, callback=_on_event,
+                )
+                on_line(
+                    "[wizard] === install run complete; "
+                    "re-running prereq check ==="
+                )
+                any_failed = not outcome.ok
                 from kivy.clock import Clock as _Clock
 
                 def finish(_dt):
@@ -1226,6 +1202,44 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
                     on_line(msg)
                     _state["last_output_ts"] = time.monotonic()  # debounce
 
+        def _on_event(payload: dict[str, Any]) -> None:
+            """Marshal a wizard_cli orchestration event into Kivy state.
+
+            `log` events go through the buffered streamer (file mirror
+            + batched widget update). Other events are observed but the
+            final UI state is driven by the `ExtractOutcome` returned
+            by `run_extract`, not by per-event side effects — keeps the
+            commit point in one place."""
+            import time
+            evt = payload.get("event")
+            if evt == "log":
+                on_line(payload.get("line", ""))
+            elif evt == "extract_subprocess":
+                on_line(
+                    f"[wizard] subprocess exit code: "
+                    f"{payload.get('returncode')}"
+                )
+            elif evt == "maps_present":
+                if not payload.get("present"):
+                    on_line(
+                        "[wizard] subprocess returned 0 but "
+                        "shine_map.json / capture_map.json are missing "
+                        "— treating as failure"
+                    )
+            elif evt == "hash_check":
+                if payload.get("match"):
+                    on_line(
+                        f"[wizard] hash check: {payload.get('filename')} "
+                        f"matches canonical SMO 1.0.0 USen fingerprint"
+                    )
+                else:
+                    on_line(
+                        f"[wizard] hash check: {payload.get('filename')} "
+                        f"differs from canonical "
+                        f"(expected {(payload.get('expected') or '')[:12]}…, "
+                        f"got {(payload.get('actual') or '<missing>')[:12]}…)"
+                    )
+
         def run_in_worker() -> None:
             dump = wizard_state["dump_path"]
             import time
@@ -1252,11 +1266,10 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
                 _Clock.schedule_once(
                     lambda dt: status.setter("text")(status, msg)
                 )
-            # Validate the dump file still exists — the picker checked at
-            # the time of selection, but the user may have moved or
-            # deleted the file between then and clicking Start Extract,
-            # and otherwise the subprocess would fail far downstream with
-            # an opaque "couldn't read NSP" message.
+            # wizard_cli.run_extract also validates dump.is_file(), but
+            # we surface a clearer status message here than its terse
+            # log line — and the Kivy retry button needs to be enabled
+            # without scheduling the heartbeat thread for nothing.
             if not dump.is_file():
                 msg = (
                     f"Dump file no longer exists at {dump}. Go back to "
@@ -1294,13 +1307,18 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
                 hb = _threading.Thread(target=_heartbeat, daemon=True)
                 _state["heartbeat_thread"] = hb
                 hb.start()
-                result = run_extract_maps(
+                # Delegate the orchestration (subprocess + maps_ready
+                # belt-and-braces + hash gate) to wizard_cli.run_extract.
+                # The single source of truth for "is this a successful
+                # extract" lives in wizard_cli now; UI state is set from
+                # the returned ExtractOutcome.
+                from . import wizard_cli
+                outcome = wizard_cli.run_extract(
                     dump,
-                    keys_path=prod_keys_override,
-                    hactool_path=hactool_override,
-                    on_line=on_line,
+                    hactool_override=hactool_override,
+                    prod_keys_override=prod_keys_override,
+                    callback=_on_event,
                 )
-                on_line(f"[wizard] subprocess exit code: {result.returncode}")
             except Exception as e:  # pragma: no cover
                 on_line(f"[wizard] EXCEPTION: {type(e).__name__}: {e}")
                 from kivy.clock import Clock as _Clock
@@ -1308,90 +1326,36 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
                     status, f"Failed: {e}"))
                 _close_log()
                 return
-            # Belt-and-braces: even when the subprocess returns 0, confirm
-            # the two output files actually landed. Earlier wizard releases
-            # hit a Windows `os.execv` bug in the extractor's bootstrap
-            # where the re-launched child failed with a non-zero exit code,
-            # but the parent (the process subprocess.Popen was watching)
-            # had already returned 0 because Windows `_wspawnv` returns
-            # control to the caller. Checking for the output files closes
-            # that gap regardless of how a future regression sneaks in.
-            outputs_present = maps_ready()
-            if result.ok and not outputs_present:
-                on_line(
-                    "[wizard] subprocess returned 0 but shine_map.json / "
-                    "capture_map.json are missing — treating as failure"
-                )
-            # Hash gate: the USen-locale extract is deterministic across
-            # every legitimate SMO 1.0.0 source (eShop NSP, cartridge,
-            # XCI, any valid ticket). A mismatch is a real "wrong dump"
-            # signal — typically a v1.1.0+ patched build, a different
-            # game, or a corrupted dump — so the wizard refuses to
-            # continue. If the user's source is genuinely 1.0.0 but
-            # produces different bytes, the fix is to dump cleanly with
-            # NXDumpTool from a clean retail source.
-            hash_ok = False
-            hash_hint = ""
-            if outputs_present:
-                try:
-                    checks = verify_map_hashes()
-                except Exception as e:  # pragma: no cover
-                    on_line(
-                        f"[wizard] hash check crashed: "
-                        f"{type(e).__name__}: {e} — treating as failure"
-                    )
-                    checks = []
-                    hash_hint = (
-                        "Hash check itself errored — re-run setup."
-                    )
-                if checks and all(c.match for c in checks):
-                    hash_ok = True
-                    on_line(
-                        "[wizard] hash check: maps match canonical "
-                        "SMO 1.0.0 USen fingerprint"
-                    )
-                else:
-                    mismatched = [c for c in checks if not c.match]
-                    for c in mismatched:
-                        on_line(
-                            f"[wizard] hash check: {c.filename} "
-                            f"differs from canonical "
-                            f"(expected {c.expected[:12]}…, "
-                            f"got {(c.actual or '<missing>')[:12]}…)"
-                        )
-                    if mismatched and not hash_hint:
-                        hash_hint = (
-                            "Maps don't match the canonical SMO 1.0.0 "
-                            "USen fingerprint. Confirm your dump is "
-                            "SMO 1.0.0 (not 1.1.0+ or a different game), "
-                            "then re-dump with NXDumpTool from a clean "
-                            "retail source and re-run Extract."
-                        )
             from kivy.clock import Clock as _Clock
+
             def finish(_dt):
-                if result.ok and outputs_present and hash_ok:
+                if outcome.ok:
                     status.text = "Extraction complete."
                     next_btn.disabled = False
                     retry_btn.disabled = True
-                elif result.ok and outputs_present and not hash_ok:
+                elif outcome.maps_present and not outcome.hash_ok:
                     # Files exist but don't match the canonical
-                    # fingerprint. Surface the actionable hint in the
+                    # fingerprint. Surface an actionable hint in the
                     # status text so the user sees the fix without
                     # scrolling the log.
                     status.text = (
-                        hash_hint
-                        or "Extraction produced unexpected maps — "
-                           "see hash check lines above."
+                        "Maps don't match the canonical SMO 1.0.0 "
+                        "USen fingerprint. Confirm your dump is "
+                        "SMO 1.0.0 (not 1.1.0+ or a different game), "
+                        "then re-dump with NXDumpTool from a clean "
+                        "retail source and re-run Extract."
                     )
                     retry_btn.disabled = False
-                elif result.ok:
+                elif outcome.returncode == 0:
                     status.text = (
                         "Extraction reported success but output files are "
                         "missing — see extract.log."
                     )
                     retry_btn.disabled = False
                 else:
-                    status.text = f"Extraction failed (exit {result.returncode})."
+                    status.text = (
+                        f"Extraction failed (exit {outcome.returncode})."
+                    )
                     retry_btn.disabled = False
             _Clock.schedule_once(finish)
             _close_log()
@@ -1526,51 +1490,66 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
             from kivy.clock import Clock as _Clock
             _Clock.schedule_once(lambda dt: status.setter("text")(status, text))
 
+        # Per-step status labels keyed by the step name wizard_cli emits.
+        # Lives in wizard.py because the wording is UI surface ("Compiling
+        # Switch module (bridge=..., ~1-5 minutes)..."); the *sequence* of
+        # steps is defined by wizard_cli.run_build.
+        def _step_label(step: str) -> str:
+            if step == "sync_capture":
+                return "Syncing capture table..."
+            if step == "build_switchmod":
+                return (
+                    f"Compiling Switch module "
+                    f"(bridge={wizard_state['bridge_ip']}, "
+                    f"~1-5 minutes)..."
+                )
+            return step  # forward-compat fallback for new orchestrator steps
+
+        def _on_event(payload: dict[str, Any]) -> None:
+            """Marshal wizard_cli.run_build events into Kivy state. Final
+            ok/retry state comes from the BuildOutcome dataclass, not
+            from per-event side effects."""
+            evt = payload.get("event")
+            if evt == "log":
+                on_line(payload.get("line", ""))
+            elif evt == "build_step_start":
+                update_status(_step_label(payload.get("step", "")))
+            elif evt == "build_step_end":
+                if not payload.get("ok"):
+                    update_status(
+                        f"Failed at step '{_step_label(payload.get('step', ''))}'"
+                        f" (exit {payload.get('returncode')})."
+                    )
+
         def run_in_worker() -> None:
-            # Two-step build under Hakkun:
+            # Delegate to wizard_cli.run_build:
             #   1. sync_capture_table — regenerates capture_table.h from items.json.
             #   2. build_switchmod — single subprocess that does patch_hakkun
             #      → setup_sail → cmake configure → ninja build. Toolchain
             #      paths come from env vars the wrapper reads (SMOAP_LLVM_BIN,
-            #      SMOAP_MINGW_BIN, …), which build.run_build_switchmod
+            #      SMOAP_MINGW_BIN, SMOAP_PYTHON_BIN, SMOAP_NINJA_BIN,
+            #      SMOAP_CMAKE_BIN), which build.run_build_switchmod
             #      populates from the prereq check's resolved bin dirs.
-            steps: list[tuple[str, callable]] = [
-                ("Syncing capture table...",
-                 lambda: run_sync_capture_table(on_line=on_line)),
-                (f"Compiling Switch module (bridge={wizard_state['bridge_ip']}, "
-                 "~1-5 minutes)...",
-                 lambda: run_build_switchmod(
-                     wizard_state["bridge_ip"],
-                     on_line=on_line,
-                 )),
-            ]
-            for label, fn in steps:
-                update_status(label)
-                try:
-                    result = fn()
-                except FileNotFoundError as e:
-                    update_status(f"Failed: {e}")
-                    from kivy.clock import Clock as _Clock
-                    _Clock.schedule_once(lambda dt: setattr(retry_btn, "disabled", False))
-                    return
-                if not result.ok:
-                    update_status(f"Failed at step '{label}' (exit {result.returncode}).")
-                    from kivy.clock import Clock as _Clock
-                    _Clock.schedule_once(lambda dt: setattr(retry_btn, "disabled", False))
-                    return
-            # Verify outputs.
-            try:
-                collect_build_outputs()
-            except FileNotFoundError as e:
-                update_status(f"Build returned 0 but outputs missing: {e}")
+            #   3. collect_build_outputs — verify subsdk9 + main.npdm landed.
+            # All three steps + the FileNotFoundError trap live inside
+            # wizard_cli.run_build; we just translate the outcome to UI state.
+            from . import wizard_cli
+            outcome = wizard_cli.run_build(
+                wizard_state["bridge_ip"],
+                callback=_on_event,
+            )
+            if not outcome.ok:
                 from kivy.clock import Clock as _Clock
                 _Clock.schedule_once(lambda dt: setattr(retry_btn, "disabled", False))
                 return
             wizard_state["build_done"] = True
-            # Post-build cleanup of portable toolchain dirs if user chose Remove
-            # on the prereq screen. Runs AFTER the build succeeds so the tools
-            # are available during compilation; runs BEFORE the wizard advances
-            # so the Done page reflects the final disk state.
+            # Post-build cleanup of portable toolchain dirs if user chose
+            # Remove on the prereq screen. Runs AFTER the build succeeds so
+            # the tools are available during compilation; runs BEFORE the
+            # wizard advances so the Done page reflects the final disk
+            # state. Lives in wizard.py because the trigger is a Kivy
+            # checkbox (UI state), not orchestration -- wizard_cli has no
+            # opinion on whether the user wants their LLVM kept.
             state = load_setup_state()
             if state.get("keep_portable_deps") is False:
                 update_status("Build complete. Removing portable toolchain "
@@ -1767,56 +1746,82 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
         root.add_widget(nav)
         s.add_widget(root)
 
+        def _on_deploy_event(payload: dict[str, Any]) -> None:
+            """Mirror deploy events to wizard.log -- the page has no
+            streaming widget (deploy is sync + fast), so the only sink
+            is the durable file log. Event-driven for parity with the
+            other refactored workers; final UI state comes from the
+            DeployOutcome dataclass."""
+            evt = payload.get("event")
+            if evt == "log":
+                wizard_log(payload.get("line", ""))
+            elif evt == "deploy_result":
+                wizard_log(
+                    f"deploy_result ok={payload.get('ok')} "
+                    f"target={payload.get('target')!r} "
+                    f"file_count={payload.get('file_count')} "
+                    f"error={payload.get('error')!r}"
+                )
+
         def do_deploy_and_continue() -> None:
             wizard_log("do_deploy_and_continue: entered")
+            # Build outputs are read here -- wizard_cli.run_deploy
+            # accepts them as an arg rather than re-resolving inside,
+            # because the Kivy page also wants to surface a clear
+            # "build outputs missing" status text before the deploy
+            # attempt (vs. wizard_cli's terse phase_end-with-error path).
             try:
                 outputs = collect_build_outputs()
             except FileNotFoundError as e:
                 wizard_log(f"do_deploy_and_continue: build outputs missing: {e}")
                 status.text = f"Build outputs missing: {e}"
                 return
+
+            # Map the radio-button selection to wizard_cli's target
+            # parameter. The radio buttons + their text inputs are UI
+            # surface that doesn't translate to a CLI argument, so the
+            # adaptation lives here.
             if ryu_cb.active:
-                target = Path(ryu_input.text.strip())
-                if not target.is_dir():
-                    status.text = f"Ryujinx folder does not exist: {target}"
-                    return
-                wizard_log(f"deploy_to_ryujinx target={target}")
-                result = deploy_to_ryujinx(target, outputs)
-                wizard_state["deploy_target"] = "ryujinx"
-                wizard_state["ryujinx_root"] = str(target)
+                target_kind = "ryujinx"
+                target_path = Path(ryu_input.text.strip())
+                wizard_state["ryujinx_root"] = str(target_path)
             elif sd_cb.active:
-                target = Path(sd_input.text.strip())
-                if not target.exists():
-                    status.text = f"SD card path does not exist: {target}"
-                    return
-                wizard_log(f"deploy_to_sd target={target}")
-                result = deploy_to_sd(target, outputs)
-                wizard_state["deploy_target"] = "sd"
-                wizard_state["sd_root"] = str(target)
+                target_kind = "sd"
+                target_path = Path(sd_input.text.strip())
+                wizard_state["sd_root"] = str(target_path)
             elif custom_cb.active:
-                target = Path(custom_input.text.strip())
-                # Custom folder needn't already exist — we'll create it.
-                # But the parent must exist and be a directory; otherwise
-                # we'd silently create folder trees in surprising places.
-                if not target.parent.exists():
-                    status.text = (
-                        f"Custom folder parent does not exist: {target.parent}"
-                    )
-                    return
-                target.mkdir(parents=True, exist_ok=True)
-                wizard_log(f"deploy_to_custom_folder target={target}")
-                result = deploy_to_custom_folder(target, outputs)
-                wizard_state["deploy_target"] = "custom"
-                wizard_state["custom_root"] = str(target)
+                target_kind = "custom"
+                target_path = Path(custom_input.text.strip())
+                wizard_state["custom_root"] = str(target_path)
             else:
                 status.text = "Pick a deploy target (Ryujinx, SD card, or Custom folder)."
                 return
-            wizard_log(
-                f"deploy result ok={result.ok} target={result.target!r} "
-                f"files={len(result.files)} error={result.error!r}"
+
+            # Ryujinx + sd need pre-deploy path validation with a
+            # Kivy-friendly status message (wizard_cli.run_deploy's own
+            # check still fires defensively, but we want the user to
+            # see a clear sentence in status.text, not just a JSON
+            # event no one's reading on a Kivy page).
+            if target_kind == "ryujinx" and not target_path.is_dir():
+                status.text = f"Ryujinx folder does not exist: {target_path}"
+                return
+            if target_kind == "sd" and not target_path.exists():
+                status.text = f"SD card path does not exist: {target_path}"
+                return
+            if target_kind == "custom" and not target_path.parent.exists():
+                status.text = (
+                    f"Custom folder parent does not exist: {target_path.parent}"
+                )
+                return
+
+            wizard_log(f"run_deploy target={target_kind} path={target_path}")
+            from . import wizard_cli
+            outcome = wizard_cli.run_deploy(
+                target_kind, target_path, outputs, callback=_on_deploy_event,
             )
-            if not result.ok:
-                status.text = f"Deploy failed: {result.error}"
+            wizard_state["deploy_target"] = target_kind
+            if not outcome.ok:
+                status.text = f"Deploy failed: {outcome.error}"
                 return
             # Merge into existing state instead of replacing — sibling
             # keys like hactool_path, prodkeys_path, and dump_path are
@@ -1831,7 +1836,11 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
                 "custom_root": wizard_state["custom_root"],
             })
             save_setup_state(state)
-            wizard_state["deploy_result"] = result
+            # The Done page consumes `deploy_result` to render its summary
+            # ("Copied N files to ..."). Build a shim from the wizard_cli
+            # outcome that matches the legacy DeployResult shape the Done
+            # page reads (`.files`, `.target`).
+            wizard_state["deploy_result"] = outcome
             wizard_log("deploy succeeded; transitioning to 'done' page")
             goto("done")
 
@@ -1860,7 +1869,10 @@ def run_setup_wizard(smoap_path: str | None = None) -> bool:
             root.clear_widgets()
             root.add_widget(_success_banner())
             root.add_widget(_h1("Setup complete"))
-            result: DeployResult | None = wizard_state.get("deploy_result")
+            # `deploy_result` is now a wizard_cli.DeployOutcome (post-
+            # refactor); it shares the `.files` + `.target` fields the
+            # legacy DeployResult had, so render logic is unchanged.
+            result = wizard_state.get("deploy_result")
             if result:
                 summary = (
                     f"Copied {len(result.files)} files to {result.target}.\n\n"
