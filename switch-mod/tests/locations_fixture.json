@@ -1,0 +1,7 @@
+[
+    {"name": "TestKingdom: Our First Power Moon", "category": ["TestKingdom"], "region": "TestKingdom", "requires": [], "progression": true},
+    {"name": "TestKingdom: Test Moon Bravo", "category": ["TestKingdom"], "region": "TestKingdom", "requires": [], "progression": true},
+    {"name": "TestKingdom: Test Moon Charlie", "category": ["TestKingdom"], "region": "TestKingdom", "requires": []},
+    {"name": "OtherTestKingdom: Test Moon Delta", "category": ["OtherTestKingdom"], "region": "OtherTestKingdom", "requires": [], "progression": true},
+    {"name": "OtherTestKingdom: Test Moon Echo", "category": ["OtherTestKingdom"], "region": "OtherTestKingdom", "requires": []}
+]

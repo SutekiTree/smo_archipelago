@@ -1,0 +1,37 @@
+[
+  {
+    "stage_name": "TestStageAlpha",
+    "object_id": "objAnchor",
+    "shine_uid": 101,
+    "kingdom": "TestKingdom",
+    "shine_id": "Our First Power Moon"
+  },
+  {
+    "stage_name": "TestStageAlpha",
+    "object_id": "objBravo",
+    "shine_uid": 102,
+    "kingdom": "TestKingdom",
+    "shine_id": "Test Moon Bravo"
+  },
+  {
+    "stage_name": "TestStageAlpha",
+    "object_id": "objCharlie",
+    "shine_uid": 103,
+    "kingdom": "TestKingdom",
+    "shine_id": "Test Moon Charlie"
+  },
+  {
+    "stage_name": "TestStageBeta",
+    "object_id": "objDelta",
+    "shine_uid": 104,
+    "kingdom": "OtherTestKingdom",
+    "shine_id": "Test Moon Delta"
+  },
+  {
+    "stage_name": "TestStageBeta",
+    "object_id": "objEcho",
+    "shine_uid": 105,
+    "kingdom": "OtherTestKingdom",
+    "shine_id": "Test Moon Echo"
+  }
+]
