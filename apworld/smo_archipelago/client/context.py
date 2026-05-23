@@ -612,7 +612,34 @@ class SMOContext(CommonContext):
         if cmd == "Connected":
             self._populate_datapackage_from_self()
             self.state.set_ap_conn("ready")
-            self.state.slot = self.auth or ""
+            # Slot-change reset (load-bearing). When SMOClient stays
+            # running but reconnects to a DIFFERENT slot — user typed a
+            # new slot name into the Connections tab, or pointed at a
+            # different AP server — the new slot's ReceivedItems history
+            # arrives starting at index 0, but `state.received_items` is
+            # initialized once in BridgeState.__init__ and never cleared.
+            # `_process_received_items`' position-based dedup
+            # (`pos < initial_mirror_len`) would then silently swallow
+            # the new slot's items at positions 0..prev_count-1, and
+            # `captures_unlocked` / `moons_received_by_kingdom` would
+            # stay frozen at whatever the prior slot had.
+            #
+            # This clear runs synchronously BEFORE any await in this
+            # handler so the next ReceivedItems task (scheduled after
+            # this one by on_package) sees an empty mirror. Same-slot
+            # reconnect skips the clear — that path needs the mirror
+            # intact to suppress duplicate Cappy bubbles / double moon
+            # credit on AP's full-history replay.
+            new_slot = self.auth or ""
+            if self.state.slot and new_slot and self.state.slot != new_slot:
+                log.info(
+                    "slot change %r -> %r: clearing per-slot bridge state",
+                    self.state.slot, new_slot,
+                )
+                self.state.clear_received()
+                self._switch_reported_loc_ids.clear()
+                self._goal_reported = False
+            self.state.slot = new_slot
             # Note: no pre-arm for `_goal_reported`. The latch lives only in
             # `report_goal()` and only matters within a single SMOClient
             # process — across reconnects the worst case is one duplicate

@@ -151,6 +151,44 @@ class BridgeState:
                 )
             return True
 
+    def clear_received(self) -> None:
+        """Reset all per-slot received-item state.
+
+        Called by SMOContext on a slot-change reconnect (same SMOClient
+        process, different AP slot — user typed a new slot name into
+        Connections or pointed at a different server). The position-based
+        dedup in `SMOContext._process_received_items` compares
+        ``pos < len(received_items)`` to ignore AP's full-history replay on
+        same-slot reconnects, but a stale mirror from the previous slot
+        would silently swallow the new slot's items at positions
+        0..prev_count-1 — and the on-Switch `captures_unlocked`,
+        moon counts, etc. would freeze at whatever the prior slot had.
+
+        Same-slot reconnect must NOT call this — that path RELIES on the
+        mirror to suppress double-Cappy / double-credit.
+        """
+        with self._lock:
+            self.received_items = []
+            self.captures_unlocked = set()
+            self.moons_received_by_kingdom = {}
+            self.moons_checked_by_kingdom = {}
+            # checked_locations is per-slot too: the new slot's AP
+            # location ids are entirely different. The Switch replays its
+            # snapshot post-HELLO so anything still owned in-game gets
+            # re-attributed against the new slot's id space.
+            self.checked_locations = []
+            self._checked_keys = set()
+            # Shine palette is derived from the new slot's LocationInfo
+            # scout reply (Connected handler kicks one off). Reset so
+            # stale (uid -> palette) mappings from the prior slot don't
+            # leak into the new slot's color scheme.
+            self.shine_palette = {}
+            # PayShineNum is keyed by save file, which generally pairs
+            # 1:1 with AP slot. Reset to the None sentinel so
+            # compute_outstanding defers OutstandingMsg until the next
+            # PaySnapshotMsg from the (probably-different) save lands.
+            self.pay_shine_num_by_kingdom = None
+
     def add_log(self, text: str) -> None:
         with self._lock:
             self.last_messages.append(text)
