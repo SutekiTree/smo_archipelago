@@ -325,7 +325,21 @@ void ApState::markMoonNamed(int shine_uid) {
     if (shine_uid >= kMaxBit) return;
     const auto word_idx = static_cast<std::size_t>(shine_uid) / 64;
     const auto bit = static_cast<std::uint64_t>(1) << (shine_uid % 64);
-    named_moons_bits[word_idx].fetch_or(bit, std::memory_order_relaxed);
+    const auto prev = named_moons_bits[word_idx].fetch_or(bit, std::memory_order_relaxed);
+    // Step 1a observability — track session-wide accumulation of named bits to
+    // test the "isOpenShineName OR-in saturates the vanilla picker's pool"
+    // hypothesis for the "No more hints now" flake. Only count NEW bits; a
+    // re-named moon (idempotent visit) shouldn't bump the counter. Log every
+    // 5th unique mark. Frame-thread only, no atomic-counter race in practice.
+    if ((prev & bit) == 0) {
+        static std::atomic<int> s_named_total{0};
+        const int total = s_named_total.fetch_add(1, std::memory_order_relaxed) + 1;
+        if ((total % 5) == 0) {
+            SMOAP_LOG_INFO("[talkatoo-obs:1a] markMoonNamed total=%d "
+                           "(this uid=%d)",
+                           total, shine_uid);
+        }
+    }
 }
 
 bool ApState::isMoonNamed(int shine_uid) const {

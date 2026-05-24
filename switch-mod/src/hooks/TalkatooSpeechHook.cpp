@@ -196,11 +196,26 @@ bool pickThreeUncollectedFromKingdom(
     *out_count = 0;
     out[0][0] = out[1][0] = out[2][0] = '\0';
 
+    // Step 1c observability — only WARN when Talkatoo% mode is on. Outside of
+    // mode the function is unused; the WARN would be noise.
+    const bool talkatoo_mode_on =
+        smoap::ap::ApState::instance().talkatoo_mode.load(
+            std::memory_order_acquire);
+
     using Pool = smoap::ap::ApState::TalkatooKingdomPool;
     char snapshot[Pool::kMaxMoons][smoap::ap::kCheckFieldCap];
     const std::size_t n = smoap::ap::ApState::instance().snapshotTalkatooKingdom(
         kingdom_bit, snapshot, Pool::kMaxMoons);
-    if (n == 0) return false;
+    if (n == 0) {
+        if (talkatoo_mode_on) {
+            SMOAP_LOG_WARN(
+                "[talkatoo-obs:1c] empty snapshot — bit=%d n=0 "
+                "(kingdom_bit out-of-range, mode-off snapshot, or stuck "
+                "seqlock); caller will fall back to PROBE",
+                kingdom_bit);
+        }
+        return false;
+    }
 
     // Two-pass filter: build a list of uncollected indices, then pick up to
     // 3 random ones via Fisher-Yates partial shuffle. Indices fit in u8 (96 max).
@@ -214,7 +229,15 @@ bool pickThreeUncollectedFromKingdom(
             idx_buf[idx_count++] = static_cast<std::uint8_t>(i);
         }
     }
-    if (idx_count == 0) return false;
+    if (idx_count == 0) {
+        if (talkatoo_mode_on) {
+            SMOAP_LOG_WARN(
+                "[talkatoo-obs:1c] all-collected — bit=%d snapshot_n=%zu "
+                "idx_count=0; caller will fall back to PROBE",
+                kingdom_bit, n);
+        }
+        return false;
+    }
 
     // Phase 5 (Gap #3 follow-up, 2026-05-21): when idx_count <= 3 (which
     // is the Phase 5 cursor-window case — bridge ships exactly 3 ordered

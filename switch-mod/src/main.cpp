@@ -52,8 +52,10 @@ void installSaveLoadHook();
 // Phase 4 (block non-named moon collection) lives inside the existing
 // MoonGetHook (universal setGotShine chokepoint) — see MoonGetHook.cpp.
 void installTalkatooSpeechHook();
-// Talkatoo% mode: pause-menu mark fix (isOpenShineName getter +
-// tryUnlockShineName setter trampolines). See hooks/TalkatooMenuMarkHook.cpp.
+// Talkatoo% picker-exhaustion fix: under talkatoo_mode, force
+// `GameDataFile::isOpenShineName` to return false so the vanilla picker
+// `rs::calcShineIndexTableNameAvailable` always sees a full pool and
+// Talkatoo never says "No more hints now". See hooks/TalkatooMenuMarkHook.cpp.
 void installTalkatooMenuMarkHook();
 // Instant seed growth: trampolines rs::getGrowFlowerTime to return 1 for
 // planted pots (orig==0 passes through), collapsing the 20–60 min real-time
@@ -314,16 +316,23 @@ extern "C" void hkMain() {
     SMOAP_LOG_INFO("installing TalkatooSpeechHook (Phase 3 — tryFindShineMessage tramp + Poetter vtable filter)");
     smoap::hooks::installTalkatooSpeechHook();
 
-    // TalkatooMenuMarkHook disabled 2026-05-22: the GameDataFile::tryUnlockShineName
-    // suppression breaks Talkatoo's speech path. User log SMOClient_2026_05_22_18_26_16
-    // shows one `[talkatoo-menu] suppressing` line and zero `[talkatoo] substituting`
-    // lines — Talkatoo says "no hints". Returning bool true from the suppress (per
-    // 7b0fc6a) didn't unblock it. The actual Talkatoo-facing API is
-    // `rs::tryUnlockShineName(LiveActor*, s32)` (GameDataUtil.h:92, namespace `rs`),
-    // not the GameDataFile class method we hook here. Re-enable only after the menu
-    // mark redesign targets the correct layer.
-    // SMOAP_LOG_INFO("installing TalkatooMenuMarkHook (pause-menu mark fix)");
-    // smoap::hooks::installTalkatooMenuMarkHook();
+    // 2026-05-23 — Talkatoo% picker-exhaustion fix. The 2026-05-22 OR-in
+    // strategy in this hook accelerated exhaustion (every Talkatoo visit
+    // marked the spoken uid via ApState::markMoonNamed, so isOpenShineName
+    // OR-d "true" for one more index per visit → vanilla picker returned 0
+    // → "No more hints now"). New strategy: force isOpenShineName=false
+    // under talkatoo_mode so the picker always sees a full pool.
+    //
+    // We tried hooking rs::tryUnlockShineName / rs::calcShineIndexTableNameAvailable
+    // directly — both froze boot inside HkTrampoline::installAtSym (symbols
+    // inlined into Poetter::exeWait, not exported in main.nso, sail's
+    // fakelib stub resolves to a bogus address). The GameDataFile getter
+    // is well-exported and traverses cleanly. See TalkatooMenuMarkHook.cpp
+    // header for the full provenance + tradeoff list (pause-menu marks are
+    // sacrificed under talkatoo_mode; collection-block in MoonGetHook is
+    // unaffected — it reads ApState::isMoonNamed, not the GameDataFile bit).
+    SMOAP_LOG_INFO("installing TalkatooMenuMarkHook (force isOpenShineName=false in talkatoo_mode)");
+    smoap::hooks::installTalkatooMenuMarkHook();
 
     SMOAP_LOG_INFO("installing GrowSeedInstantHook (rs::getGrowFlowerTime -> 1 for planted)");
     smoap::hooks::installGrowSeedInstantHook();

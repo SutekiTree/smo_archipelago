@@ -66,6 +66,15 @@ _ZN16GameDataFunction19tryFindShineMessageEPKN2al9LiveActorEPKNS0_17IUseMessageS
 // names project-wide.
 _ZTV7Poetter
 
+// 2026-05-23: rs::calcShineIndexTableNameAvailable and rs::tryUnlockShineName
+// were briefly added to this catalog as candidate hook targets for the
+// Talkatoo% "No more hints" fix. Both froze SMO's init thread inside
+// HkTrampoline::installAtSym — the symbols are inlined into Poetter::exeWait
+// and not exported in main.nso, so sail's fakelib stub resolved to a bogus
+// address. Removed. The shipped fix is the force-false strategy on the
+// already-hooked `_ZNK12GameDataFile15isOpenShineNameEii` (see
+// switch-mod/src/hooks/TalkatooMenuMarkHook.cpp).
+
 // --- ImGui debug overlay deps (ui::ApDebugConsole) ----------------------
 // Application::sInstance is the SEAD_SINGLETON_DISPOSER static that
 // Application::instance() reads. al::getStationedHeap is the stationed

@@ -476,6 +476,19 @@ inline constexpr const char* kPoetterVTable =
 inline constexpr const char* kGameDataFunctionTryFindShineMessage =
     "_ZN16GameDataFunction19tryFindShineMessageEPKN2al9LiveActorEPKNS0_17IUseMessageSystemEii";
 
+// Note (2026-05-23): we tried hooking the rs:: wrappers Talkatoo actually
+// calls (`rs::tryUnlockShineName(LiveActor*, s32)` and
+// `rs::calcShineIndexTableNameAvailable(s32)`). Both manglings (const and
+// non-const actor variants) froze SMO's init thread inside
+// HkTrampoline::installAtSym — the symbols are inlined into
+// `Poetter::exeWait` and not exported in SMO 1.0.0 main.nso, so sail's
+// fakelib stub resolved to a bogus address that the prologue relocator
+// infinite-looped on. Fix lives at the read side instead — see the
+// "force-false isOpenShineName under talkatoo_mode" strategy in
+// hooks/TalkatooMenuMarkHook.cpp. Do not re-add rs::tryUnlockShineName or
+// rs::calcShineIndexTableNameAvailable to this catalog without first
+// verifying the symbol exists via llvm-nm against the real main.nso.
+
 // =============================================================================
 // Talkatoo% mode — pause-menu mark fix.
 // =============================================================================
