@@ -49,6 +49,12 @@ std::uint8_t captureBitFor(const char* cap_name) {
         const auto& sv = kCaptureNames[i];
         if (sv.size() == n && std::memcmp(cap_name, sv.data(), n) == 0) return i;
     }
+    for (const auto& alias : kCaptureHackAliases) {
+        if (alias.hack_name.size() == n
+            && std::memcmp(cap_name, alias.hack_name.data(), n) == 0) {
+            return alias.bit;
+        }
+    }
     return 0xff;
 }
 
@@ -84,6 +90,14 @@ void enumerateOwnedCaptures(CaptureEnumerationCallback cb, void* ctx) {
     for (const auto& sv : kCaptureHackNames) {
         if (sv.empty()) continue;
         const char* name = sv.data();
+        if (s_isExistInHackDictionary(acc, name)) {
+            cb(ctx, name);
+            ++emitted;
+        }
+    }
+    for (const auto& alias : kCaptureHackAliases) {
+        if (alias.hack_name.empty()) continue;
+        const char* name = alias.hack_name.data();
         if (s_isExistInHackDictionary(acc, name)) {
             cb(ctx, name);
             ++emitted;
@@ -171,6 +185,20 @@ void reconcileCaptureDictionary() {
         if (s_isExistInHackDictionary(acc, hack)) continue;
         SMOAP_LOG_INFO("[m6-capture] reconcile firing for bit=%u hack='%s'",
                        static_cast<unsigned>(i), hack);
+        s_addHackDictionary(w, hack);
+    }
+
+    // Alias entries: ensure Lake-Puzzle / Goomba-PicMatch dict entries land
+    // when the player owns the (single) AP item that gates both Nintendo
+    // variants. Without this the Lake puzzle piece compendium slot stays
+    // empty even after the AP grant.
+    for (const auto& alias : kCaptureHackAliases) {
+        if (!s.captures_unlocked.test(alias.bit)) continue;
+        if (alias.hack_name.empty()) continue;
+        const char* hack = alias.hack_name.data();
+        if (s_isExistInHackDictionary(acc, hack)) continue;
+        SMOAP_LOG_INFO("[m6-capture] reconcile alias firing for bit=%u hack='%s'",
+                       static_cast<unsigned>(alias.bit), hack);
         s_addHackDictionary(w, hack);
     }
 }
