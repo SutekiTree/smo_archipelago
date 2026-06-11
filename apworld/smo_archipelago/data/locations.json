@@ -655,7 +655,7 @@
             "Sand Peace"
         ],
         "region": "Sand Kingdom",
-        "requires": "{BulletBillSkip()}"
+        "requires": "{SandPeace()}"
     },
     {
         "name": "Sand: Underground Treasure Chest",
