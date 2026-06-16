@@ -99,6 +99,21 @@ class _ResponderProtocol(asyncio.DatagramProtocol):
         # opens a UDP socket each call; doing it per-probe is wasteful and
         # the LAN IP doesn't change without a SMOClient restart anyway.
         self._lan_ip = self._get_lan_ip()
+        if self._lan_ip == "127.0.0.1":
+            # detect_lan_ip exhausted both the route probe and the
+            # interface enumeration. Advertising loopback means a real
+            # Switch can't connect at all, and Ryujinx's interface-bound
+            # host socket rejects the connect with EADDRNOTAVAIL (the
+            # connect FAILS rather than landing nowhere). Surface it here
+            # so the next "no items flowing" report shows the cause in the
+            # SMOClient log instead of only as a cryptic Switch-side errno.
+            log.warning(
+                "discovery: no routable LAN address found — replies will "
+                "advertise loopback (127.0.0.1). A real Switch cannot reach "
+                "this, and Ryujinx rejects it with EADDRNOTAVAIL. Check this "
+                "machine has an active LAN connection, or pass --switch-host "
+                "with the PC's LAN IP."
+            )
 
     def connection_made(self, transport: asyncio.BaseTransport) -> None:
         self._transport = transport  # type: ignore[assignment]
