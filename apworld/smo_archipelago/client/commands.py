@@ -30,6 +30,10 @@ log = logging.getLogger(__name__)
 HELP_TEXT = """\
 SMO Client commands (type with leading /):
   /smo_status                       show client-side tracker state
+  /warp [cascade|cap]               teleport Mario to a hub kingdom so he can
+                                    escape a one-way kingdom (e.g. stuck in
+                                    Bowser's without Pokio). Default: cascade.
+                                    Pure teleport — never unlocks anything.
   /inject_deathlink [src] [cause]
                                     synthesize an inbound KillMsg straight
                                     to the Switch, bypassing AP (debug)

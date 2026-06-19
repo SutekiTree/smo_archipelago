@@ -60,6 +60,7 @@ class _StubSwitch:
     def __init__(self) -> None:
         self.items: list[ItemMsg] = []
         self.kills: list = []
+        self.warps: list = []
         self.labels: list = []
         self.outstanding: list = []
         self.ap_states: list[str] = []
@@ -77,6 +78,9 @@ class _StubSwitch:
 
     async def send_kill(self, kill) -> None:
         self.kills.append(kill)
+
+    async def send_warp(self, warp) -> None:
+        self.warps.append(warp)
 
     async def send_moon_label(self, label) -> None:
         self.labels.append(label)
@@ -143,6 +147,54 @@ async def test_cmd_inject_deathlink_routes_killmsg_to_switch():
     assert len(sw.kills) == 1
     assert sw.kills[0].source == "Tester"
     assert sw.kills[0].cause == "for science"
+
+
+@pytest.mark.asyncio
+async def test_cmd_warp_routes_warpmsg_to_switch():
+    import asyncio
+    ctx = SMOContext(
+        server_address=None, password=None,
+        state=BridgeState(),
+        datapackage=DataPackage(),
+        shine_map=ShineMap(),
+        capture_map=CaptureMap(),
+    )
+    ctx.auth = "Mario"
+    sw = _StubSwitch()
+    ctx.switch = sw  # type: ignore[assignment]
+
+    proc = SMOClientCommandProcessor(ctx)
+
+    # Default destination is Cascade.
+    assert proc._cmd_warp() is True
+    await asyncio.sleep(0)
+    assert len(sw.warps) == 1
+    assert sw.warps[0].dest == "cascade"
+
+    # Explicit cap, case-insensitive.
+    assert proc._cmd_warp("CAP") is True
+    await asyncio.sleep(0)
+    assert sw.warps[1].dest == "cap"
+
+    # Unknown destination is rejected before any send.
+    assert proc._cmd_warp("moon") is False
+    await asyncio.sleep(0)
+    assert len(sw.warps) == 2
+
+
+@pytest.mark.asyncio
+async def test_cmd_warp_no_switch_is_safe():
+    ctx = SMOContext(
+        server_address=None, password=None,
+        state=BridgeState(),
+        datapackage=DataPackage(),
+        shine_map=ShineMap(),
+        capture_map=CaptureMap(),
+    )
+    ctx.auth = "Mario"
+    ctx.switch = None  # type: ignore[assignment]
+    proc = SMOClientCommandProcessor(ctx)
+    assert proc._cmd_warp() is False
 
 
 @pytest.mark.asyncio

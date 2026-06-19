@@ -937,6 +937,21 @@ void ApClient::handleLine(char* line, std::size_t line_len) {
         SMOAP_LOG_INFO("[deathlink in] queued source=%s cause=%s",
                        m.kill.source, m.kill.cause);
         ApState::instance().inbound_kill_pending.store(true, std::memory_order_release);
+    } else if (eq(m.t, "warp")) {
+        // PC /warp escape. Map the dest selector to an allowlisted hub home
+        // stage HERE (never trust a free-form stage from the wire) so the
+        // frame-thread executor can't be coerced into warping forward past a
+        // boss gate. Default + unknown → Cascade (the Odyssey's home base).
+        const char* stage = eq(m.warp.dest, "cap") ? "CapWorldHomeStage"
+                                                    : "WaterfallWorldHomeStage";
+        auto& st = ApState::instance();
+        std::size_t i = 0;
+        for (; i + 1 < sizeof(st.warp_dest_stage) && stage[i] != '\0'; ++i) {
+            st.warp_dest_stage[i] = stage[i];
+        }
+        st.warp_dest_stage[i] = '\0';
+        st.inbound_warp_pending.store(true, std::memory_order_release);
+        SMOAP_LOG_INFO("[warp in] dest=%s → stage=%s", m.warp.dest, stage);
     } else if (eq(m.t, "moon_label")) {
         const auto now = ApState::nowMs();
         const auto deadline = (m.moon_label.valid_for_ms > 0)

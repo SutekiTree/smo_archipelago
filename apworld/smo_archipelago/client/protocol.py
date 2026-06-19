@@ -401,6 +401,25 @@ class KillMsg:
 
 
 @dataclass
+class WarpMsg:
+    """Bridge -> Switch: manual /warp escape.
+
+    Teleports Mario to a hub kingdom home stage so a player physically stuck in
+    a one-way kingdom (e.g. Bowser's Kingdom without the Pokio capture, which
+    grounds the Odyssey until the RoboBrood is beaten) can fly back to earlier
+    kingdoms, collect what they're missing, and return to clear the gate the
+    intended way. It is a pure stage teleport — it does NOT unlock any kingdom,
+    so it can never be used to skip forward past a boss.
+
+    `dest` is a short selector the Switch maps to a home stage through a fixed
+    allowlist ("cascade" -> WaterfallWorldHomeStage, "cap" -> CapWorldHomeStage);
+    any other value falls back to Cascade. Free-form stage names are never sent.
+    """
+    t: str = "warp"
+    dest: str = "cascade"
+
+
+@dataclass
 class OutstandingEntry:
     """One per-kingdom balance row inside an OutstandingMsg.
 

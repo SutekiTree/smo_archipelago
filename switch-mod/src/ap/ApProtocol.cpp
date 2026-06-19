@@ -385,6 +385,15 @@ bool parseKill(Reader& r, Kill& out) {
     return true;
 }
 
+bool parseWarp(Reader& r, Warp& out) {
+    std::string_view key;
+    while (r.nextField(key)) {
+        if   (key == "dest") { if (!readIntoField(r, out.dest)) return false; }
+        else                 { return false; }
+    }
+    return true;
+}
+
 // Compare a char buffer's null-terminated contents to a string literal.
 // Replaces former `out.t == "hello_ack"` style comparisons (out.t is now
 // char[]). Same shape as strcmp but with a literal RHS for ergonomics.
@@ -538,6 +547,7 @@ bool decode(const char* data, std::size_t len, DecodedMsg& out) {
     else if (eqStr(out.t, "pong"))           ok = parsePong(r, out.pong);
     else if (eqStr(out.t, "err"))            ok = parseErr(r, out.err);
     else if (eqStr(out.t, "kill"))           ok = parseKill(r, out.kill);
+    else if (eqStr(out.t, "warp"))           ok = parseWarp(r, out.warp);
     else if (eqStr(out.t, "moon_label"))     ok = parseMoonLabel(r, out.moon_label);
     else if (eqStr(out.t, "cappy"))          ok = parseCappy(r, out.cappy);
     else if (eqStr(out.t, "shine_scouts"))   ok = parseShineScouts(r, out.shine_scouts);

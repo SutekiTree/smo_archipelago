@@ -3408,7 +3408,7 @@
             "Bowser's Kingdom"
         ],
         "region": "Bowser's Kingdom",
-        "requires": [],
+        "requires": "{BowserPeace()}",
         "progression": true
     },
     {
@@ -3418,7 +3418,7 @@
             "Bowser's Kingdom"
         ],
         "region": "Bowser's Kingdom",
-        "requires": [],
+        "requires": "{BowserPeace()}",
         "progression": true
     },
     {
@@ -3428,7 +3428,7 @@
             "Bowser's Kingdom"
         ],
         "region": "Bowser's Kingdom",
-        "requires": [],
+        "requires": "{BowserPeace()}",
         "progression": true
     },
     {
@@ -3438,7 +3438,7 @@
             "Bowser's Kingdom"
         ],
         "region": "Bowser's Kingdom",
-        "requires": [],
+        "requires": "{BowserPeace()}",
         "progression": true
     },
     {

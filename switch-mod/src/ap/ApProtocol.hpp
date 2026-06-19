@@ -326,6 +326,16 @@ struct Kill {
     char cause[kLongFieldCap] = {};
 };
 
+struct Warp {
+    // PC-client /warp request: teleport Mario to a hub kingdom home stage so a
+    // player physically stuck in a one-way kingdom (e.g. Bowser's without Pokio)
+    // can fly back to previous kingdoms. `dest` is a short selector
+    // ("cascade" | "cap") that the frame-thread executor maps to a home stage
+    // through a fixed allowlist — never a free-form stage name, so this can't be
+    // used to skip forward past a boss gate.
+    char dest[kCheckFieldCap] = {};
+};
+
 struct Cappy {
     // Verbatim text routed into CappyMessenger::enqueueSystem for
     // capturesanity capture-check announcements. Bridge composes the
@@ -513,6 +523,7 @@ struct DecodedMsg {
     Pong pong{};
     Err err{};
     Kill kill{};
+    Warp warp{};
     MoonLabel moon_label{};
     Cappy cappy{};
     ShineScouts shine_scouts{};

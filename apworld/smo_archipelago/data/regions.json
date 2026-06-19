@@ -94,7 +94,7 @@
         "connects_to": []
     },
     "Moon Kingdom": {
-        "requires": "{KingdomMoons(Bowser's,8)}",
+        "requires": "{KingdomMoons(Bowser's,8)} and {BowserPeace()}",
         "connects_to": []
     }
 }

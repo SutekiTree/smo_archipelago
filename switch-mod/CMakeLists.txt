@@ -74,6 +74,12 @@ add_executable(${PROJECT_NAME} ${SOURCES})
 # vapours, etc.). Linking the INTERFACE target propagates the include paths.
 add_subdirectory(lib/OdysseyHeaders)
 target_link_libraries(${PROJECT_NAME} PRIVATE OdysseyHeaders)
+# Newer OdysseyHeaders (post-#1006 / the pin bumped for GameDataHolder::
+# setStageChanging) dropped the repo root from its INTERFACE include dirs,
+# exposing only the per-namespace subdirs (game/, al/, ...). Our sources use
+# root-relative includes ("game/System/GameDataFunction.h", "al/...", etc.),
+# so re-add the root here to keep those resolving against the bumped pin.
+target_include_directories(${PROJECT_NAME} PRIVATE lib/OdysseyHeaders)
 
 # Debug overlay: ImGui / Nvn / DebugRenderer addons. Registered via
 # HAKKUN_ADDONS in config/config.cmake; LibHakkun's enable_addons()

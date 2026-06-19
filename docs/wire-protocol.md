@@ -134,6 +134,22 @@ is a no-op.
 // Switch ACTS on it (toggle communicated via hello_ack.deathlink_enabled).
 {"t":"kill","source":"Bob","cause":"Bob died."}
 
+// PC `/warp` escape. Teleports Mario to a hub kingdom home stage so a player
+// physically stuck in a one-way kingdom (e.g. Bowser's without the Pokio
+// capture, which grounds the Odyssey until the RoboBrood is beaten) can fly
+// back to earlier kingdoms. `dest` is a short selector the Switch maps through
+// a fixed allowlist ("cascade" -> WaterfallWorldHomeStage, "cap" ->
+// CapWorldHomeStage; anything else -> Cascade). The Switch executes it
+// (game/StageWarp.cpp) via tryChangeNextStageWithDemoWorldWarp to write the
+// LITERAL destination stage, then latches GameDataHolder::setStageChanging() so
+// the sequence actually performs the transition. (WorldWarpHole was rejected: it
+// remaps the destination through SMO's painting-pairing table — Cascade input
+// landed at Seaside — and nothing pairs to Cascade. DemoWorldWarp alone was
+// rejected: it doesn't latch, so it silently no-ops from in-stage.) It's a PURE
+// stage change that never unlocks a kingdom, so it cannot skip forward past a
+// boss gate. Single-bit pending queue drained on the frame thread.
+{"t":"warp","dest":"cascade"}
+
 // M6 phase A.5: Channel A — pane-text override for the next moon-get
 // cutscene. Bridge sends this in the same TCP push as its reply to the
 // triggering `check`, so the text reaches the Switch before the cutscene

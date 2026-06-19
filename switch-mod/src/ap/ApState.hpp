@@ -540,6 +540,17 @@ public:
     // thread drains via exchange(false).
     std::atomic<bool> inbound_kill_pending{false};
 
+    // Inbound /warp request from the PC client (manual softlock escape).
+    // The socket worker writes warp_dest_stage[] then sets inbound_warp_pending;
+    // the frame thread drains via exchange(false) and reads the stage. A fixed
+    // char[] (M6.1 inbound-allocator-safety contract). The stage is one of a
+    // small Switch-side allowlist (Cascade/Cap home stages) — the bridge only
+    // ever sends those, and the drain re-validates before warping so a crafted
+    // message can't teleport Mario into a forward kingdom (e.g. Moon) to skip
+    // Bowser's. See hooks/WorldMapSelectHook (warpToHubStage) for the executor.
+    std::atomic<bool> inbound_warp_pending{false};
+    char warp_dest_stage[64] = {};
+
     // Set by the frame thread immediately before invoking DeathHook::Orig on
     // a synthetic kill. Defense-in-depth: DeathHook's trampoline Orig already
     // bypasses our Callback, but a future hook anywhere downstream of

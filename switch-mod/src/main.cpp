@@ -71,6 +71,9 @@ void installDepositKingdomLookupSymbol();
 void installPayShineSnapshotSymbol();
 void installCaptureGrantSymbols();
 void reconcileCaptureDictionary();
+// Drains ApState::inbound_warp_pending (PC /warp escape) — see game/StageWarp.cpp.
+// Called per-frame from drawMain.
+void tickPendingWarp();
 // Lost Kingdom softlock fix — see game/OdysseyRescue.hpp.
 void installOdysseyRescueSymbols();
 void runOdysseySoftlockSweep();
@@ -200,6 +203,9 @@ HkTrampoline<void, const HakoniwaSequence*> drawMainHook =
         smoap::game::reconcileCaptureDictionary();
         smoap::ap::ApState::instance().flushPendingCaptureGrants();
         smoap::hooks::tickPendingUncapture();
+        // PC /warp escape — teleport to a hub kingdom on request. Per-frame
+        // (not throttled) so it's responsive; cheap when no warp is pending.
+        smoap::game::tickPendingWarp();
 
         // Lost Kingdom softlock sweep — see game/OdysseyRescue.hpp. Throttled
         // to once per 60 frames (~1s @ 60fps). Pattern + cadence mirror

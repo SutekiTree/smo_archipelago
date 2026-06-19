@@ -25,6 +25,7 @@ from .protocol import (
     KillMsg,
     OutstandingEntry,
     OutstandingMsg,
+    WarpMsg,
     classification_from_flags,
 )
 from .scout_cache import ScoutCache, request_scout
@@ -127,6 +128,32 @@ class SMOClientCommandProcessor(ClientCommandProcessor):
         msg = KillMsg(source=source, cause=cause)
         async_start(ctx.switch.send_kill(msg), name="cmd inject_deathlink")
         self.output(f"sent inbound KillMsg source={source!r} cause={cause!r}")
+        return True
+
+    def _cmd_warp(self, where: str = "cascade") -> bool:
+        """Teleport Mario to a hub kingdom so he can escape a one-way kingdom.
+
+        Bowser's Kingdom grounds the Odyssey on first visit until the RoboBrood
+        is beaten, which requires the Pokio capture. Under capturesanity a
+        player who flies in before receiving Pokio can't progress AND can't fly
+        out — softlocked. `/warp` teleports Mario back to a hub kingdom
+        (Cascade by default, or `cap`) where the Odyssey works normally, so he
+        can fly to earlier kingdoms, get what he's missing, and return.
+
+        This is a pure teleport — it does NOT unlock any kingdom, so it can't be
+        used to skip forward past a boss. Usage: `/warp` or `/warp cap`.
+        """
+        ctx: SMOContext = self.ctx  # type: ignore[assignment]
+        dest = where.strip().lower()
+        if dest not in ("cascade", "cap"):
+            self.output(f"(unknown destination {where!r} — use 'cascade' or 'cap')")
+            return False
+        if ctx.switch is None:
+            self.output("(no Switch connected — /warp discarded)")
+            return False
+        async_start(ctx.switch.send_warp(WarpMsg(dest=dest)),
+                    name="cmd warp")
+        self.output(f"sent /warp -> {dest} (Mario will fly there)")
         return True
 
     def _cmd_confirm_snapshot(self) -> bool:

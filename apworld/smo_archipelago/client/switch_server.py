@@ -565,6 +565,9 @@ class SwitchServer:
     async def send_kill(self, kill: KillMsg) -> None:
         await self._send(kill)
 
+    async def send_warp(self, warp: "protocol.WarpMsg") -> None:
+        await self._send(warp)
+
     async def send_moon_label(self, label: MoonLabelMsg) -> None:
         await self._send(label)
 
