@@ -1,6 +1,21 @@
 {
   "versions": [
     {
+      "package_version": "1.2.0",
+      "download_url": "https://github.com/mdietz94/smo_archipelago/releases/download/v1.2.0/smo-poptracker-v1.2.0.zip",
+      "sha256": "bbe843b3fa417b21d3a31cebbf78de36b4e34386664911f43f531d2356545190",
+      "changelog": [
+        "Bump OdysseyHeaders for setStageChanging; re-add root include path",
+        "/warp: land at the LITERAL kingdom (DemoWorldWarp + setStageChanging latch)",
+        "Fix /warp no-op: use WorldWarpHole (latches mIsStageChanging) not DemoWorldWarp",
+        "Replace Bowser's auto-unlock escape with a backward-only /warp command",
+        "OdysseyRescue: correct the record on why Kgamer77 avoids the Bowser's trap",
+        "OdysseyRescue: add guarded Bowser's Kingdom softlock escape",
+        "Require Pokio to finish Bowser's Kingdom in logic",
+        "Tolerate settings path-validation errors in SMOClient bootstrap"
+      ]
+    },
+    {
       "package_version": "1.1.0",
       "download_url": "https://github.com/mdietz94/smo_archipelago/releases/download/v1.1.0/smo-poptracker-v1.1.0.zip",
       "sha256": "08e2853a5045e2c9328728efa40a00825655dfdf9247a93e2c1bea51beadf1a6",
