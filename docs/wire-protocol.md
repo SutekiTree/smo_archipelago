@@ -140,9 +140,12 @@ is a no-op.
 // back to earlier kingdoms. `dest` is a short selector the Switch maps through
 // a fixed allowlist ("cascade" -> WaterfallWorldHomeStage, "cap" ->
 // CapWorldHomeStage; anything else -> Cascade). The Switch executes it via
-// tryChangeNextStageWithDemoWorldWarp (cinematic flight) — a PURE stage change
-// that never unlocks a kingdom, so it cannot be used to skip forward past a
-// boss gate. Single-bit pending queue drained on the frame thread.
+// tryChangeNextStageWithWorldWarpHole (the regular world-map kingdom-travel
+// path — lands at the kingdom's normal arrival and latches mIsStageChanging so
+// the transition actually fires; DemoWorldWarp does NOT latch and silently
+// no-ops from in-stage). It's a PURE stage change that never unlocks a kingdom,
+// so it cannot be used to skip forward past a boss gate. Single-bit pending
+// queue drained on the frame thread.
 {"t":"warp","dest":"cascade"}
 
 // M6 phase A.5: Channel A — pane-text override for the next moon-get
