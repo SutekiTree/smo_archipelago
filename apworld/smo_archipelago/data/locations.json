@@ -287,11 +287,10 @@
     {
         "name": "Sand: Showdown on the Inverted Pyramid",
         "category": [
-            "Sand Kingdom",
-            "Sand Peace"
+            "Sand Kingdom"
         ],
         "region": "Sand Kingdom",
-        "requires": "{SandPeace()}",
+        "requires": "{OptOne(Bullet Bill)}",
         "progression": true
     },
     {
@@ -569,7 +568,7 @@
             "Sand Kingdom"
         ],
         "region": "Sand Kingdom",
-        "requires": "{OptOne(Jaxi)}"
+        "requires": "{OptOne(Bullet Bill)}"
     },
     {
         "name": "Sand: You're Quite a Catch, Captain Toad!",
@@ -762,7 +761,7 @@
             "Precision Capture"
         ],
         "region": "Sand Kingdom",
-        "requires": "{OptOne(Jaxi)}"
+        "requires": "{OptOne(Bullet Bill)}"
     },
     {
         "name": "Sand: Jaxi Stunt Driving",
@@ -771,7 +770,7 @@
             "Precision Capture"
         ],
         "region": "Sand Kingdom",
-        "requires": "{OptOne(Jaxi)}"
+        "requires": "{OptOne(Bullet Bill)}"
     },
     {
         "name": "Sand: Strange Neighborhood",
