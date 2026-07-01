@@ -1,6 +1,28 @@
 {
   "versions": [
     {
+      "package_version": "1.3.0",
+      "download_url": "https://github.com/mdietz94/smo_archipelago/releases/download/v1.3.0/smo-poptracker-v1.3.0.zip",
+      "sha256": "a6dd47821477066e0bd5bd2810c8a1422735b5c04ea59bc60b8a25b9204be991",
+      "changelog": [
+        "Review fixes for PR #267 (Difficult Mode + logic fixes)",
+        "remove cascade peace category from cascade moons, caused gen errors when solo",
+        "re-added movement logic as its not what was broken",
+        "remove movement logic (w/ backup)",
+        "undo apworld name change",
+        "rules.py fix and rename of apworld file",
+        "fixed poptracker issues with difficult mode",
+        "difficult mode + lots of logic updates",
+        "Fix PopTracker capture/move gates broken with capturesanity ON",
+        "ci: bump actions/setup-python from 6.2.0 to 6.3.0",
+        "ci: bump actions/cache from 5.0.5 to 6.1.0",
+        "Fix Sand Kingdom logic: story-moon exclusion + no-op Jaxi gates",
+        "ci: bump actions/checkout from 6.0.3 to 7.0.0",
+        "ci: bump softprops/action-gh-release from 3.0.0 to 3.0.1",
+        "PopTracker auto-update: add v1.2.0 to versions.json"
+      ]
+    },
+    {
       "package_version": "1.2.0",
       "download_url": "https://github.com/mdietz94/smo_archipelago/releases/download/v1.2.0/smo-poptracker-v1.2.0.zip",
       "sha256": "bbe843b3fa417b21d3a31cebbf78de36b4e34386664911f43f531d2356545190",
