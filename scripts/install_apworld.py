@@ -47,7 +47,6 @@ DST = DST_DIR / "meatballs.apworld"
 # (or, in the case of smo.apworld, on the `worlds.smo` module slot the
 # upstream apworld already owns).
 LEGACY_DSTS = (
-    DST_DIR / "meatballsDiffPatch.apworld",
     DST_DIR / "smo.apworld",
     DST_DIR / "smo_archipelago.apworld",
 )

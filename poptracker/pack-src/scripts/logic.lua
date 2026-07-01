@@ -97,11 +97,14 @@ function sand_peace()
   return has_one("bullet_bill") and has_one("knucklotec_s_fist")
 end
 
-function lake_peace()  return true end
+function lake_peace()
+  if capturesanity_off() then return true end
+  return has_one("zipper")
+end
 
 function wooded_peace()
   if capturesanity_off() then return true end
-  return has_one("uproot")
+  return has_one("uproot") and has_one("sherm")
 end
 
 function metro_peace()

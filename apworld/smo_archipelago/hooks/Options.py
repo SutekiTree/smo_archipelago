@@ -143,7 +143,7 @@ class TalkatooMode(Toggle):
     display_name = "Talkatoo Mode"
 
 class DifficultMode(Toggle):
-    """Difficult Mode: For non-beginners who know how to do certain 'hard' tricks, aka Dino Skip, 
+    """Difficult Mode: For non-beginners who know how to do certain 'hard' tricks, aka Dino Skip,
     jump long gaps with good movement, skip certain captures that are otherwise 'required' in a casual playthrough,
     and other things that any casual player might not do in their first playthrough.
     ONLY FOR EXPERIENCED PLAYERS!!!"""

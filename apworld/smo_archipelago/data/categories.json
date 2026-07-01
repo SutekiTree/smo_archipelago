@@ -128,12 +128,6 @@
         ],
         "hidden": true
     },
-    "Difficult Mode": {
-        "yaml_option": [
-            "difficult_mode"
-        ],
-        "hidden": true
-    },
     "Capture": {
         "yaml_option": [
             "capturesanity"

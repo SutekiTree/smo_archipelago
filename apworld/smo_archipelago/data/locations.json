@@ -210,7 +210,6 @@
         "name": "Cascade: Nice Shot with the Chain Chomp!",
         "category": [
             "Cascade Kingdom"
-            
         ],
         "region": "Cascade Kingdom",
         "requires": []
@@ -950,7 +949,7 @@
             "Lake Kingdom"
         ],
         "region": "Lake Kingdom",
-        "requires": "{CheepCheepOrGroundPound()} and ({LakeDifficult()} OR {DifficultMode()})"
+        "requires": "{CheepCheepOrGroundPound()} and {LakeDifficult()}"
     },
     {
         "name": "Lake: Shopping in Lake Lamode",
@@ -1105,7 +1104,7 @@
             "Wooded Kingdom"
         ],
         "region": "Wooded Kingdom",
-        "requires": "{WoodedDifficult()} and {OptOne(GroundPound)}"
+        "requires": "{WoodedDifficult()} and {OptOne(Ground Pound)}"
     },
     {
         "name": "Wooded: Atop the Tall Tree",
