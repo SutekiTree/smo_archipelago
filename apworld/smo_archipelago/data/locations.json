@@ -648,8 +648,7 @@
     {
         "name": "Sand: Walking the Desert!",
         "category": [
-            "Sand Kingdom",
-            "Sand Peace"
+            "Sand Kingdom"
         ],
         "region": "Sand Kingdom",
         "requires": "{SandPeace()}"
