@@ -260,7 +260,8 @@
     {
         "name": "Cascade: Rolling Rock by the Falls",
         "category": [
-            "Cascade Kingdom"
+            "Cascade Kingdom",
+            "Cascade Peace"
         ],
         "region": "Sand Kingdom",
         "requires": []
@@ -268,7 +269,8 @@
     {
         "name": "Cascade: Shopping in Fossil Falls",
         "category": [
-            "Cascade Kingdom"
+            "Cascade Kingdom",
+            "Cascade Peace"
         ],
         "region": "Sand Kingdom",
         "requires": []
@@ -546,7 +548,7 @@
             "Sand Kingdom"
         ],
         "region": "Sand Kingdom",
-        "requires": "{SandPeace()}"
+        "requires": []
     },
     {
         "name": "Sand: Fishing in the Oasis",
@@ -646,7 +648,8 @@
     {
         "name": "Sand: Walking the Desert!",
         "category": [
-            "Sand Kingdom"
+            "Sand Kingdom",
+            "Sand Peace"
         ],
         "region": "Sand Kingdom",
         "requires": "{SandPeace()}"
@@ -1080,7 +1083,7 @@
             "Wooded Kingdom"
         ],
         "region": "Wooded Kingdom",
-        "requires": "{WoodedDifficult()}"
+        "requires": "{WoodedDifficult()} AND {OptOne(Sherm)}"
     },
     {
         "name": "Wooded: Rolling Rock in the Woods",
@@ -1176,7 +1179,7 @@
             "Wooded Kingdom"
         ],
         "region": "Wooded Kingdom",
-        "requires": "{WoodedDifficult()}"
+        "requires": "{WoodedDifficult()} AND {OptOne(Sherm)}"
     },
     {
         "name": "Wooded: Fire in the Cave",
@@ -1234,7 +1237,7 @@
             "Wooded Kingdom"
         ],
         "region": "Wooded Kingdom",
-        "requires": "{OptOne(Uproot)}"
+        "requires": "{WoodedPeace()}"
     },
     {
         "name": "Wooded: Spinning-Platforms Treasure",
@@ -2070,7 +2073,7 @@
             "Metro Kingdom"
         ],
         "region": "Sand Kingdom",
-        "requires": "{DifficultMode()} OR {OptOne(Bullet Bill)}"
+        "requires": "({DifficultMode()} OR {OptOne(Bullet Bill)}) AND {TalkatooReach(Metro)}"
     },
     {
         "name": "Metro: A Tourist in the Metro Kingdom!",
@@ -3315,7 +3318,7 @@
             "Luncheon Kingdom"
         ],
         "region": "Wooded Kingdom",
-        "requires": "{DifficultMode()} OR {OptOne(Uproot)}"
+        "requires": "({DifficultMode()} OR {OptOne(Uproot)}) AND {TalkatooReach(Luncheon)}"
     },
     {
         "name": "Luncheon: A Tourist in the Luncheon Kingdom!",

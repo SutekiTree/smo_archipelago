@@ -90,6 +90,17 @@ function has_kingdom_moons(kingdom, n)
   return (pm_c + 3 * mm_c) >= need
 end
 
+-- talkatoo_reach(kingdom) — Rules.py TalkatooReach. In the apworld this gates
+-- the two cross-kingdom "Secret Path" moons (collected in an earlier kingdom
+-- than the Talkatoo that names them) on the naming kingdom being reachable, but
+-- ONLY when talkatoo_mode is on. This pack instead hides every Talkatoo-blocked
+-- moon outright while talkatoo_mode is on (the generator ANDs $is_opt_off|
+-- talkatoo_mode onto those sections), so this rule is only ever evaluated with
+-- talkatoo_mode OFF, where TalkatooReach returns true (no constraint).
+function talkatoo_reach(kingdom)
+  return true
+end
+
 -- ---------- Rules.py ports (capturesanity-conditional and trivial)
 
 function sand_peace()
