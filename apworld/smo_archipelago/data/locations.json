@@ -1179,7 +1179,7 @@
             "Wooded Kingdom"
         ],
         "region": "Wooded Kingdom",
-        "requires": "{WoodedDifficult()}"
+        "requires": "{WoodedDifficult()} AND {OptOne(Sherm)}"
     },
     {
         "name": "Wooded: Fire in the Cave",
