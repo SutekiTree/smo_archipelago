@@ -548,7 +548,7 @@
             "Sand Kingdom"
         ],
         "region": "Sand Kingdom",
-        "requires": []
+        "requires": "{SandPeace()}"
     },
     {
         "name": "Sand: Fishing in the Oasis",
