@@ -2073,7 +2073,7 @@
             "Metro Kingdom"
         ],
         "region": "Sand Kingdom",
-        "requires": "{DifficultMode()} OR {OptOne(Bullet Bill)}"
+        "requires": "({DifficultMode()} OR {OptOne(Bullet Bill)}) AND {TalkatooReach(Metro)}"
     },
     {
         "name": "Metro: A Tourist in the Metro Kingdom!",
@@ -3318,7 +3318,7 @@
             "Luncheon Kingdom"
         ],
         "region": "Wooded Kingdom",
-        "requires": "{DifficultMode()} OR {OptOne(Uproot)}"
+        "requires": "({DifficultMode()} OR {OptOne(Uproot)}) AND {TalkatooReach(Luncheon)}"
     },
     {
         "name": "Luncheon: A Tourist in the Luncheon Kingdom!",
