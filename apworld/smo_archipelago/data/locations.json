@@ -1237,7 +1237,7 @@
             "Wooded Kingdom"
         ],
         "region": "Wooded Kingdom",
-        "requires": "{OptOne(Uproot)}"
+        "requires": "{WoodedPeace()}"
     },
     {
         "name": "Wooded: Spinning-Platforms Treasure",
