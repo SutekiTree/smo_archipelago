@@ -1080,7 +1080,7 @@
             "Wooded Kingdom"
         ],
         "region": "Wooded Kingdom",
-        "requires": "{WoodedDifficult()}"
+        "requires": "{WoodedDifficult()} and {OptOne(Sherm)}"
     },
     {
         "name": "Wooded: Rolling Rock in the Woods",
@@ -1176,7 +1176,7 @@
             "Wooded Kingdom"
         ],
         "region": "Wooded Kingdom",
-        "requires": "{WoodedDifficult()}"
+        "requires": "{WoodedDifficult()} and {OptOne(Sherm)}"
     },
     {
         "name": "Wooded: Fire in the Cave",
@@ -1242,7 +1242,7 @@
             "Wooded Kingdom"
         ],
         "region": "Wooded Kingdom",
-        "requires": "{WoodedDifficult()}"
+        "requires": "{WoodedDifficult()} and {OptOne(Sherm)}"
     },
     {
         "name": "Wooded: Make the Secret Flower Field Bloom",
@@ -1395,7 +1395,7 @@
             "Long Course"
         ],
         "region": "Wooded Kingdom",
-        "requires": "{WoodedDifficult()} and ({OptOne(Wall Jump)})"
+        "requires": "{WoodedDifficult()} and {OptOne(Sherm)} and {OptOne(Wall Jump)}"
     },
     {
         "name": "Wooded: Flower Road Reach",
@@ -1404,7 +1404,7 @@
             "Long Course"
         ],
         "region": "Wooded Kingdom",
-        "requires": "{WoodedDifficult()} and {OptOne(Goomba)}"
+        "requires": "{WoodedDifficult()} and {OptAll(|Sherm| and |Goomba|)}"
     },
     {
         "name": "Wooded: Elevator Escalation",
