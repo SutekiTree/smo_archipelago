@@ -1083,7 +1083,7 @@
             "Wooded Kingdom"
         ],
         "region": "Wooded Kingdom",
-        "requires": "{WoodedDifficult()}"
+        "requires": "{WoodedDifficult()} AND {OptOne(Sherm)}"
     },
     {
         "name": "Wooded: Rolling Rock in the Woods",
