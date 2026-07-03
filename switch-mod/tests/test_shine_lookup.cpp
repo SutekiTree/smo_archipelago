@@ -12,10 +12,13 @@
 // IP boundary: this test runs against a synthetic shine_table.h built from
 // switch-mod/tests/{locations,shine_map}_fixture.json — both fixtures use
 // invented stage names (TestStageAlpha, TestStageBeta), invented obj_ids
-// (objBravo, objCharlie, ...), invented uids (101..105), invented kingdom
-// labels (TestKingdom, OtherTestKingdom), and invented moon names — EXCEPT
-// for the one canonical M5.7 anchor "Our First Power Moon" that CLAUDE.md
-// explicitly allows as a verifiable test fixture. No production
+// (objBravo, objCharlie, ...), invented uids (101..106), invented moon
+// names, and invented kingdom labels (TestKingdom, OtherTestKingdom) — EXCEPT
+// (a) the one canonical M5.7 anchor "Our First Power Moon" that CLAUDE.md
+// explicitly allows as a verifiable test fixture, and (b) the real kingdom
+// label "Ruined" on the Gamma/Foxtrot row, needed to exercise
+// isNoTalkatooKingdomShine. Kingdom internal/AP-form names are functional
+// identifiers explicitly allowed by CLAUDE.md. No production
 // (stage, obj_id) → uid mappings live in committed test source. Data-drift
 // of real production identifiers is the job of
 // apworld/smo_archipelago/tests/test_progression_moons.py (Python, runs
@@ -209,6 +212,42 @@ TEST(progression_unknown_returns_false) {
 TEST(progression_null_returns_false) {
     EXPECT_FALSE(isProgressionShine(nullptr, "objAnchor"));
     EXPECT_FALSE(isProgressionShine("TestStageAlpha", nullptr));
+}
+
+// --------------------------------------------------------------------------
+// isNoTalkatooKingdomShine
+//
+// The Gamma/Foxtrot fixture row is in kingdom "Ruined" (a no-Talkatoo
+// kingdom); all other fixture rows are in invented kingdoms. Real-production
+// coverage (which kingdoms actually lack Talkatoo) is asserted in
+// apworld/smo_archipelago/tests/test_talkatoo_order.py against committed
+// locations.json — here we only verify the scan-logic correctness.
+// --------------------------------------------------------------------------
+
+TEST(no_talkatoo_ruined_flagged) {
+    EXPECT_TRUE(isNoTalkatooKingdomShine("TestStageGamma", "objFoxtrot"));
+}
+
+TEST(no_talkatoo_regular_kingdom_not_flagged) {
+    // TestKingdom / OtherTestKingdom are not in kNoTalkatooKingdoms.
+    EXPECT_FALSE(isNoTalkatooKingdomShine("TestStageAlpha", "objCharlie"));
+    EXPECT_FALSE(isNoTalkatooKingdomShine("TestStageBeta", "objEcho"));
+}
+
+TEST(no_talkatoo_unknown_returns_false) {
+    EXPECT_FALSE(isNoTalkatooKingdomShine("NoSuchStage", "obj99999"));
+}
+
+TEST(no_talkatoo_null_returns_false) {
+    EXPECT_FALSE(isNoTalkatooKingdomShine(nullptr, "objFoxtrot"));
+    EXPECT_FALSE(isNoTalkatooKingdomShine("TestStageGamma", nullptr));
+}
+
+// The Ruined fixture row must still resolve normally through the other
+// lookups (exemption is orthogonal to identity resolution).
+TEST(no_talkatoo_row_still_resolves_uid) {
+    EXPECT_EQ_I(shineUidByStageObj("TestStageGamma", "objFoxtrot"), 106);
+    EXPECT_FALSE(isProgressionShine("TestStageGamma", "objFoxtrot"));
 }
 
 // --------------------------------------------------------------------------

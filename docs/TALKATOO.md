@@ -23,10 +23,19 @@ but **only moons Talkatoo has actually named in his speech bubble count
 toward AP**. Other moons trigger a "Blocked by Talkatoo!" message in
 the get-cinematic and respawn on save-reload.
 
-The exception is **progression moons** — Multi Moons, boss-fight
-clears, Seaside seals, and Bowser's 4-step chain. Those bypass the
-block (`isProgressionShine` on the Switch side) so the player can
-always advance the kingdom's scenario regardless of Talkatoo.
+There are two exceptions, both always collectible like ordinary
+story moons:
+
+- **Progression moons** — Multi Moons, boss-fight clears, Seaside
+  seals, and Bowser's 4-step chain. Those bypass the block
+  (`isProgressionShine` on the Switch side) so the player can always
+  advance the kingdom's scenario regardless of Talkatoo.
+- **Moons in kingdoms with no Talkatoo NPC** — currently just **Ruined**
+  (Crumbleden), a boss-transition kingdom with no free-roam NPCs. Talkatoo
+  can never name these, so blocking them would make them permanently
+  un-collectible. They bypass the block (`isNoTalkatooKingdomShine` /
+  `kNoTalkatooKingdoms` on the Switch side, `NO_TALKATOO_KINGDOMS` in the
+  apworld).
 
 ---
 
@@ -273,6 +282,7 @@ talkatoo_mode_on
   AND moon's (stage, obj) resolves to a shine_uid in shine_table.h
   AND NOT isMoonNamed(shine_uid)
   AND NOT isProgressionShine(stage, obj)
+  AND NOT isNoTalkatooKingdomShine(stage, obj)   // e.g. Ruined
 ```
 
 Block path skips `Orig` (no `setGotShine` write) AND paints "Blocked
@@ -347,13 +357,27 @@ this, stale moons from the prior push linger.
 
 Tested by: `test_talkatoo_pool_clears_dropped_kingdoms`.
 
-### 7. Progression moons bypass the block
+### 7. Exempt moons bypass the block
 
-Progression-flagged locations (`progression: true` in locations.json)
-are NEVER in the pool, NEVER in talkatoo_order, and ALWAYS collectible
-via the `isProgressionShine` bypass in the block hook.
+Two classes of moon are NEVER in the pool, NEVER in talkatoo_order, and
+ALWAYS collectible via a bypass in the block hook:
 
-Tested by: `test_progression_set_matches_audit` (data) +
+- **Progression-flagged** locations (`progression: true` in
+  locations.json) — bypass via `isProgressionShine`.
+- **No-Talkatoo-kingdom** moons (kingdom in `NO_TALKATOO_KINGDOMS` /
+  `kNoTalkatooKingdoms`, currently just Ruined) — bypass via
+  `isNoTalkatooKingdomShine`.
+
+The apworld excludes both from the cursor-window pool
+(`World.after_fill_slot_data` builds `excluded_names = progression |
+no_talkatoo`); the Switch bypasses both in the block. The two lists MUST
+stay in sync — a kingdom excluded from the pool but not bypassed on the
+Switch would be permanently un-collectible.
+
+Tested by: `test_progression_set_matches_audit` (data),
+`test_no_talkatoo_kingdoms_covers_all_ruined_moons` +
+`test_collect_pool_excludes_no_talkatoo_kingdom_moons` (pool exclusion),
+`no_talkatoo_ruined_flagged` (Switch, test_shine_lookup.cpp), and
 `test_connected_handler_filters_progression_moons_from_talkatoo_pool` (wire).
 
 ### 8. mode-off is fully inert

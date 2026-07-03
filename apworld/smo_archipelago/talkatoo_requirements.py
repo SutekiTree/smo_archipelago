@@ -140,7 +140,7 @@ def build_talkatoo_requirements(
     world: "SMOWorld",
     multiworld: "MultiWorld",
     player: int,
-    progression_names: set[str],
+    excluded_names: set[str],
     region_table: dict[str, dict],
     location_table: list[dict],
 ) -> dict[str, dict]:
@@ -148,8 +148,9 @@ def build_talkatoo_requirements(
 
     ``region_table`` is data/regions.json (name -> spec).
     ``location_table`` is data/locations.json (list of loc specs).
-    ``progression_names`` is the same set passed to ``build_talkatoo_order``
-    so the moon set matches the cursor-window set exactly.
+    ``excluded_names`` is the same set passed to ``build_talkatoo_order``
+    (progression moons + NO_TALKATOO_KINGDOMS moons) so the moon set matches
+    the cursor-window set exactly.
     """
     from BaseClasses import CollectionState
     state = CollectionState(multiworld)
@@ -169,7 +170,7 @@ def build_talkatoo_requirements(
     moons: dict[str, dict] = {}
     for loc in multiworld.get_locations(player):
         name = loc.name
-        if name in progression_names:
+        if name in excluded_names:
             continue
         if loc.item is not None and loc.item.name == "__Victory__":
             continue

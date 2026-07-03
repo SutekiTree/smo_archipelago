@@ -21,7 +21,11 @@ import pytest
 
 # conftest.py inserts apworld/smo_archipelago/ on sys.path, so
 # talkatoo_order is importable as a top-level module.
+import json
+from pathlib import Path
+
 from talkatoo_order import (
+    NO_TALKATOO_KINGDOMS,
     TalkatooOrderError,
     find_safe_permutation_with_oracle,
     is_sphere_safe_with_oracle,
@@ -359,6 +363,48 @@ def test_collect_pool_skips_progression_and_captures():
         "Cascade": ["Cascade: Chomp Through the Rocks"],
         "Cap": ["Cap: Frog-Jumping Above the Fog"],
     }
+
+
+def test_collect_pool_excludes_no_talkatoo_kingdom_moons():
+    """Moons in NO_TALKATOO_KINGDOMS (e.g. Ruined) are passed in the
+    excluded set (World.after_fill_slot_data builds it) and must be dropped
+    from the cursor-window pool — their kingdom has no Talkatoo to name
+    them, so they bypass the block and behave like story moons."""
+    mw = _FakeMultiWorld([
+        _FakeLocation("Ruined: In the Ancient Treasure Chest", _FakeItem("Coin")),
+        _FakeLocation("Ruined: Roulette Tower: Climbed", _FakeItem("Coin")),
+        _FakeLocation("Sand: Hi", _FakeItem("Coin")),
+    ])
+    excluded = {
+        "Ruined: In the Ancient Treasure Chest",
+        "Ruined: Roulette Tower: Climbed",
+    }
+    pool = collect_pool_per_kingdom(None, mw, 1, excluded)
+    assert pool == {"Sand": ["Sand: Hi"]}
+    assert "Ruined" not in pool
+
+
+def test_no_talkatoo_kingdoms_covers_all_ruined_moons():
+    """Every Ruined moon in the real locations.json falls under a
+    NO_TALKATOO_KINGDOMS prefix (Ruined), so the World.py exclusion set
+    (progression | no_talkatoo) drops all of them from the pool. Guards
+    against a Ruined moon slipping back into the cursor window — which the
+    Switch could never name."""
+    apworld_root = Path(__file__).resolve().parents[1]
+    locs = json.loads(
+        (apworld_root / "data" / "locations.json").read_text(encoding="utf-8"))
+    ruined = [
+        loc["name"] for loc in locs
+        if loc["name"].split(":", 1)[0].strip() == "Ruined"
+    ]
+    # Sanity: the kingdom exists in the data and is in the exclusion set.
+    assert ruined, "expected Ruined moons in locations.json"
+    assert "Ruined" in NO_TALKATOO_KINGDOMS
+    excluded = {
+        loc["name"] for loc in locs
+        if loc["name"].split(":", 1)[0].strip() in NO_TALKATOO_KINGDOMS
+    }
+    assert set(ruined) <= excluded
 
 
 def test_collect_pool_tolerates_locations_without_items():
