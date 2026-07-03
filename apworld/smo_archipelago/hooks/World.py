@@ -280,17 +280,26 @@ def after_fill_slot_data(slot_data: dict, world: World, multiworld: MultiWorld, 
     # 3 Talkatoo picks in a kingdom are gated behind items not yet received.
     if not slot_data.get("talkatoo_mode"):
         return slot_data
-    from ..talkatoo_order import build_talkatoo_order
-    # locations.json's `progression: true` flag is the canonical source.
-    # The Switch's MoonGetHook bypasses the Talkatoo block for these via
-    # isProgressionShine — they're never gated by the cursor-window, so
-    # don't include them in the ordered list.
+    from ..talkatoo_order import build_talkatoo_order, NO_TALKATOO_KINGDOMS
+    # Moons that bypass the Talkatoo% cursor-window (the Switch's MoonGetHook
+    # collects them freely) and so must not enter the ordered list:
+    #   1. locations.json `progression: true` — scenario-advancing moons,
+    #      bypassed via isProgressionShine on the Switch.
+    #   2. Moons in NO_TALKATOO_KINGDOMS (e.g. Ruined) — the kingdom has no
+    #      Talkatoo to name them, bypassed via isNoTalkatooKingdomShine on the
+    #      Switch. Without excluding these, the bridge would ship a cursor
+    #      window nothing can ever consume.
     progression_names = {
         loc["name"] for loc in location_table
         if loc.get("progression", False)
     }
+    no_talkatoo_names = {
+        loc["name"] for loc in location_table
+        if loc["name"].split(":", 1)[0].strip() in NO_TALKATOO_KINGDOMS
+    }
+    excluded_names = progression_names | no_talkatoo_names
     slot_data["talkatoo_order"] = build_talkatoo_order(
-        world, multiworld, player, progression_names)
+        world, multiworld, player, excluded_names)
     # Companion to talkatoo_order: per-moon + per-region access requirements
     # (resolved to |Item:count| boolean expressions). The bridge evaluates
     # these against RECEIVED items at runtime so Talkatoo's window only ever
@@ -299,7 +308,7 @@ def after_fill_slot_data(slot_data: dict, world: World, multiworld: MultiWorld, 
     # See talkatoo_requirements.py for the full rationale.
     from ..talkatoo_requirements import build_talkatoo_requirements
     slot_data["talkatoo_requirements"] = build_talkatoo_requirements(
-        world, multiworld, player, progression_names, region_table, location_table)
+        world, multiworld, player, excluded_names, region_table, location_table)
     return slot_data
 
 # This is called right at the end, in case you want to write stuff to the spoiler log

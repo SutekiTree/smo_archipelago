@@ -96,6 +96,16 @@ _LOC_PREFIX_RE = re.compile(r"^([A-Za-z' ]+):\s*(.+)$")
 # entries must contain at least one reachable moon.
 WINDOW = 3
 
+# Kingdoms with no Talkatoo NPC. Talkatoo% names moons before they count;
+# a kingdom without Talkatoo can never name its moons, so its non-progression
+# moons would be permanently blocked on the Switch. Those moons instead bypass
+# the Talkatoo% block entirely (kNoTalkatooKingdoms in
+# switch-mod/src/ap/shine_lookup.hpp) and behave like story moons — so they
+# must NOT enter the cursor-window pool here either. Ruined (Crumbleden) is a
+# boss-transition kingdom with no free-roam NPCs. Keep in sync with the Switch
+# list. Kingdom labels are AP-form (the `Kingdom: ` location-name prefix).
+NO_TALKATOO_KINGDOMS = frozenset({"Ruined"})
+
 
 class TalkatooOrderError(Exception):
     """Raised when the validator can't find a sphere-safe order for a
@@ -120,10 +130,14 @@ def collect_pool_per_kingdom(
     world: "SMOWorld",
     multiworld: "MultiWorld",
     player: int,
-    progression_names: set[str],
+    excluded_names: set[str],
 ) -> dict[str, list[str]]:
     """Walks this slot's filled locations and groups moon-kind entries by
-    kingdom, skipping progression-flagged names and captures.
+    kingdom, skipping excluded names and captures.
+
+    `excluded_names` is the set of moons that bypass the Talkatoo% cursor
+    window: progression-flagged moons plus moons in NO_TALKATOO_KINGDOMS
+    (see World.after_fill_slot_data, which builds the set).
 
     Returns {kingdom: [full_location_name, ...]}. Captures (no `:` in
     name) and the victory location (item == "__Victory__") are dropped.
@@ -133,7 +147,7 @@ def collect_pool_per_kingdom(
     by_kingdom: dict[str, list[str]] = {}
     for loc in multiworld.get_locations(player):
         name = loc.name
-        if name in progression_names:
+        if name in excluded_names:
             continue
         if loc.item is not None and loc.item.name == "__Victory__":
             continue
@@ -275,7 +289,7 @@ def build_talkatoo_order(
     world: "SMOWorld",
     multiworld: "MultiWorld",
     player: int,
-    progression_names: set[str],
+    excluded_names: set[str],
 ) -> dict[str, list[str]]:
     """Top-level entry: returns {kingdom: [shine_id, ...]} sphere-safe.
 
@@ -303,7 +317,7 @@ def build_talkatoo_order(
     other in a loop). Genuine generation failure; surface as actionable.
     """
     pool_per_kingdom = collect_pool_per_kingdom(
-        world, multiworld, player, progression_names)
+        world, multiworld, player, excluded_names)
     if not pool_per_kingdom:
         return {}
 
