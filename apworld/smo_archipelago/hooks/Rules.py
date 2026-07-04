@@ -397,3 +397,83 @@ def canReachLocation(world: World, multiworld: MultiWorld, state: CollectionStat
     if state.can_reach_location(location, player):
         return True
     return False
+
+
+# --- Talkatoo% cross-kingdom naming gate -------------------------------------
+# Two "Secret Path" warp-painting moons are NAMED after their destination
+# kingdom (their "<Kingdom>:" name prefix) but PHYSICALLY collected in an
+# earlier kingdom's painting room:
+#   "Metro: Secret Path to New Donk City!"    -> collected in Sand,   named by Metro
+#   "Luncheon: Secret Path to Mount Volbono!" -> collected in Wooded, named by Luncheon
+# In Talkatoo% mode a moon is only collectable once its naming kingdom's
+# Talkatoo has named it (the bridge buckets the Talkatoo window by name prefix),
+# so these two need the NAMING kingdom reachable -- a constraint their earlier
+# collection region doesn't impose. The other six Secret Path moons are
+# collected in a LATER kingdom than the one they're named after, so their region
+# gate already covers it and they need nothing here.
+#
+# TalkatooReach expresses "reach <kingdom> Kingdom" as the AND of every region
+# `requires` along the path from the start region to that kingdom, each resolved
+# to |Item| atoms (KingdomMoons / PostNightMetro). Returning ITEM ATOMS rather
+# than a state-based can_reach is essential: talkatoo_requirements.py freezes
+# this function at generation time to ship to the runtime bridge, and only
+# pool/option-based results survive that freeze (a can_reach would collapse to
+# 0 against the empty gen-time state and the moon could never be named). Off
+# Talkatoo% it returns True, so non-Talkatoo seeds -- and Universal Tracker on
+# them -- see no change.
+def _resolve_region_funcs(world: World, multiworld: MultiWorld, state: CollectionState, player: int, req) -> str:
+    """Run only the {Func(args)} pass over a region `requires` value, returning
+    an item-atom expression (|Item| atoms + AND/OR/parens/0/1). Region requires
+    reference only pool/option-based funcs (KingdomMoons, PostNightMetro,
+    YamlDisabled), so the result does not depend on `state`."""
+    from .. import Rules as base_rules
+    if isinstance(req, list) or not req:
+        return ""
+    s = str(req)
+    for fn, arg in re.findall(r'\{(\w+)\(([^)]*)\)\}', s):
+        fargs = [a for a in arg.split(",") if a != ""]
+        func = globals().get(fn) or getattr(base_rules, fn, None)
+        if not callable(func):
+            raise ValueError(f"TalkatooReach: unknown region-requires function {fn!r}")
+        res = func(world, multiworld, state, player, *fargs)
+        token = "{" + fn + "(" + arg + ")}"
+        s = s.replace(token, "1" if res is True else "0" if res is False else str(res))
+    return s.strip()
+
+
+def _region_path_to(target: str) -> list:
+    """Shortest path of region names from a starting region to `target` over
+    regionMap.connects_to (BFS). Empty list if `target` is unknown/unreachable."""
+    from ..Regions import regionMap, starting_regions
+    from collections import deque
+    queue = deque((s, [s]) for s in starting_regions)
+    seen = set(starting_regions)
+    while queue:
+        node, path = queue.popleft()
+        if node == target:
+            return path
+        for nxt in regionMap.get(node, {}).get("connects_to") or []:
+            if nxt not in seen:
+                seen.add(nxt)
+                queue.append((nxt, path + [nxt]))
+    return []
+
+
+def TalkatooReach(world: World, multiworld: MultiWorld, state: CollectionState, player: int, kingdom: str):
+    """Talkatoo%-only gate: require the moon's NAMING `kingdom` to be reachable.
+    See the block comment above. Returns True (no added constraint) when
+    talkatoo_mode is off."""
+    if not is_option_enabled(multiworld, player, "talkatoo_mode"):
+        return True
+    from ..Regions import regionMap
+    target = f"{kingdom.strip()} Kingdom"
+    clauses = []
+    for rname in _region_path_to(target):
+        resolved = _resolve_region_funcs(
+            world, multiworld, state, player,
+            regionMap.get(rname, {}).get("requires", ""))
+        if resolved and resolved != "1":
+            clauses.append(f"({resolved})")
+    if not clauses:
+        return True
+    return "(" + " AND ".join(clauses) + ")"

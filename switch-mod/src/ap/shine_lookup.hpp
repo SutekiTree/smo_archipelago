@@ -29,6 +29,7 @@
 
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstring>
 #include <string_view>
@@ -36,6 +37,21 @@
 #include "shine_table.h"
 
 namespace smoap::game {
+
+// Kingdoms that have no Talkatoo NPC. Talkatoo% relies on Talkatoo naming a
+// moon before its collection counts; a kingdom without Talkatoo can NEVER
+// name its moons, so every non-progression moon there would be permanently
+// blocked. Such moons must be exempt from the block exactly like progression
+// moons — always collectible ("marked like story moons"). Ruined (Crumbleden)
+// is a boss-transition kingdom with no free-roam NPCs / no Talkatoo. Strings
+// are AP-form, matching ShineTableRow::kingdom.
+//
+// Keep in sync with NO_TALKATOO_KINGDOMS in
+// apworld/smo_archipelago/talkatoo_order.py — the apworld excludes the same
+// kingdoms from the cursor-window pool so the two layers agree.
+inline constexpr std::array<std::string_view, 1> kNoTalkatooKingdoms = {
+    "Ruined",
+};
 
 // Returns the shine_uid for (stage_name, obj_id), or -1 if unknown. Both
 // arguments may be nullptr; nullptr/empty → -1.
@@ -90,6 +106,31 @@ inline bool isProgressionShine(const char* stage, const char* obj) {
     for (const auto& row : kShineTable) {
         if (row.stage_name == sv_stage && row.object_id == sv_obj) {
             return row.progression;
+        }
+    }
+    return false;
+}
+
+// True if the moon identified by (stage_name, obj_id) lives in a kingdom with
+// no Talkatoo NPC (see kNoTalkatooKingdoms). Phase 4's Talkatoo% block calls
+// this alongside isProgressionShine: a moon Talkatoo can never name would be
+// permanently un-collectible if blocked, so these bypass the block and behave
+// like story moons.
+//
+// Returns false for unknown (stage, obj) — fail-open, matching
+// isProgressionShine. Unknown moons fall through the block's existing
+// "shine_uid < 0 → vanilla" branch, so the false default is consistent.
+inline bool isNoTalkatooKingdomShine(const char* stage, const char* obj) {
+    if (stage == nullptr || obj == nullptr) return false;
+    const std::string_view sv_stage{stage};
+    const std::string_view sv_obj{obj};
+    if (sv_stage.empty() || sv_obj.empty()) return false;
+    for (const auto& row : kShineTable) {
+        if (row.stage_name == sv_stage && row.object_id == sv_obj) {
+            for (const auto& kingdom : kNoTalkatooKingdoms) {
+                if (row.kingdom == kingdom) return true;
+            }
+            return false;
         }
     }
     return false;

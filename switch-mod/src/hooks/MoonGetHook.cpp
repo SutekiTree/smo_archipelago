@@ -55,13 +55,20 @@ HkTrampoline<void, GameDataFile*, const ShineInfo*> moonGetHook =
             if (stage_ok && obj_ok) {
                 const int shine_uid =
                     smoap::game::shineUidByStageObj(stage, obj);
-                // Progression/Multi Moon exemption: scenario-advancing moons
-                // are always collectible. Blocking one would soft-lock every
-                // moon that gates on scenario_no >= N downstream. Sourced
-                // from the `progression: true` flag in locations.json.
-                const bool is_progression =
-                    smoap::game::isProgressionShine(stage, obj);
-                if (shine_uid >= 0 && !is_progression &&
+                // Two block exemptions, both "always collectible like story
+                // moons":
+                //   1. Progression/Multi Moon: scenario-advancing moons.
+                //      Blocking one would soft-lock every moon that gates on
+                //      scenario_no >= N downstream. Sourced from the
+                //      `progression: true` flag in locations.json.
+                //   2. No-Talkatoo kingdom (e.g. Ruined): the kingdom has no
+                //      Talkatoo NPC, so its moons can never be named. Blocking
+                //      them would make them permanently un-collectible.
+                //      Sourced from kNoTalkatooKingdoms.
+                const bool is_exempt =
+                    smoap::game::isProgressionShine(stage, obj) ||
+                    smoap::game::isNoTalkatooKingdomShine(stage, obj);
+                if (shine_uid >= 0 && !is_exempt &&
                     !smoap::ap::ApState::instance().isMoonNamed(shine_uid)) {
                     SMOAP_LOG_INFO("[talkatoo-block] BLOCKED collection "
                                    "stage=%s obj=%s uid=%d (not named by "

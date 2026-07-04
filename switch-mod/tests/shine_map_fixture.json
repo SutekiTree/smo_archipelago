@@ -33,5 +33,12 @@
     "shine_uid": 105,
     "kingdom": "OtherTestKingdom",
     "shine_id": "Test Moon Echo"
+  },
+  {
+    "stage_name": "TestStageGamma",
+    "object_id": "objFoxtrot",
+    "shine_uid": 106,
+    "kingdom": "Ruined",
+    "shine_id": "Test Ruined Moon"
   }
 ]

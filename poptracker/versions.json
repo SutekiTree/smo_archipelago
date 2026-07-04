@@ -1,6 +1,24 @@
 {
   "versions": [
     {
+      "package_version": "1.4.0",
+      "download_url": "https://github.com/mdietz94/smo_archipelago/releases/download/v1.4.0/smo-poptracker-v1.4.0.zip",
+      "sha256": "af1e728b6954920107dbdb6c5300c54b35489db7c14dd09bd8a874a44ed923dc",
+      "changelog": [
+        "Exempt Ruined Kingdom moons from the Talkatoo% block",
+        "Drop Sand Peace tag from Sand: Walking the Desert!",
+        "Restore {SandPeace()} on Sand: Herding Sheep in the Dunes",
+        "Wooded: Back Way Up the Mountain also requires Sherm",
+        "Wooded: Stretching Your Legs requires Wooded peace",
+        "Wooded: Nut on the Tall Fence also requires Sherm",
+        "Add regression test for Talkatoo% Secret Path gate",
+        "Talkatoo%: gate cross-kingdom Secret Path moons on naming kingdom",
+        "Sand Peace fixes: tag Walking the Desert!, unblock Herding Sheep",
+        "Tag two Cascade revisit moons as Cascade Peace",
+        "PopTracker auto-update: add v1.3.0 to versions.json"
+      ]
+    },
+    {
       "package_version": "1.3.0",
       "download_url": "https://github.com/mdietz94/smo_archipelago/releases/download/v1.3.0/smo-poptracker-v1.3.0.zip",
       "sha256": "a6dd47821477066e0bd5bd2810c8a1422735b5c04ea59bc60b8a25b9204be991",
