@@ -353,6 +353,72 @@ async def test_same_host_reconnect_takes_over_stale_writer():
 
 
 @pytest.mark.asyncio
+async def test_same_id_reconnect_reruns_post_hello_replay():
+    """A same-id reconnect of the ACTIVE Switch gets the full replay, no kick.
+
+    Regression: a game restart mid-session (new TCP connection, same
+    device_id) used to fall into the second-Switch branch — hello_ack +
+    KickMsg(reason="inactive") and NO post-HELLO replay — because the
+    active slot already held this device_id, so `is_first` was False. The
+    fresh game process boots with an empty captures_unlocked bitset, so
+    skipping the ItemMsg replay left every AP-granted capture blocked until
+    SMOClient itself restarted (observed in the field 2026-07-12: Bullet
+    Bill capture denied after a mid-session game restart despite the item
+    having been received and replayed on the FIRST connect).
+    """
+    state = BridgeState()
+    state.add_received_item(ItemEvent(
+        item=ItemRef(kind=ItemKind.CAPTURE.value, cap="Bullet Bill",
+                     hack_name="Killer"),
+        sender="EGGcraft", cappy_from="EGGcraft",
+    ))
+
+    async def on_check(_): ...
+    async def on_goal(): ...
+
+    sw = SwitchServer("127.0.0.1", 0, state, on_check, on_goal)
+    server = await asyncio.start_server(sw._handle_client, "127.0.0.1", 0)
+    sw._server = server
+    port = server.sockets[0].getsockname()[1]
+
+    r1, w1 = await asyncio.open_connection("127.0.0.1", port)
+    try:
+        w1.write(protocol.encode(HelloMsg(device_id="sw-124")))
+        await w1.drain()
+        msgs1 = await _drain_messages(r1, n=4, timeout=2.0)
+        assert [m["t"] for m in msgs1] == [
+            "hello_ack", "checked_replay", "item", "ap_state"]
+        assert sw.get_active_device_id() == "sw-124"
+
+        # Same-id reconnect (game restarted / save reloaded).
+        r2, w2 = await asyncio.open_connection("127.0.0.1", port)
+        try:
+            w2.write(protocol.encode(HelloMsg(device_id="sw-124")))
+            await w2.drain()
+            msgs2 = await _drain_messages(r2, n=4, timeout=2.0)
+            kinds = [m["t"] for m in msgs2]
+            assert kinds == ["hello_ack", "checked_replay", "item", "ap_state"], msgs2
+            # The capture ItemMsg must replay so the fresh game process can
+            # rebuild its in-memory captures_unlocked set.
+            assert msgs2[2]["cap"] == "Bullet Bill"
+            assert msgs2[2]["hack_name"] == "Killer"
+            assert sw.get_active_device_id() == "sw-124"
+        finally:
+            w2.close()
+            try:
+                await w2.wait_closed()
+            except Exception:
+                pass
+    finally:
+        w1.close()
+        try:
+            await w1.wait_closed()
+        except Exception:
+            pass
+        await sw.stop()
+
+
+@pytest.mark.asyncio
 async def test_second_switch_accepted_as_inactive():
     """A second Switch connection is now ACCEPTED (no busy rejection).
 

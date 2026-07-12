@@ -872,13 +872,22 @@ class SwitchServer:
                 pass
             return
 
-        # Active-slot decision.
+        # Active-slot decision. A same-id reconnect of the ACTIVE Switch
+        # (game restart, save reload, Wi-Fi-blip takeover) must re-run the
+        # full post-HELLO replay: the fresh game process lost its in-memory
+        # AP state (captures_unlocked bitset, outstanding balances, ...), so
+        # parking it with KickMsg(inactive) — as we would a genuinely second
+        # Switch — leaves every AP-granted capture blocked until the next
+        # SMOClient restart.
         is_first = self._active_device_id is None
-        if is_first:
+        if is_first or effective_id == self._active_device_id:
             self._active_device_id = effective_id
             self._state.set_active_switch(effective_id)
             self._state.set_switch_conn("connecting")
-            log.info("switch %r connected from %s (active)", effective_id, peer)
+            log.info(
+                "switch %r connected from %s (active%s)", effective_id, peer,
+                "" if is_first else " — same-id reconnect, replaying",
+            )
             await self._send_hello_ack(conn)
             self._state.set_switch_conn("ready")
             await self._run_post_hello_replay(conn)
