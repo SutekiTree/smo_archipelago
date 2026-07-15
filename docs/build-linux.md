@@ -65,10 +65,14 @@ above so `capture_table.h` / `shine_table.h` pick up the real names, then
 rebuild.
 
 The maps are written to `apworld/smo_archipelago/client/data/` (gitignored —
-Nintendo IP, never commit them). The client also probes
-`~/.local/share/SMOArchipelago/data/` — the Linux equivalent of the wizard's
-`%APPDATA%/SMOArchipelago/data/` — if you prefer keeping them out of the
-tree.
+Nintendo IP, never commit them) **and mirrored to
+`~/.local/share/SMOArchipelago/data/`** — the Linux equivalent of the
+wizard's `%APPDATA%/SMOArchipelago/data/`, and the location an *installed*
+SMOClient (apworld zip in `custom_worlds/`, which never bundles the maps)
+resolves them from. SMOClient's search order is: host.yaml
+`shine_map_path`/`capture_map_path` override → user-data dir → the loose
+source `client/data/` → inside the zip. No Windows path is involved on
+Linux; the client does not need WINE.
 
 ## Deploy to Ryujinx
 
@@ -92,7 +96,13 @@ nix develop --command python -m pytest apworld/smo_archipelago/tests/
 
 The AP-server-dependent tests are gated behind `SMOAP_LIVE_AP=1` and the
 extraction tests skip when the shine/capture maps are absent, so the suite
-passes on a fresh checkout.
+passes on a fresh checkout. With maps extracted, ~10 more tests activate;
+the real-NSP integration tests opt in via:
+
+```sh
+SMOAP_TEST_NSP=<SMO_1.0.0.nsp> SMOAP_TEST_KEYS=<prod.keys> \
+    python -m pytest apworld/smo_archipelago/tests/test_extract_real_nsp.py
+```
 
 ## What still assumes Windows
 

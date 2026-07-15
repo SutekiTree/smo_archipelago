@@ -78,6 +78,46 @@ else:
     _APPDATA_ROOT = Path.home() / ".local" / "share" / "SMOArchipelago"
 DEFAULT_HACTOOL_FALLBACK = _APPDATA_ROOT / "hactool.exe"
 LEGACY_HACTOOL_FALLBACK = _APPDATA_ROOT / "bundled" / "hactool.exe"
+
+
+def _mirror_maps_to_user_data(paths: list) -> None:
+    """Copy the freshly-written maps into the per-user data dir
+    (`%APPDATA%/SMOArchipelago/data/` on Windows, `~/.local/share/
+    SMOArchipelago/data/` elsewhere) and touch the `.maps-updated`
+    sentinel — the same post-extract contract the setup wizard fulfils
+    via `_setup/wizard_cli.py` + `client/setup_state.py`.
+
+    This is what makes an *installed* apworld zip resolve the maps: the
+    zip never bundles them (Nintendo IP), and SMOClient probes the
+    user-data dir right after the host.yaml override. Windows users get
+    this via the wizard; direct CLI runs (the Linux path) get it here.
+
+    Per-file no-op when the destination IS the written path (the wizard
+    invokes us with --out already pointing into the user-data dir).
+    Best-effort: a failure to mirror must not fail the extraction —
+    the repo-checkout copy at client/data/ is still fully usable.
+    """
+    data_dir = _APPDATA_ROOT / "data"
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        copied = False
+        for src in paths:
+            dst = data_dir / src.name
+            if dst.exists() and dst.samefile(src):
+                continue
+            shutil.copy2(src, dst)
+            copied = True
+        # ".maps-updated" mirrors client/setup_state.py's
+        # MAPS_SENTINEL_FILENAME (kept literal — this script must stay
+        # runnable standalone, outside the apworld package).
+        (_APPDATA_ROOT / ".maps-updated").touch()
+        if copied:
+            print(f"[extract] mirrored maps to {data_dir} "
+                  f"(where an installed SMOClient looks for them)",
+                  file=sys.stderr, flush=True)
+    except OSError as e:
+        print(f"[extract] WARNING: could not mirror maps to {data_dir}: {e}",
+              file=sys.stderr, flush=True)
 DEFAULT_ROMFS_CACHE = REPO_ROOT / ".romfs-cache"
 # Default output: the client's gitignored data dir. (These pointed at
 # bridge/smo_ap_bridge/data/ until 2026-07 — a leftover from before the
@@ -1344,6 +1384,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  apworld unhit:      {cs['apworld_unhit']}")
     print(f"  out-of-scope hacks: {cs['out_of_apworld_scope']} (still emitted)")
     print(f"review report:        {args.cap_review}")
+
+    _mirror_maps_to_user_data([args.out, args.cap_out])
     return 0
 
 
