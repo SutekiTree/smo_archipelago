@@ -256,3 +256,17 @@ cd C:\Users\maxwe\Documents\smo_archipelago
 ```
 
 The repo-root `.venv` lives in the main checkout (not in worktrees) — Archipelago's deps are a superset of what SMOClient needs. For switch-mod C++ host tests, use the `smo-host-tests` skill. For the cross-build, use the `smo-build` skill.
+
+## Linux (Nix) workflow — 2026-07-14
+
+The Windows-only setup above has a Linux counterpart driven by `flake.nix` (full doc: [docs/build-linux.md](docs/build-linux.md)). The project skills (`smo-build`, `smo-host-tests`, `smo-extract-data`) still describe the Windows dev machine — on Linux, ignore their PATH/msys2 instructions and use:
+
+```sh
+git submodule update --init --recursive   # --recursive! sys/tools/senobi is a nested submodule
+nix develop                               # clang 19 (unwrapped + -resource-dir), lld, cmake, ninja, gcc, py3.12+lz4/pyelftools/mmh3/pytest, hactool, curl
+python scripts/sync_capture_table.py && python scripts/sync_shine_table.py
+python scripts/build_switchmod.py -DBRIDGE_HOST=<LAN IP>   # platform-branched: POSIX path uses PATH tools, builds sail with host g++
+python -m pytest apworld/smo_archipelago/tests/            # 612 pass / 84 skip on a fresh checkout
+```
+
+Load-bearing Nix details: the flake wraps `llvmPackages_19.clang-unwrapped` with `-resource-dir` (nixpkgs splits the builtin headers — `arm_neon.h` — into the `.lib` output; a *wrapped* Nix clang would instead inject host-glibc flags into the freestanding aarch64-none-elf build). The shellHook exports `LD_LIBRARY_PATH` with libstdc++ + zlib so the extractor venv's manylinux `oead` wheel loads on NixOS. `extract_shine_map.py` defaults its output to `apworld/smo_archipelago/client/data/` (the stale `bridge/smo_ap_bridge/` default was fixed 2026-07-14); Ryujinx on Linux lives at `~/.config/Ryujinx/`.

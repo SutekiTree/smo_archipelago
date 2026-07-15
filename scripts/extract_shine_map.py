@@ -47,7 +47,11 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 VENV_DIR = REPO_ROOT / "scripts" / ".extract-venv"
-VENV_PY = VENV_DIR / "Scripts" / "python.exe"
+# Windows venvs put the interpreter under Scripts\, POSIX under bin/.
+if os.name == "nt":
+    VENV_PY = VENV_DIR / "Scripts" / "python.exe"
+else:
+    VENV_PY = VENV_DIR / "bin" / "python"
 
 DEFAULT_NSP = Path(r"C:\Users\maxwe\Desktop\Roms\Switch\Super Mario Odyssey [0100000000010000][v0][Base].nsp")
 DEFAULT_KEYS = Path.home() / ".switch" / "prod.keys"
@@ -75,10 +79,16 @@ else:
 DEFAULT_HACTOOL_FALLBACK = _APPDATA_ROOT / "hactool.exe"
 LEGACY_HACTOOL_FALLBACK = _APPDATA_ROOT / "bundled" / "hactool.exe"
 DEFAULT_ROMFS_CACHE = REPO_ROOT / ".romfs-cache"
-DEFAULT_OUT = REPO_ROOT / "bridge" / "smo_ap_bridge" / "data" / "shine_map.json"
-DEFAULT_REVIEW = REPO_ROOT / "bridge" / "smo_ap_bridge" / "data" / "shine_map_review.json"
-DEFAULT_CAP_OUT = REPO_ROOT / "bridge" / "smo_ap_bridge" / "data" / "capture_map.json"
-DEFAULT_CAP_REVIEW = REPO_ROOT / "bridge" / "smo_ap_bridge" / "data" / "capture_map_review.json"
+# Default output: the client's gitignored data dir. (These pointed at
+# bridge/smo_ap_bridge/data/ until 2026-07 — a leftover from before the
+# Phase 4 merge moved the bridge into apworld/smo_archipelago/client/.
+# The wizard always passes --out/--cap-out explicitly, so only direct
+# CLI runs ever saw the stale default.)
+_CLIENT_DATA = REPO_ROOT / "apworld" / "smo_archipelago" / "client" / "data"
+DEFAULT_OUT = _CLIENT_DATA / "shine_map.json"
+DEFAULT_REVIEW = _CLIENT_DATA / "shine_map_review.json"
+DEFAULT_CAP_OUT = _CLIENT_DATA / "capture_map.json"
+DEFAULT_CAP_REVIEW = _CLIENT_DATA / "capture_map_review.json"
 APWORLD_LOCATIONS = REPO_ROOT / "apworld" / "smo_archipelago" / "data" / "locations.json"
 APWORLD_ITEMS = REPO_ROOT / "apworld" / "smo_archipelago" / "data" / "items.json"
 
@@ -149,11 +159,14 @@ def _bootstrap_and_reexec() -> None:
                 last_err = e
                 continue
         if last_err is not None:
+            hint = ("Install:  winget install -e --id Python.Python.3.12"
+                    if os.name == "nt" else
+                    "Enter the Nix dev shell first:  nix develop  "
+                    "(provides Python 3.12; see docs/build-linux.md)")
             sys.exit(
                 f"ERROR: Python 3.12 not available. Tried: "
                 f"{', '.join(' '.join(c) for c in candidates)} "
-                f"(last error: {last_err}).\n"
-                f"Install:  winget install -e --id Python.Python.3.12"
+                f"(last error: {last_err}).\n{hint}"
             )
         print(f"[bootstrap] installing oead in {VENV_DIR} (one-time, ~30-60s)",
               file=sys.stderr, flush=True)
@@ -678,9 +691,11 @@ def resolve_hactool(arg: Path | None) -> Path:
     if LEGACY_HACTOOL_FALLBACK.exists():
         return LEGACY_HACTOOL_FALLBACK
     sys.exit(
-        f"ERROR: hactool.exe not found on PATH or at {DEFAULT_HACTOOL_FALLBACK} "
+        f"ERROR: hactool not found on PATH or at {DEFAULT_HACTOOL_FALLBACK} "
         f"(or legacy {LEGACY_HACTOOL_FALLBACK}).\n"
         f"Pass --hactool <path>."
+        + ("" if os.name == "nt" else
+           "\nOn Linux the Nix dev shell provides hactool:  nix develop")
     )
 
 
@@ -1250,6 +1265,12 @@ def main(argv: list[str] | None = None) -> int:
             dump_path, dump_kind = args.nsp, "nsp"
         else:
             dump_path, dump_kind = DEFAULT_NSP, "nsp"
+            if not dump_path.exists():
+                return _fail(
+                    f"no --nsp/--xci given and the built-in default "
+                    f"({dump_path}) does not exist on this machine. Pass "
+                    f"--nsp <your SMO 1.0.0 dump> or --xci <dump>."
+                )
         print(f"[extract] dump: kind={dump_kind} path={dump_path}",
               file=sys.stderr, flush=True)
         hactool = resolve_hactool(args.hactool)
